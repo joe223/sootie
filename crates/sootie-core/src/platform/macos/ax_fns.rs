@@ -1,0 +1,149 @@
+use core_foundation::base::{CFTypeRef, TCFType};
+use core_foundation::string::{CFString, CFStringRef};
+use core_foundation::array::{CFArray, CFArrayRef};
+use core_foundation::number::CFNumber;
+use core_foundation::boolean::CFBoolean;
+
+pub type AXError = i32;
+pub const K_AX_ERROR_SUCCESS: AXError = 0;
+
+pub type AXUIElementRef = *mut std::ffi::c_void;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CGPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CGSize {
+    pub width: f64,
+    pub height: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CGRect {
+    pub origin: CGPoint,
+    pub size: CGSize,
+}
+
+pub const K_AX_VALUE_CGPOINT_TYPE: i32 = 2;
+pub const K_AX_VALUE_CGSIZE_TYPE: i32 = 3;
+pub const K_AX_VALUE_CGRECT_TYPE: i32 = 4;
+
+pub type AXValueRef = *mut std::ffi::c_void;
+
+extern "C" {
+    pub fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+    pub fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+    pub fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: *mut CFTypeRef,
+    ) -> AXError;
+    pub fn AXUIElementCopyAttributeNames(
+        element: AXUIElementRef,
+        names: *mut CFArrayRef,
+    ) -> AXError;
+    pub fn AXUIElementPerformAction(
+        element: AXUIElementRef,
+        action: CFStringRef,
+    ) -> AXError;
+    pub fn AXValueGetValue(
+        value: AXValueRef,
+        type_: i32,
+        value_ptr: *mut std::ffi::c_void,
+    ) -> bool;
+}
+
+pub fn cfstr(s: &str) -> CFString {
+    CFString::new(s)
+}
+
+pub unsafe fn get_string_attr(element: AXUIElementRef, attr: &str) -> Option<String> {
+    let cf_attr = cfstr(attr);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    let cf_str: CFString = TCFType::wrap_under_create_rule(std::mem::transmute(value));
+    Some(cf_str.to_string())
+}
+
+pub unsafe fn get_bool_attr(element: AXUIElementRef, attr: &str) -> Option<bool> {
+    let cf_attr = cfstr(attr);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    let cf_bool: CFBoolean = TCFType::wrap_under_create_rule(std::mem::transmute(value));
+    Some(cf_bool.into())
+}
+
+pub unsafe fn get_number_attr(element: AXUIElementRef, attr: &str) -> Option<i64> {
+    let cf_attr = cfstr(attr);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    let cf_num: CFNumber = TCFType::wrap_under_create_rule(std::mem::transmute(value));
+    cf_num.to_i64()
+}
+
+pub unsafe fn get_point_attr(element: AXUIElementRef, attr: &str) -> Option<CGPoint> {
+    let cf_attr = cfstr(attr);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    let mut point = CGPoint { x: 0.0, y: 0.0 };
+    if AXValueGetValue(
+        std::mem::transmute(value),
+        K_AX_VALUE_CGPOINT_TYPE,
+        &mut point as *mut CGPoint as *mut std::ffi::c_void,
+    ) {
+        Some(point)
+    } else {
+        None
+    }
+}
+
+pub unsafe fn get_size_attr(element: AXUIElementRef, attr: &str) -> Option<CGSize> {
+    let cf_attr = cfstr(attr);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    let mut size = CGSize {
+        width: 0.0,
+        height: 0.0,
+    };
+    if AXValueGetValue(
+        std::mem::transmute(value),
+        K_AX_VALUE_CGSIZE_TYPE,
+        &mut size as *mut CGSize as *mut std::ffi::c_void,
+    ) {
+        Some(size)
+    } else {
+        None
+    }
+}
+
+pub unsafe fn get_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    let cf_attr = cfstr("AXChildren");
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return vec![];
+    }
+    let cf_array: CFArray<CFTypeRef> = TCFType::wrap_under_create_rule(std::mem::transmute(value));
+    cf_array.iter().map(|p| *p as AXUIElementRef).collect()
+}

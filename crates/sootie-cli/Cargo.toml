@@ -1,0 +1,20 @@
+[package]
+name = "sootie-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sootie"
+path = "src/main.rs"
+
+[dependencies]
+sootie-core = { path = "../sootie-core" }
+sootie-mcp = { path = "../sootie-mcp" }
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+dirs-next = "2"
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

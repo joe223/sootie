@@ -1,3 +1,6 @@
+<div align="center">
+<img src="./sootie.png" alt="Sootie Logo" width="200">
+</div>
 <h1 align="center">Sootie</h1>
 <p align="center"><em>Cross-platform computer-use for AI agents.</em></p>
 
