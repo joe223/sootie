@@ -3,6 +3,7 @@ use std::io::{self, BufRead, Write};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 use sootie_core::platform;
 use sootie_mcp::server::SootieServer;
@@ -20,23 +21,24 @@ enum Commands {
     /// Set up permissions, MCP configuration, and optional vision model
     Setup,
     /// Start the MCP server (stdio mode)
-    Serve,
+    Serve {
+        /// Log level (trace, debug, info, warn, error)
+        #[arg(long, default_value = "info")]
+        log_level: String,
+
+        /// Log file path (optional, logs to stderr by default)
+        #[arg(long)]
+        log_file: Option<String>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Setup => run_setup(),
-        Commands::Serve => run_serve().await,
+        Commands::Serve { log_level, log_file } => run_serve(log_level, log_file).await,
     }
 }
 
@@ -93,17 +95,55 @@ fn run_setup() -> Result<()> {
     println!("      }}");
     println!("    }}");
     println!("  }}");
+    println!();
+    println!("Logging options:");
+    println!("  sootie serve --log-level debug");
+    println!("  sootie serve --log-level debug --log-file /tmp/sootie.log");
 
     Ok(())
 }
 
-async fn run_serve() -> Result<()> {
-    info!("Starting Sootie MCP server");
+async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&log_level));
+
+    if let Some(ref path) = log_file {
+        let log_dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("."));
+        std::fs::create_dir_all(log_dir)?;
+
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_file(true)
+            .with_line_number(true)
+            .with_writer(file)
+            .init();
+
+        info!(log_file = %path, "Logging to file initialized");
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_target(true)
+            .with_thread_ids(true)
+            .init();
+    }
+
+    info!(platform = std::env::consts::OS, version = env!("CARGO_PKG_VERSION"), "Sootie MCP server starting");
 
     let perception = platform::create_perception_provider();
     let action = platform::create_action_provider();
 
+    info!("Platform providers initialized");
+
     let server = SootieServer::new(perception, action);
+
+    info!("MCP server ready, waiting for requests on stdin");
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -124,7 +164,7 @@ async fn run_serve() -> Result<()> {
                 stdout.flush()?;
             }
             Err(e) => {
-                tracing::error!("Failed to parse request: {}", e);
+                tracing::error!(error = %e, raw_input = %line, "Failed to parse MCP request");
                 let error_resp = serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": null,
@@ -138,6 +178,8 @@ async fn run_serve() -> Result<()> {
             }
         }
     }
+
+    info!("Sootie MCP server shutting down");
 
     Ok(())
 }
@@ -159,11 +201,38 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_serve() {
+    fn test_cli_parse_serve_default() {
         let cli = Cli::try_parse_from(["sootie", "serve"]);
         assert!(cli.is_ok());
         match cli.unwrap().command {
-            Commands::Serve => {}
+            Commands::Serve { log_level, log_file } => {
+                assert_eq!(log_level, "info");
+                assert!(log_file.is_none());
+            }
+            _ => panic!("expected Serve command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_serve_with_log_level() {
+        let cli = Cli::try_parse_from(["sootie", "serve", "--log-level", "debug"]);
+        assert!(cli.is_ok());
+        match cli.unwrap().command {
+            Commands::Serve { log_level, .. } => {
+                assert_eq!(log_level, "debug");
+            }
+            _ => panic!("expected Serve command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_serve_with_log_file() {
+        let cli = Cli::try_parse_from(["sootie", "serve", "--log-file", "/tmp/sootie.log"]);
+        assert!(cli.is_ok());
+        match cli.unwrap().command {
+            Commands::Serve { log_file, .. } => {
+                assert_eq!(log_file, Some("/tmp/sootie.log".to_string()));
+            }
             _ => panic!("expected Serve command"),
         }
     }

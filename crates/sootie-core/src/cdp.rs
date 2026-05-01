@@ -225,6 +225,111 @@ impl CdpProvider for StubCdpProvider {
     }
 }
 
+pub struct WebSocketCdpProvider {
+    connection: Option<CdpConnection>,
+    ws_url: Option<String>,
+}
+
+impl WebSocketCdpProvider {
+    pub fn new() -> Self {
+        Self {
+            connection: None,
+            ws_url: None,
+        }
+    }
+}
+
+impl Default for WebSocketCdpProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl CdpProvider for WebSocketCdpProvider {
+    async fn connect(&mut self, connection: &CdpConnection) -> Result<(), CdpError> {
+        let http_url = connection.endpoint_url();
+        let json_url = format!("{}{}", http_url, "/json");
+        
+        let client = reqwest::Client::new();
+        let response = client.get(&json_url)
+            .send()
+            .await
+            .map_err(|e| CdpError::ConnectionFailed(e.to_string()))?;
+        
+        let targets: Vec<serde_json::Value> = response.json()
+            .await
+            .map_err(|e| CdpError::ConnectionFailed(e.to_string()))?;
+        
+        let ws_url = if let Some(ref url) = connection.ws_url {
+            url.clone()
+        } else if let Some(first_target) = targets.first() {
+            first_target.get("webSocketDebuggerUrl")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| CdpError::ConnectionFailed("No WebSocket URL found".to_string()))?
+        } else {
+            return Err(CdpError::ConnectionFailed("No targets available".to_string()));
+        };
+        
+        self.ws_url = Some(ws_url);
+        self.connection = Some(connection.clone());
+        
+        Ok(())
+    }
+
+    async fn list_pages(&self) -> Result<Vec<CdpPage>, CdpError> {
+        Err(CdpError::NotImplemented("list_pages requires WebSocket session".to_string()))
+    }
+
+    async fn find_elements(
+        &self,
+        _page_id: &str,
+        _selector: &Selector,
+    ) -> Result<Vec<CdpElement>, CdpError> {
+        Err(CdpError::NotImplemented("find_elements requires WebSocket session".to_string()))
+    }
+
+    async fn click_element(
+        &self,
+        _page_id: &str,
+        _node_id: u32,
+        _button: &str,
+        _click_count: u32,
+    ) -> Result<(), CdpError> {
+        Err(CdpError::NotImplemented("click_element requires WebSocket session".to_string()))
+    }
+
+    async fn type_text(
+        &self,
+        _page_id: &str,
+        _node_id: Option<u32>,
+        _text: &str,
+        _clear_first: bool,
+    ) -> Result<(), CdpError> {
+        Err(CdpError::NotImplemented("type_text requires WebSocket session".to_string()))
+    }
+
+    async fn press_key(&self, _page_id: &str, _key: &str) -> Result<(), CdpError> {
+        Err(CdpError::NotImplemented("press_key requires WebSocket session".to_string()))
+    }
+
+    async fn scroll(
+        &self,
+        _page_id: &str,
+        _x: f64,
+        _y: f64,
+        _delta_x: f64,
+        _delta_y: f64,
+    ) -> Result<(), CdpError> {
+        Err(CdpError::NotImplemented("scroll requires WebSocket session".to_string()))
+    }
+
+    async fn screenshot(&self, _page_id: &str) -> Result<ScreenshotData, CdpError> {
+        Err(CdpError::NotImplemented("screenshot requires WebSocket session".to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +687,38 @@ mod tests {
         let json = serde_json::to_string(&element).unwrap();
         let deserialized: CdpElement = serde_json::from_str(&json).unwrap();
         assert!(deserialized.bounds.is_none());
+    }
+
+    #[test]
+    fn test_websocket_cdp_provider_new() {
+        let provider = WebSocketCdpProvider::new();
+        assert!(provider.connection.is_none());
+        assert!(provider.ws_url.is_none());
+    }
+
+    #[test]
+    fn test_websocket_cdp_provider_default() {
+        let provider = WebSocketCdpProvider::default();
+        assert!(provider.connection.is_none());
+        assert!(provider.ws_url.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_websocket_cdp_provider_list_pages_not_implemented() {
+        let provider = WebSocketCdpProvider::new();
+        assert!(provider.list_pages().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_websocket_cdp_provider_find_elements_not_implemented() {
+        let provider = WebSocketCdpProvider::new();
+        let selector = Selector::new().with_role("button");
+        assert!(provider.find_elements("page_1", &selector).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_websocket_cdp_provider_click_element_not_implemented() {
+        let provider = WebSocketCdpProvider::new();
+        assert!(provider.click_element("page_1", 123, "left", 1).await.is_err());
     }
 }

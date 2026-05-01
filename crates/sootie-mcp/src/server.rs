@@ -1,15 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::Mutex;
-use tracing::{debug, error};
+use tracing::{error, info, warn};
 
 use sootie_core::action::{
     ActionProvider, ClickAction, DragAction, FocusAction, HotkeyAction, HoverAction,
-    PressAction, ScrollAction, TypeAction, WindowAction, WindowOperation,
+    LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction, WindowOperation,
 };
+use sootie_core::logging::{SootieLogger, LogConfig, ToolCallLog, create_duration_ms};
 use sootie_core::perception::{PerceptionProvider, WaitCondition};
 use sootie_core::recipe::{Recipe, RecipeEngine, StepTarget};
+use sootie_core::selector::AppSelector;
 
 use crate::tools::{
     all_tools, parse_action_target, parse_mouse_button, parse_scroll_direction,
@@ -24,6 +27,7 @@ pub struct SootieServer {
     perception: Arc<Box<dyn PerceptionProvider>>,
     action: Arc<Box<dyn ActionProvider>>,
     recipe_engine: Arc<Mutex<RecipeEngine>>,
+    logger: SootieLogger,
 }
 
 impl SootieServer {
@@ -32,12 +36,14 @@ impl SootieServer {
             perception: Arc::new(perception),
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(RecipeEngine::new())),
+            logger: SootieLogger::new(LogConfig::default()),
         }
     }
 
     pub async fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
         let id = request.id.clone();
-        debug!("Handling request: {}", request.method);
+        let start = Instant::now();
+        self.logger.log_mcp_request(&request.method, &id);
 
         let result = match request.method.as_str() {
             "initialize" => self.handle_initialize(),
@@ -50,15 +56,24 @@ impl SootieServer {
                 }
             }
             "notifications/initialized" => {
+                info!("Client initialized notification received");
                 return JsonRpcResponse::success(id, serde_json::json!(null));
             }
-            _ => Err((-32601, format!("Unknown method: {}", request.method))),
+            _ => {
+                warn!(method = %request.method, "Unknown MCP method");
+                Err((-32601, format!("Unknown method: {}", request.method)))
+            }
         };
 
+        let duration = start.elapsed();
         match result {
-            Ok(value) => JsonRpcResponse::success(id, value),
+            Ok(value) => {
+                self.logger.log_mcp_response(&request.method, true, duration);
+                JsonRpcResponse::success(id, value)
+            }
             Err((code, msg)) => {
-                error!("Error handling {}: {}", request.method, msg);
+                error!(method = %request.method, error = %msg, "MCP request failed");
+                self.logger.log_mcp_response(&request.method, false, duration);
                 JsonRpcResponse::error(id, code, msg)
             }
         }
@@ -91,6 +106,8 @@ impl SootieServer {
         &self,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, (i64, String)> {
+        let start = Instant::now();
+
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
@@ -101,7 +118,8 @@ impl SootieServer {
             .cloned()
             .unwrap_or(serde_json::json!({}));
 
-        debug!("Tool call: {} with args: {}", name, args);
+        let request_id = params.get("id").cloned();
+        info!(tool = %name, args = %args, "Tool call started");
 
         let result = match name {
             "sootie_context" => self.tool_context().await,
@@ -116,17 +134,33 @@ impl SootieServer {
             "sootie_scroll" => self.tool_scroll(&args).await,
             "sootie_hover" => self.tool_hover(&args).await,
             "sootie_drag" => self.tool_drag(&args).await,
+            "sootie_launch" => self.tool_launch(&args).await,
             "sootie_focus" => self.tool_focus(&args).await,
             "sootie_window" => self.tool_window(&args).await,
             "sootie_recipes" => self.tool_recipes().await,
             "sootie_run" => self.tool_run(&args).await,
             "sootie_recipe_save" => self.tool_recipe_save(&args).await,
             "sootie_recipe_delete" => self.tool_recipe_delete(&args).await,
-            _ => return Err((-32601, format!("Unknown tool: {}", name))),
+            _ => {
+                warn!(tool = %name, "Unknown tool requested");
+                return Err((-32601, format!("Unknown tool: {}", name)));
+            }
         };
+
+        let duration_ms = create_duration_ms(start);
 
         match result {
             Ok(value) => {
+                self.logger.log_tool_call(&ToolCallLog {
+                    tool_name: name.to_string(),
+                    request_id,
+                    arguments: args,
+                    success: true,
+                    error_message: None,
+                    duration_ms,
+                    backend_used: None,
+                });
+
                 let call_result = CallToolResult {
                     content: vec![ToolContent::text(&value)],
                     is_error: None,
@@ -134,6 +168,16 @@ impl SootieServer {
                 serde_json::to_value(call_result).map_err(|e| (-32603, e.to_string()))
             }
             Err(msg) => {
+                self.logger.log_tool_call(&ToolCallLog {
+                    tool_name: name.to_string(),
+                    request_id,
+                    arguments: args,
+                    success: false,
+                    error_message: Some(msg.clone()),
+                    duration_ms,
+                    backend_used: None,
+                });
+
                 let call_result = CallToolResult {
                     content: vec![ToolContent::text(&msg)],
                     is_error: Some(true),
@@ -383,6 +427,34 @@ impl SootieServer {
         serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
     }
 
+    async fn tool_launch(&self, args: &serde_json::Value) -> Result<String, String> {
+        let app = args.get("app")
+            .ok_or("Missing required field: app")?;
+
+        let app_selector = if let Some(s) = app.as_str() {
+            AppSelector::from_name(s)
+        } else {
+            serde_json::from_value::<AppSelector>(app.clone())
+                .map_err(|e| format!("Invalid app selector: {}", e))?
+        };
+
+        let args_list: Vec<String> = args.get("args")
+            .and_then(|a| serde_json::from_value::<Vec<String>>(a.clone()).ok())
+            .unwrap_or_default();
+
+        let action = LaunchAction {
+            app: app_selector,
+            args: args_list,
+        };
+
+        let result = self
+            .action
+            .launch(&action)
+            .await
+            .map_err(|e| format!("Launch failed: {}", e))?;
+        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+    }
+
     async fn tool_window(&self, args: &serde_json::Value) -> Result<String, String> {
         let selector = parse_selector_from_args(args);
         let op_str = args
@@ -545,7 +617,7 @@ mod tests {
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 19);
     }
 
     #[tokio::test]

@@ -6,3 +6,4 @@ pub mod cdp;
 pub mod vision;
 pub mod recipe;
 pub mod platform;
+pub mod logging;

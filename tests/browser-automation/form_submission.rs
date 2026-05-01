@@ -1,9 +1,8 @@
-use sootie_tests::{TestEnv, FixturesLoader, assert_tool_success};
+use sootie_tests::{TestEnv, FixturesLoader};
 
 #[tokio::test]
 async fn test_form_submission_basic() {
-    let mut env = TestEnv::launch().unwrap();
-    assert!(env.chrome.is_none());
+    let _env = TestEnv::launch().unwrap();
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 use sootie_core::selector::Bounds;
-use sootie_core::perception::Coordinate;
+use sootie_core::selector::Coordinate;
 use serde_json::Value;
 
 pub fn assert_coordinate_in_bounds(coord: Coordinate, bounds: Bounds) {

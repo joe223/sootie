@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::selector::{Coordinate, Element, Selector};
+use crate::selector::{AppSelector, Coordinate, Element, Selector};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -89,6 +89,13 @@ pub struct FocusAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchAction {
+    pub app: AppSelector,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowAction {
     pub selector: Selector,
     pub operation: WindowOperation,
@@ -161,6 +168,8 @@ pub trait ActionProvider: Send + Sync {
 
     async fn focus(&self, action: &FocusAction) -> Result<ActionResult, ActionError>;
 
+    async fn launch(&self, action: &LaunchAction) -> Result<ActionResult, ActionError>;
+
     async fn window_op(&self, action: &WindowAction) -> Result<ActionResult, ActionError>;
 }
 
@@ -197,6 +206,10 @@ impl ActionProvider for StubActionProvider {
     }
 
     async fn focus(&self, _action: &FocusAction) -> Result<ActionResult, ActionError> {
+        Err(ActionError::NotImplemented("stub provider".to_string()))
+    }
+
+    async fn launch(&self, _action: &LaunchAction) -> Result<ActionResult, ActionError> {
         Err(ActionError::NotImplemented("stub provider".to_string()))
     }
 

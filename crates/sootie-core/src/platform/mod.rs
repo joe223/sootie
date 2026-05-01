@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 pub mod macos;
 
 #[cfg(target_os = "linux")]
@@ -16,11 +17,11 @@ pub fn create_perception_provider() -> Box<dyn PerceptionProvider> {
     }
     #[cfg(target_os = "linux")]
     {
-        Box::new(linux::LinuxPerceptionProvider::new())
+        Box::new(linux::perception::LinuxPerceptionProvider::new())
     }
     #[cfg(target_os = "windows")]
     {
-        Box::new(windows::WindowsPerceptionProvider::new())
+        Box::new(windows::perception::WindowsPerceptionProvider::new())
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
@@ -35,11 +36,11 @@ pub fn create_action_provider() -> Box<dyn ActionProvider> {
     }
     #[cfg(target_os = "linux")]
     {
-        Box::new(linux::LinuxActionProvider::new())
+        Box::new(linux::action::LinuxActionProvider::new())
     }
     #[cfg(target_os = "windows")]
     {
-        Box::new(windows::WindowsActionProvider::new())
+        Box::new(windows::action::WindowsActionProvider::new())
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {

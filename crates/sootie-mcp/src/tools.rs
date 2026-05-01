@@ -20,6 +20,7 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         action_scroll(),
         action_hover(),
         action_drag(),
+        app_launch(),
         window_focus(),
         window_op(),
         workflow_recipes(),
@@ -323,6 +324,27 @@ fn window_focus() -> ToolDefinition {
     }
 }
 
+fn app_launch() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_launch".to_string(),
+        description: "Launch or open an application".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "app": {
+                    "description": "App name or bundle identifier"
+                },
+                "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional arguments to pass to the app"
+                }
+            },
+            "required": ["app"]
+        }),
+    }
+}
+
 fn window_op() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_window".to_string(),
@@ -506,7 +528,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 19);
     }
 
     #[test]
