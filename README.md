@@ -67,6 +67,32 @@ Built in Rust. Single binary. No runtime dependencies.
 | Browser control | CDP | CDP | CDP |
 | Visual fallback | GUI-Actor-2B (ONNX) | GUI-Actor-2B (ONNX) | GUI-Actor-2B (ONNX) |
 
+## Testing
+
+Sootie has comprehensive E2E tests covering all MCP tools and user scenarios.
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test --workspace
+
+# Run E2E tests
+cargo test --package sootie-tests
+
+# Run with coverage
+./tests/scripts/run-tests-with-coverage.sh
+```
+
+### Test Architecture
+
+- **tests/ directory**: Independent black-box E2E tests
+- **TestEnv**: Auto-launch Chrome/HTTP servers
+- **FixturesLoader**: Centralized test data management
+- **Coverage target**: 80%+ statements, 90%+ functions
+
+See [docs/superpowers/specs/2026-05-02-e2e-test-architecture-design.md](docs/superpowers/specs/2026-05-02-e2e-test-architecture-design.md) for full design.
+
 ## Action Cascade Architecture
 
 Sootie is designed around a reliable, multi-tier fallback architecture. It attempts to execute every action using the fastest, most precise method available, automatically degrading to visual models only when structured data fails.
@@ -203,6 +229,7 @@ Action tools accept either a structured `target` (using the Selector Scheme) or 
 
 | Tool | What it does | Additional Parameters |
 |------|-------------|----------------------|
+| `sootie_launch` | Launch a desktop app | None |
 | `sootie_click` | Click a resolved target or coordinates | `button` (left/right/middle), `count` (1/2/3) |
 | `sootie_type` | Type into a resolved target or current cursor | `text` (string), `clear_first` (boolean) |
 | `sootie_press` | Press a single key | `key` (e.g., "Return", "Tab", "Escape") |
