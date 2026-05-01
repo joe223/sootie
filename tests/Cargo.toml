@@ -1,0 +1,20 @@
+[package]
+name = "sootie-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sootie-core = { path = "../crates/sootie-core" }
+sootie-mcp = { path = "../crates/sootie-mcp" }
+tokio = { version = "1", features = ["full", "test-util"] }
+serde_json = "1"
+image = "0.25"
+reqwest = { version = "0.12", features = ["json"] }
+anyhow = "1"
+
+[dev-dependencies]
+cargo-llvm-cov = "0.5"
+
+[[test]]
+name = "browser_automation"
+path = "browser-automation/mod.rs"

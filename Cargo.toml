@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/sootie-core", "crates/sootie-cli", "crates/sootie-mcp"]
+members = ["crates/sootie-core", "crates/sootie-cli", "crates/sootie-mcp", "tests"]
 resolver = "2"
 
 [workspace.package]
