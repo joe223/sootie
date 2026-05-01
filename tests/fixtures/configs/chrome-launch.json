@@ -1,0 +1,6 @@
+{
+  "headless": true,
+  "disable_gpu": true,
+  "no_first_run": true,
+  "disable_extensions": true
+}
