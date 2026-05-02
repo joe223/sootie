@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(config, deserialized);
     }
 
-    #[test]
+#[test]
     fn test_tool_call_log_serialize() {
         let log = ToolCallLog {
             tool_name: "sootie_click".to_string(),
@@ -305,15 +305,213 @@ mod tests {
             arguments: serde_json::json!({"button": "left"}),
             success: true,
             error_message: None,
-            duration_ms: 42,
+            duration_ms: 50,
             backend_used: Some("cgevent".to_string()),
         };
 
-        let json = serde_json::to_string_pretty(&log).unwrap();
+        let json = serde_json::to_string(&log).unwrap();
         let deserialized: ToolCallLog = serde_json::from_str(&json).unwrap();
         assert_eq!(log.tool_name, deserialized.tool_name);
+        assert_eq!(log.success, deserialized.success);
         assert_eq!(log.duration_ms, deserialized.duration_ms);
     }
+    
+    #[test]
+    fn test_perception_log_serialize() {
+        let log = PerceptionLog {
+            operation: "find".to_string(),
+            selector: Some(serde_json::json!({"role": "button"})),
+            success: true,
+            result_summary: "Found 3 elements".to_string(),
+            duration_ms: 25,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        let deserialized: PerceptionLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(log.operation, deserialized.operation);
+        assert_eq!(log.success, deserialized.success);
+    }
+    
+    #[test]
+    fn test_action_log_serialize() {
+        let log = ActionLog {
+            action_type: "click".to_string(),
+            target: Some("button".to_string()),
+            coordinate: Some((100.0, 200.0)),
+            success: true,
+            backend_used: Some("cgevent".to_string()),
+            error_message: None,
+            duration_ms: 10,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        let deserialized: ActionLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(log.action_type, deserialized.action_type);
+        assert_eq!(log.coordinate, deserialized.coordinate);
+    }
+    
+    #[test]
+    fn test_cascade_log_serialize() {
+        let log = CascadeLog {
+            step: "click".to_string(),
+            backend: "accessibility".to_string(),
+            success: true,
+            fallback_triggered: false,
+            duration_ms: 15,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        let deserialized: CascadeLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(log.step, deserialized.step);
+        assert_eq!(log.fallback_triggered, deserialized.fallback_triggered);
+    }
+    
+    #[test]
+    fn test_recipe_log_serialize() {
+        let log = RecipeLog {
+            operation: "run".to_string(),
+            recipe_name: "gmail-compose".to_string(),
+            step_count: Some(5),
+            params_provided: Some(vec!["recipient".to_string()]),
+            success: true,
+            error_message: None,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        let deserialized: RecipeLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(log.recipe_name, deserialized.recipe_name);
+        assert_eq!(log.step_count, deserialized.step_count);
+    }
+    
+    #[test]
+    fn test_log_level_serialize() {
+        assert_eq!(serde_json::to_string(&LogLevel::Debug).unwrap(), "\"debug\"");
+        assert_eq!(serde_json::to_string(&LogLevel::Info).unwrap(), "\"info\"");
+        assert_eq!(serde_json::to_string(&LogLevel::Warn).unwrap(), "\"warn\"");
+        assert_eq!(serde_json::to_string(&LogLevel::Error).unwrap(), "\"error\"");
+        assert_eq!(serde_json::to_string(&LogLevel::Trace).unwrap(), "\"trace\"");
+    }
+    
+    #[test]
+    fn test_log_level_deserialize() {
+        let debug: LogLevel = serde_json::from_str("\"debug\"").unwrap();
+        assert_eq!(debug, LogLevel::Debug);
+        
+        let info: LogLevel = serde_json::from_str("\"info\"").unwrap();
+        assert_eq!(info, LogLevel::Info);
+    }
+    
+    #[test]
+    fn test_sootie_logger_new() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        assert!(logger.config.log_tool_calls);
+    }
+    
+    #[test]
+    fn test_sootie_logger_disabled_logs() {
+        let config = LogConfig {
+            level: LogLevel::Info,
+            file_path: None,
+            log_tool_calls: false,
+            log_perception: false,
+            log_actions: false,
+            log_cascade: false,
+            log_recipes: false,
+        };
+        let logger = SootieLogger::new(config);
+        
+        let tool_log = ToolCallLog {
+            tool_name: "test".to_string(),
+            request_id: None,
+            arguments: serde_json::json!({}),
+            success: true,
+            error_message: None,
+            duration_ms: 0,
+            backend_used: None,
+        };
+        
+        logger.log_tool_call(&tool_log);
+        // Should not crash when disabled
+    }
+    
+    #[test]
+    fn test_tool_call_log_error_path() {
+        let log = ToolCallLog {
+            tool_name: "sootie_click".to_string(),
+            request_id: Some(serde_json::Value::Number(1.into())),
+            arguments: serde_json::json!({"button": "left"}),
+            success: false,
+            error_message: Some("Permission denied".to_string()),
+            duration_ms: 50,
+            backend_used: None,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        assert!(json.contains("Permission denied"));
+        assert!(json.contains("false"));
+    }
+    
+    #[test]
+    fn test_perception_log_error_path() {
+        let log = PerceptionLog {
+            operation: "find".to_string(),
+            selector: None,
+            success: false,
+            result_summary: "".to_string(),
+            duration_ms: 10,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        assert!(json.contains("false"));
+    }
+    
+    #[test]
+    fn test_action_log_error_path() {
+        let log = ActionLog {
+            action_type: "click".to_string(),
+            target: None,
+            coordinate: None,
+            success: false,
+            backend_used: None,
+            error_message: Some("Failed to click".to_string()),
+            duration_ms: 5,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        assert!(json.contains("Failed to click"));
+    }
+    
+    #[test]
+    fn test_cascade_log_fallback_path() {
+        let log = CascadeLog {
+            step: "click".to_string(),
+            backend: "vision".to_string(),
+            success: true,
+            fallback_triggered: true,
+            duration_ms: 150,
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        assert!(json.contains("true"));
+        assert!(json.contains("vision"));
+    }
+    
+    #[test]
+    fn test_recipe_log_error_path() {
+        let log = RecipeLog {
+            operation: "run".to_string(),
+            recipe_name: "test".to_string(),
+            step_count: None,
+            params_provided: None,
+            success: false,
+            error_message: Some("Missing parameter".to_string()),
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        assert!(json.contains("Missing parameter"));
+    }
+}
 
     #[test]
     fn test_perception_log_serialize() {
