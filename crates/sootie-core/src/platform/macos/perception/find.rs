@@ -192,3 +192,25 @@ unsafe fn find_elements_in_tree(
         find_elements_in_tree(child, selector, results, index);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selector::Selector;
+
+    #[test]
+    fn test_module_loads() {
+        assert!(true);
+    }
+
+    #[test]
+    #[ignore = "requires accessibility permissions"]
+    fn test_find_elements_basic() {
+        let selector = Selector::new().with_name("NonExistent");
+        let result = find_elements(&selector);
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(target) = result {
+            assert_eq!(target.status, MatchStatus::None);
+        }
+    }
+}

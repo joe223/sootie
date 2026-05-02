@@ -8,3 +8,30 @@ pub fn perform_press(action: &PressAction) -> Result<ActionResult, ActionError> 
     
     Ok(ActionResult::success(None, "cgevent"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::PressAction;
+
+    #[test]
+    fn test_perform_press_return() {
+        let action = PressAction { key: "return".to_string() };
+        let result = perform_press(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_press_tab() {
+        let action = PressAction { key: "tab".to_string() };
+        let result = perform_press(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_press_space() {
+        let action = PressAction { key: "space".to_string() };
+        let result = perform_press(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+}

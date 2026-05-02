@@ -221,7 +221,7 @@ impl ActionProvider for StubActionProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::selector::{AppSelector, Bounds, ElementState, WindowSelector};
+    use crate::selector::AppSelector;
 
     // ========== ActionTarget Tests ==========
 

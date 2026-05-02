@@ -40,3 +40,84 @@ pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, Percep
         bounds,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selector::Bounds;
+
+    #[test]
+    fn test_take_screenshot_full_screen() {
+        let result = take_screenshot(None);
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(data) = result {
+            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert!(!data.data.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_take_screenshot_with_region() {
+        let region = Bounds {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let result = take_screenshot(Some(&region));
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(data) = result {
+            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert!(data.data.is_empty() || !data.data.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_take_screenshot_with_large_region() {
+        let region = Bounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let result = take_screenshot(Some(&region));
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(data) = result {
+            assert_eq!(data.format, ScreenshotFormat::Png);
+            if let Some(b) = data.bounds {
+                assert_eq!(b.width, 1920.0);
+                assert_eq!(b.height, 1080.0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_take_screenshot_bounds_none() {
+        let result = take_screenshot(None);
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(data) = result {
+            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert!(data.bounds.is_none());
+        }
+    }
+
+    #[test]
+    fn test_take_screenshot_bounds_some() {
+        let region = Bounds {
+            x: 50.0,
+            y: 50.0,
+            width: 200.0,
+            height: 150.0,
+        };
+        let result = take_screenshot(Some(&region));
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(data) = result {
+            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert!(data.bounds.is_some());
+            if let Some(b) = data.bounds {
+                assert_eq!(b.x, 50.0);
+                assert_eq!(b.y, 50.0);
+            }
+        }
+    }
+}

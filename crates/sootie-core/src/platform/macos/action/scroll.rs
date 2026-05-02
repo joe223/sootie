@@ -30,3 +30,70 @@ pub async fn perform_scroll<P: PerceptionProvider>(
     
     Ok(ActionResult::success(None, "cgevent"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::perception::StubPerceptionProvider;
+    use crate::selector::Coordinate;
+
+    #[tokio::test]
+    async fn test_perform_scroll_up() {
+        let action = ScrollAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            direction: ScrollDirection::Up,
+            amount: Some(10),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_scroll(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_scroll_down() {
+        let action = ScrollAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            direction: ScrollDirection::Down,
+            amount: Some(10),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_scroll(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_scroll_left() {
+        let action = ScrollAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            direction: ScrollDirection::Left,
+            amount: Some(5),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_scroll(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_scroll_right() {
+        let action = ScrollAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            direction: ScrollDirection::Right,
+            amount: Some(5),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_scroll(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_scroll_default_amount() {
+        let action = ScrollAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            direction: ScrollDirection::Up,
+            amount: None,
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_scroll(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+}

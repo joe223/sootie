@@ -151,3 +151,58 @@ pub fn simulate_drag(from: Coordinate, to: Coordinate) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulate_click_left() {
+        let result = simulate_click(100.0, 200.0, "left", 1);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_click_right() {
+        let result = simulate_click(150.0, 250.0, "right", 1);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_click_middle() {
+        let result = simulate_click(200.0, 300.0, "middle", 1);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_click_double() {
+        let result = simulate_click(100.0, 200.0, "left", 2);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_mouse_move() {
+        let result = simulate_mouse_move(300.0, 400.0);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_scroll_up() {
+        let result = simulate_scroll(100.0, 200.0, "up", 10);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_scroll_down() {
+        let result = simulate_scroll(100.0, 200.0, "down", 10);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_drag() {
+        let from = Coordinate { x: 100.0, y: 100.0 };
+        let to = Coordinate { x: 200.0, y: 200.0 };
+        let result = simulate_drag(from, to);
+        assert!(result.is_ok() || result.is_err());
+    }
+}

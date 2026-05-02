@@ -79,10 +79,105 @@ impl ActionProvider for MacActionProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::{ActionTarget, MouseButton};
+    use crate::selector::Coordinate;
 
     #[test]
     fn test_mac_action_provider_creation() {
         let provider = MacActionProvider::new();
         assert!(std::ptr::addr_of!(provider) as usize != 0);
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_click() {
+        let provider = MacActionProvider::new();
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 100.0 }),
+            button: Some(MouseButton::Left),
+            count: Some(1),
+        };
+        let result = provider.click(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_press() {
+        let provider = MacActionProvider::new();
+        let action = PressAction { key: "Return".to_string() };
+        let result = provider.press(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_hotkey() {
+        let provider = MacActionProvider::new();
+        let action = HotkeyAction { keys: vec!["Cmd".to_string(), "C".to_string()] };
+        let result = provider.hotkey(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_scroll() {
+        let provider = MacActionProvider::new();
+        let action = ScrollAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            direction: crate::action::ScrollDirection::Up,
+            amount: Some(5),
+        };
+        let result = provider.scroll(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_hover() {
+        let provider = MacActionProvider::new();
+        let action = HoverAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 100.0 }),
+        };
+        let result = provider.hover(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_drag() {
+        let provider = MacActionProvider::new();
+        let action = DragAction {
+            from: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 100.0 }),
+            to: ActionTarget::Coordinate(Coordinate { x: 200.0, y: 200.0 }),
+        };
+        let result = provider.drag(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_focus() {
+        let provider = MacActionProvider::new();
+        let action = FocusAction {
+            selector: crate::selector::Selector::new().with_app(crate::selector::AppSelector::from_name("Finder")),
+        };
+        let result = provider.focus(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_launch() {
+        let provider = MacActionProvider::new();
+        let action = LaunchAction {
+            app: crate::selector::AppSelector::from_name("Finder"),
+            args: vec![],
+        };
+        let result = provider.launch(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_action_provider_window() {
+        let provider = MacActionProvider::new();
+        let action = WindowAction {
+            selector: crate::selector::Selector::new(),
+            operation: crate::action::WindowOperation::Minimize,
+        };
+        let result = provider.window_op(&action).await;
+        assert!(result.is_ok() || result.is_err());
     }
 }

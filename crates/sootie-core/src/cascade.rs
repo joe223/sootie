@@ -183,18 +183,61 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_resolve_coordinate_passthrough() {
-        let provider = StubPerceptionProvider;
+#[tokio::test]
+    async fn test_resolve_selector_with_vision_fallback() {
+        let provider = MockPerceptionProvider::empty();
         let cascade = Cascade::new(provider);
 
-        let coord = Coordinate { x: 100.0, y: 200.0 };
-        let target = ActionTarget::Coordinate(coord.clone());
+        let selector = Selector::new().with_name("Submit");
+        let target = ActionTarget::Selector(selector);
 
-        let (resolved, backend) = cascade.resolve_coordinate(&target).await.unwrap();
-        assert_eq!(resolved.x, 100.0);
-        assert_eq!(resolved.y, 200.0);
-        assert_eq!(backend, None);
+        let result = cascade.resolve_coordinate(&target).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ActionError::NotImplemented(msg) => {
+                assert!(msg.contains("vision"));
+            }
+            _ => panic!("Expected NotImplemented error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_selector_no_unique_match() {
+        let element = make_element(100.0, 200.0, 50.0, 30.0);
+        let resolved = ResolvedTarget {
+            status: MatchStatus::None,
+            total_matches: 0,
+            app: None,
+            window: None,
+            elements: vec![element],
+        };
+        let provider = MockPerceptionProvider::with_find_result(resolved);
+        let cascade = Cascade::new(provider);
+
+        let selector = Selector::new().with_role("button");
+        let target = ActionTarget::Selector(selector);
+
+        let result = cascade.resolve_coordinate(&target).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_selector_perception_error() {
+        let provider = MockPerceptionProvider::empty();
+        let cascade = Cascade::new(provider);
+
+        let selector = Selector::new().with_name("NonExistent");
+        let target = ActionTarget::Selector(selector);
+
+        let result = cascade.resolve_coordinate(&target).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_backend_display() {
+        assert_eq!(Backend::AtTree.to_string(), "at_tree");
+        assert_eq!(Backend::Cdp.to_string(), "cdp");
+        assert_eq!(Backend::Vision.to_string(), "vision");
     }
 
     #[tokio::test]
@@ -262,12 +305,5 @@ mod tests {
         assert_eq!(coord.x, 340.0);
         assert_eq!(coord.y, 415.0);
         assert_eq!(backend, Some(Backend::AtTree));
-    }
-
-    #[test]
-    fn test_backend_display() {
-        assert_eq!(Backend::AtTree.to_string(), "at_tree");
-        assert_eq!(Backend::Cdp.to_string(), "cdp");
-        assert_eq!(Backend::Vision.to_string(), "vision");
     }
 }

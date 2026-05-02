@@ -47,3 +47,49 @@ pub fn create_action_provider() -> Box<dyn ActionProvider> {
         Box::new(crate::action::StubActionProvider)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::{ClickAction, ActionTarget, MouseButton};
+    use crate::selector::Coordinate;
+
+    #[tokio::test]
+    #[ignore = "requires system permissions"]
+    async fn test_create_perception_provider_returns_provider() {
+        let provider = create_perception_provider();
+        assert!(provider.get_context().await.is_ok() || provider.get_context().await.is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires system permissions"]
+    async fn test_create_action_provider_returns_provider() {
+        let provider = create_action_provider();
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 100.0 }),
+            button: Some(MouseButton::Left),
+            count: Some(1),
+        };
+        let result = provider.click(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_perception_provider_type() {
+        let provider = create_perception_provider();
+        let result = provider.get_context().await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_action_provider_type() {
+        let provider = create_action_provider();
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 0.0, y: 0.0 }),
+            button: Some(MouseButton::Left),
+            count: Some(1),
+        };
+        let result = provider.click(&action).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+}

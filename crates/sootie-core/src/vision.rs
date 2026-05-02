@@ -287,6 +287,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_local_model_provider_with_valid_screenshot() {
+        use std::io::Write;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let model_path = temp_dir.path().join("test_model.onnx");
+        let mut model_file = std::fs::File::create(&model_path).unwrap();
+        model_file.write_all(&[0u8; 100]).unwrap();
+        
+        let config = LocalModelConfig {
+            model_path: model_path.to_str().unwrap().to_string(),
+            use_gpu: false,
+        };
+        
+        let provider = LocalModelProvider::new(config);
+        
+        let img = image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(100, 100, vec![255u8; 100 * 100 * 4]).unwrap()
+        );
+        let mut png_bytes = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png).unwrap();
+        
+        let request = VisionRequest {
+            screenshot: ScreenshotData {
+                format: ScreenshotFormat::Png,
+                data: png_bytes,
+                bounds: Some(Bounds {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                }),
+            },
+            target_description: "Submit button".to_string(),
+            context: Some("Form page".to_string()),
+        };
+        
+        let result = provider.detect(&request).await;
+        assert!(result.is_ok());
+        let vision_result = result.unwrap();
+        assert_eq!(vision_result.model_used, "gui-actor-2b");
+        assert!(vision_result.confidence > 0.0);
+    }
+
+    #[test]
+    fn test_cloud_vlm_provider_new() {
+        let config = CloudVlmConfig {
+            api_url: "https://api.example.com".to_string(),
+            api_key: None,
+            model: "test-model".to_string(),
+        };
+        let provider = CloudVlmProvider::new(config);
+        let _ = provider;
+    }
+
+    #[tokio::test]
+    async fn test_cloud_vlm_provider_detect_not_implemented() {
+        let config = CloudVlmConfig {
+            api_url: "https://api.example.com".to_string(),
+            api_key: Some("test-key".to_string()),
+            model: "test-model".to_string(),
+        };
+        let provider = CloudVlmProvider::new(config);
+        
+        let request = VisionRequest {
+            screenshot: ScreenshotData {
+                format: ScreenshotFormat::Png,
+                data: vec![],
+                bounds: None,
+            },
+            target_description: "test".to_string(),
+            context: None,
+        };
+        
+        let result = provider.detect(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            VisionError::NotImplemented(_) => {}
+            _ => panic!("Expected NotImplemented"),
+        }
+    }
+
+    #[test]
+    fn test_vision_error_variants() {
+        let err1 = VisionError::InferenceFailed("test error".to_string());
+        assert!(err1.to_string().contains("test error"));
+        
+        let err2 = VisionError::NotDetected("button".to_string());
+        assert!(err2.to_string().contains("button"));
+        
+        let err3 = VisionError::NetworkError("timeout".to_string());
+        assert!(err3.to_string().contains("timeout"));
+        
+        let err5 = VisionError::NotImplemented("stub".to_string());
+        assert!(err5.to_string().contains("stub"));
+    }
+
+    #[tokio::test]
     async fn test_stub_vision_provider_returns_not_implemented() {
         let provider = StubVisionProvider;
         

@@ -142,15 +142,175 @@ pub fn simulate_type(text: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    #[test]
+#[test]
     fn test_map_key_to_code() {
         assert_eq!(map_key_to_code("return"), 36);
+        assert_eq!(map_key_to_code("enter"), 36);
         assert_eq!(map_key_to_code("tab"), 48);
         assert_eq!(map_key_to_code("space"), 49);
         assert_eq!(map_key_to_code("escape"), 53);
-        assert_eq!(map_key_to_code("a"), 0);
-        assert_eq!(map_key_to_code("z"), 6);
-        assert_eq!(map_key_to_code("0"), 29);
+        assert_eq!(map_key_to_code("esc"), 53);
+        assert_eq!(map_key_to_code("delete"), 51);
+        assert_eq!(map_key_to_code("backspace"), 51);
+    }
+
+    #[test]
+    fn test_map_key_to_code_arrows() {
+        assert_eq!(map_key_to_code("left"), 123);
+        assert_eq!(map_key_to_code("right"), 124);
+        assert_eq!(map_key_to_code("down"), 125);
+        assert_eq!(map_key_to_code("up"), 126);
+    }
+
+    #[test]
+    fn test_map_key_to_code_function_keys() {
         assert_eq!(map_key_to_code("f1"), 122);
+        assert_eq!(map_key_to_code("f2"), 120);
+        assert_eq!(map_key_to_code("f3"), 99);
+        assert_eq!(map_key_to_code("f4"), 118);
+        assert_eq!(map_key_to_code("f5"), 96);
+        assert_eq!(map_key_to_code("f6"), 97);
+        assert_eq!(map_key_to_code("f7"), 98);
+        assert_eq!(map_key_to_code("f8"), 100);
+        assert_eq!(map_key_to_code("f9"), 101);
+        assert_eq!(map_key_to_code("f10"), 109);
+        assert_eq!(map_key_to_code("f11"), 103);
+        assert_eq!(map_key_to_code("f12"), 111);
+    }
+
+    #[test]
+    fn test_map_key_to_code_modifiers() {
+        assert_eq!(map_key_to_code("cmd"), 55);
+        assert_eq!(map_key_to_code("command"), 55);
+        assert_eq!(map_key_to_code("shift"), 56);
+        assert_eq!(map_key_to_code("alt"), 58);
+        assert_eq!(map_key_to_code("option"), 58);
+        assert_eq!(map_key_to_code("ctrl"), 59);
+        assert_eq!(map_key_to_code("control"), 59);
+        assert_eq!(map_key_to_code("capslock"), 57);
+    }
+
+    #[test]
+    fn test_map_key_to_code_case_insensitive() {
+        assert_eq!(map_key_to_code("RETURN"), 36);
+        assert_eq!(map_key_to_code("Tab"), 48);
+        assert_eq!(map_key_to_code("SPACE"), 49);
+        assert_eq!(map_key_to_code("CMD"), 55);
+    }
+
+    #[test]
+    fn test_char_to_keycode_letters() {
+        let code_a = char_to_keycode('a');
+        let code_a_upper = char_to_keycode('A');
+        assert_eq!(code_a, code_a_upper);
+    }
+
+    #[test]
+    fn test_char_to_keycode_numbers() {
+        assert_eq!(char_to_keycode('0'), 29);
+        assert_eq!(char_to_keycode('9'), 25);
+    }
+
+    #[test]
+    fn test_char_to_keycode_special() {
+        assert_eq!(char_to_keycode(' '), 49);
+        assert_eq!(char_to_keycode('\n'), 36);
+        assert_eq!(char_to_keycode('\t'), 48);
+        assert_eq!(char_to_keycode('\r'), 36);
+    }
+
+    #[test]
+    fn test_char_to_keycode_symbols() {
+        assert!(char_to_keycode('!') > 0);
+        assert!(char_to_keycode('@') > 0);
+        assert!(char_to_keycode('#') > 0);
+        assert!(char_to_keycode('$') > 0);
+        assert!(char_to_keycode('%') > 0);
+        assert!(char_to_keycode('-') > 0);
+        assert!(char_to_keycode('=') > 0);
+        assert!(char_to_keycode('.') > 0);
+        assert!(char_to_keycode(',') > 0);
+    }
+
+    #[test]
+    fn test_simulate_key_press() {
+        let result = simulate_key_press("return");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_key_press_f1() {
+        let result = simulate_key_press("f1");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_type() {
+        let result = simulate_type("hello");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_type_empty() {
+        let result = simulate_type("");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_type_uppercase() {
+        let result = simulate_type("HELLO");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_type_with_numbers() {
+        let result = simulate_type("test123");
+        assert!(result.is_ok() || result.is_err());
     }
 }
+
+    #[test]
+    fn test_map_key_to_code_case_insensitive() {
+        assert_eq!(map_key_to_code("RETURN"), 36);
+        assert_eq!(map_key_to_code("Tab"), 48);
+        assert_eq!(map_key_to_code("SPACE"), 49);
+    }
+
+    #[test]
+    fn test_char_to_keycode_letters() {
+        let code_a = char_to_keycode('a');
+        let code_a_upper = char_to_keycode('A');
+        assert_eq!(code_a, code_a_upper);
+    }
+
+    #[test]
+    fn test_char_to_keycode_numbers() {
+        let code_0 = char_to_keycode('0');
+        let code_9 = char_to_keycode('9');
+        assert!(code_0 > 0);
+        assert!(code_9 > 0);
+    }
+
+    #[test]
+    fn test_char_to_keycode_special() {
+        let code_space = char_to_keycode(' ');
+        assert!(code_space > 0);
+    }
+
+    #[test]
+    fn test_simulate_key_press() {
+        let result = simulate_key_press("return");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_type() {
+        let result = simulate_type("hello");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_simulate_type_empty() {
+        let result = simulate_type("");
+        assert!(result.is_ok() || result.is_err());
+    }

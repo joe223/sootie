@@ -261,4 +261,23 @@ mod tests {
         let result = response.result.unwrap();
         assert_eq!(result["serverInfo"]["name"], "sootie");
     }
+
+    #[test]
+    fn test_cli_parse_serve_with_all_options() {
+        let cli = Cli::try_parse_from(["sootie", "serve", "--log-level", "trace", "--log-file", "/tmp/test.log"]);
+        assert!(cli.is_ok());
+        match cli.unwrap().command {
+            Commands::Serve { log_level, log_file } => {
+                assert_eq!(log_level, "trace");
+                assert_eq!(log_file, Some("/tmp/test.log".to_string()));
+            }
+            _ => panic!("expected Serve command"),
+        }
+    }
+
+    #[test]
+    fn test_run_setup_does_not_panic() {
+        let result = run_setup();
+        assert!(result.is_ok());
+    }
 }

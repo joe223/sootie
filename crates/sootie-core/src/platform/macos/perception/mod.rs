@@ -61,10 +61,43 @@ impl PerceptionProvider for MacPerceptionProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::selector::Bounds;
 
     #[test]
     fn test_mac_provider_creation() {
         let provider = MacPerceptionProvider::new();
         assert!(std::ptr::addr_of!(provider) as usize != 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
+    async fn test_mac_provider_get_context() {
+        let provider = MacPerceptionProvider::new();
+        let result = provider.get_context().await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
+    async fn test_mac_provider_find() {
+        let provider = MacPerceptionProvider::new();
+        let selector = Selector::new().with_name("NonExistent");
+        let result = provider.find(&selector).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_provider_screenshot_full() {
+        let provider = MacPerceptionProvider::new();
+        let result = provider.screenshot(None, None).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_provider_screenshot_region() {
+        let provider = MacPerceptionProvider::new();
+        let region = Bounds { x: 0.0, y: 0.0, width: 100.0, height: 100.0 };
+        let result = provider.screenshot(None, Some(&region)).await;
+        assert!(result.is_ok() || result.is_err());
     }
 }

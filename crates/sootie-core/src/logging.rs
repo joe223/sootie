@@ -401,8 +401,8 @@ mod tests {
         assert_eq!(info, LogLevel::Info);
     }
     
-    #[test]
-    fn test_sootie_logger_new() {
+#[test]
+    fn test_sootie_logger_creation() {
         let config = LogConfig::default();
         let logger = SootieLogger::new(config);
         assert!(logger.config.log_tool_calls);
@@ -432,7 +432,6 @@ mod tests {
         };
         
         logger.log_tool_call(&tool_log);
-        // Should not crash when disabled
     }
     
     #[test]
@@ -511,71 +510,7 @@ mod tests {
         let json = serde_json::to_string(&log).unwrap();
         assert!(json.contains("Missing parameter"));
     }
-}
-
-    #[test]
-    fn test_perception_log_serialize() {
-        let log = PerceptionLog {
-            operation: "find".to_string(),
-            selector: Some(serde_json::json!({"role": "button"})),
-            success: true,
-            result_summary: "1 element found".to_string(),
-            duration_ms: 10,
-        };
-
-        let json = serde_json::to_string(&log).unwrap();
-        let deserialized: PerceptionLog = serde_json::from_str(&json).unwrap();
-        assert_eq!(log.operation, deserialized.operation);
-    }
-
-    #[test]
-    fn test_action_log_serialize() {
-        let log = ActionLog {
-            action_type: "click".to_string(),
-            target: Some("button Submit".to_string()),
-            coordinate: Some((100.0, 200.0)),
-            success: true,
-            backend_used: Some("cgevent".to_string()),
-            error_message: None,
-            duration_ms: 5,
-        };
-
-        let json = serde_json::to_string(&log).unwrap();
-        let deserialized: ActionLog = serde_json::from_str(&json).unwrap();
-        assert_eq!(log.action_type, deserialized.action_type);
-    }
-
-    #[test]
-    fn test_cascade_log_serialize() {
-        let log = CascadeLog {
-            step: "at_tree".to_string(),
-            backend: "AX".to_string(),
-            success: true,
-            fallback_triggered: false,
-            duration_ms: 3,
-        };
-
-        let json = serde_json::to_string(&log).unwrap();
-        let deserialized: CascadeLog = serde_json::from_str(&json).unwrap();
-        assert_eq!(log.step, deserialized.step);
-    }
-
-    #[test]
-    fn test_recipe_log_serialize() {
-        let log = RecipeLog {
-            operation: "run".to_string(),
-            recipe_name: "gmail-send".to_string(),
-            step_count: Some(3),
-            params_provided: Some(vec!["to".to_string(), "subject".to_string()]),
-            success: true,
-            error_message: None,
-        };
-
-        let json = serde_json::to_string(&log).unwrap();
-        let deserialized: RecipeLog = serde_json::from_str(&json).unwrap();
-        assert_eq!(log.recipe_name, deserialized.recipe_name);
-    }
-
+    
     #[test]
     fn test_create_duration_ms() {
         let start = std::time::Instant::now();
@@ -583,19 +518,168 @@ mod tests {
         let ms = create_duration_ms(start);
         assert!(ms >= 10);
     }
-
+    
     #[test]
-    fn test_log_level_serialize() {
+    fn test_log_level_serialize_all() {
         assert_eq!(serde_json::to_string(&LogLevel::Info).unwrap(), "\"info\"");
         assert_eq!(serde_json::to_string(&LogLevel::Debug).unwrap(), "\"debug\"");
         assert_eq!(serde_json::to_string(&LogLevel::Warn).unwrap(), "\"warn\"");
         assert_eq!(serde_json::to_string(&LogLevel::Error).unwrap(), "\"error\"");
     }
-
+    
     #[test]
-    fn test_sootie_logger_creation() {
+    fn test_sootie_logger_log_session() {
         let config = LogConfig::default();
         let logger = SootieLogger::new(config);
         logger.log_session_start("macos", "0.1.0");
+    }
+
+    #[test]
+    fn test_log_perception_success() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let log = PerceptionLog {
+            operation: "find".to_string(),
+            selector: Some(serde_json::json!({"role": "button"})),
+            success: true,
+            result_summary: "Found 3 elements".to_string(),
+            duration_ms: 25,
+        };
+        logger.log_perception(&log);
+    }
+
+    #[test]
+    fn test_log_action_success() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let log = ActionLog {
+            action_type: "click".to_string(),
+            target: Some("Submit button".to_string()),
+            coordinate: Some((100.0, 200.0)),
+            success: true,
+            backend_used: Some("cgevent".to_string()),
+            error_message: None,
+            duration_ms: 10,
+        };
+        logger.log_action(&log);
+    }
+
+    #[test]
+    fn test_log_cascade_no_fallback() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let log = CascadeLog {
+            step: "click".to_string(),
+            backend: "accessibility".to_string(),
+            success: true,
+            fallback_triggered: false,
+            duration_ms: 15,
+        };
+        logger.log_cascade(&log);
+    }
+
+    #[test]
+    fn test_log_recipe_success() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let log = RecipeLog {
+            operation: "run".to_string(),
+            recipe_name: "gmail-compose".to_string(),
+            step_count: Some(5),
+            params_provided: Some(vec!["to".to_string(), "subject".to_string()]),
+            success: true,
+            error_message: None,
+        };
+        logger.log_recipe(&log);
+    }
+
+    #[test]
+    fn test_log_mcp_request() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        logger.log_mcp_request("tools/list", &Some(serde_json::Value::Number(1.into())));
+    }
+
+    #[test]
+    fn test_log_mcp_response_success() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let duration = std::time::Duration::from_millis(50);
+        logger.log_mcp_response("tools/list", true, duration);
+    }
+
+    #[test]
+    fn test_log_mcp_response_error() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let duration = std::time::Duration::from_millis(10);
+        logger.log_mcp_response("tools/call", false, duration);
+    }
+
+    #[test]
+    fn test_log_session_end() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        logger.log_session_end();
+    }
+
+    #[test]
+    fn test_log_permission_check_granted() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        logger.log_permission_check("macos", true);
+    }
+
+    #[test]
+    fn test_log_permission_check_not_granted() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        logger.log_permission_check("macos", false);
+    }
+
+    #[test]
+    fn test_log_platform_init_success() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        logger.log_platform_init("macos", true);
+    }
+
+    #[test]
+    fn test_log_platform_init_failure() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        logger.log_platform_init("macos", false);
+    }
+
+    #[test]
+    fn test_log_tool_call_success() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let log = ToolCallLog {
+            tool_name: "sootie_click".to_string(),
+            request_id: Some(serde_json::Value::Number(1.into())),
+            arguments: serde_json::json!({"x": 100, "y": 200}),
+            success: true,
+            error_message: None,
+            duration_ms: 15,
+            backend_used: Some("cgevent".to_string()),
+        };
+        logger.log_tool_call(&log);
+    }
+
+    #[test]
+    fn test_log_tool_call_failure() {
+        let config = LogConfig::default();
+        let logger = SootieLogger::new(config);
+        let log = ToolCallLog {
+            tool_name: "sootie_find".to_string(),
+            request_id: Some(serde_json::Value::Number(2.into())),
+            arguments: serde_json::json!({"role": "button"}),
+            success: false,
+            error_message: Some("Element not found".to_string()),
+            duration_ms: 30,
+            backend_used: None,
+        };
+        logger.log_tool_call(&log);
     }
 }

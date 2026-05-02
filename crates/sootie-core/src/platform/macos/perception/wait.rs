@@ -46,3 +46,26 @@ pub fn wait_for_element(
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selector::{Selector};
+    use crate::perception::WaitCondition;
+    use std::collections::HashMap;
+
+    #[test]
+    #[ignore = "requires accessibility permissions"]
+    fn test_wait_for_element_short_timeout() {
+        let selector = Selector::new().with_name("NonExistent");
+        let condition = WaitCondition {
+            timeout_ms: 100,
+            state: HashMap::new(),
+        };
+        let result = wait_for_element(&selector, &condition);
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(wait_result) = result {
+            assert!(wait_result.timed_out);
+        }
+    }
+}

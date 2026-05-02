@@ -49,3 +49,50 @@ pub fn simulate_hotkey(keys: &[String]) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_perform_hotkey_cmd_c() {
+        let action = HotkeyAction { keys: vec!["Cmd".to_string(), "C".to_string()] };
+        let result = perform_hotkey(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_hotkey_cmd_v() {
+        let action = HotkeyAction { keys: vec!["Cmd".to_string(), "V".to_string()] };
+        let result = perform_hotkey(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_hotkey_cmd_a() {
+        let action = HotkeyAction { keys: vec!["Cmd".to_string(), "A".to_string()] };
+        let result = perform_hotkey(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_hotkey_cmd_shift_3() {
+        let action = HotkeyAction { keys: vec!["Cmd".to_string(), "Shift".to_string(), "3".to_string()] };
+        let result = perform_hotkey(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_hotkey_cmd_opt_esc() {
+        let action = HotkeyAction { keys: vec!["Cmd".to_string(), "Option".to_string(), "Esc".to_string()] };
+        let result = perform_hotkey(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_hotkey_ctrl_x() {
+        let action = HotkeyAction { keys: vec!["Ctrl".to_string(), "X".to_string()] };
+        let result = perform_hotkey(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+}

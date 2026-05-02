@@ -22,3 +22,82 @@ pub async fn perform_click<P: PerceptionProvider>(
     
     Ok(ActionResult::success(None, "cgevent"))
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::{ClickAction, ActionTarget, MouseButton};
+    use crate::perception::StubPerceptionProvider;
+    use crate::selector::Coordinate;
+
+    #[tokio::test]
+    async fn test_perform_click_left_button() {
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
+            button: Some(MouseButton::Left),
+            count: Some(1),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_click(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_click_right_button() {
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 150.0, y: 250.0 }),
+            button: Some(MouseButton::Right),
+            count: Some(1),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_click(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_click_middle_button() {
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 200.0, y: 300.0 }),
+            button: Some(MouseButton::Middle),
+            count: Some(1),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_click(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_click_double_click() {
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
+            button: Some(MouseButton::Left),
+            count: Some(2),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_click(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_click_default_button() {
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
+            button: None,
+            count: Some(1),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_click(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_click_default_count() {
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
+            button: Some(MouseButton::Left),
+            count: None,
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_click(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+}

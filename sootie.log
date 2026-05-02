@@ -1,4 +1,0 @@
-[2m2026-05-01T14:09:38.150563Z[0m [32m INFO[0m ThreadId(01) [2msootie[0m[2m:[0m [2mcrates/sootie-cli/src/main.rs[0m[2m:[0m[2m128:[0m Logging to file initialized [3mlog_file[0m[2m=[0m./sootie.log
-[2m2026-05-01T14:09:38.150642Z[0m [32m INFO[0m ThreadId(01) [2msootie[0m[2m:[0m [2mcrates/sootie-cli/src/main.rs[0m[2m:[0m[2m137:[0m Sootie MCP server starting [3mplatform[0m[2m=[0m"macos" [3mversion[0m[2m=[0m"0.1.0"
-[2m2026-05-01T14:09:38.150670Z[0m [32m INFO[0m ThreadId(01) [2msootie[0m[2m:[0m [2mcrates/sootie-cli/src/main.rs[0m[2m:[0m[2m142:[0m Platform providers initialized
-[2m2026-05-01T14:09:38.150710Z[0m [32m INFO[0m ThreadId(01) [2msootie[0m[2m:[0m [2mcrates/sootie-cli/src/main.rs[0m[2m:[0m[2m146:[0m MCP server ready, waiting for requests on stdin

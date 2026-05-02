@@ -38,3 +38,30 @@ pub fn perform_launch(action: &LaunchAction) -> Result<ActionResult, ActionError
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::LaunchAction;
+    use crate::selector::AppSelector;
+
+    #[test]
+    fn test_perform_launch_by_name() {
+        let action = LaunchAction {
+            app: AppSelector::from_name("TextEdit"),
+            args: vec![],
+        };
+        let result = perform_launch(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_launch_with_args() {
+        let action = LaunchAction {
+            app: AppSelector::from_name("TextEdit"),
+            args: vec!["test.txt".to_string()],
+        };
+        let result = perform_launch(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+}

@@ -1,7 +1,6 @@
 use core_foundation::base::{CFTypeRef, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
-use core_foundation::array::{CFArray, CFArrayRef};
-use core_foundation::number::CFNumber;
+use core_foundation::array::CFArray;
 use core_foundation::boolean::CFBoolean;
 
 pub type AXError = i32;
@@ -23,16 +22,8 @@ pub struct CGSize {
     pub height: f64,
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct CGRect {
-    pub origin: CGPoint,
-    pub size: CGSize,
-}
-
 pub const K_AX_VALUE_CGPOINT_TYPE: i32 = 2;
 pub const K_AX_VALUE_CGSIZE_TYPE: i32 = 3;
-pub const K_AX_VALUE_CGRECT_TYPE: i32 = 4;
 
 pub type AXValueRef = *mut std::ffi::c_void;
 
@@ -43,14 +34,6 @@ extern "C" {
         element: AXUIElementRef,
         attribute: CFStringRef,
         value: *mut CFTypeRef,
-    ) -> AXError;
-    pub fn AXUIElementCopyAttributeNames(
-        element: AXUIElementRef,
-        names: *mut CFArrayRef,
-    ) -> AXError;
-    pub fn AXUIElementPerformAction(
-        element: AXUIElementRef,
-        action: CFStringRef,
     ) -> AXError;
     pub fn AXValueGetValue(
         value: AXValueRef,
@@ -83,17 +66,6 @@ pub unsafe fn get_bool_attr(element: AXUIElementRef, attr: &str) -> Option<bool>
     }
     let cf_bool: CFBoolean = TCFType::wrap_under_create_rule(std::mem::transmute(value));
     Some(cf_bool.into())
-}
-
-pub unsafe fn get_number_attr(element: AXUIElementRef, attr: &str) -> Option<i64> {
-    let cf_attr = cfstr(attr);
-    let mut value: CFTypeRef = std::ptr::null();
-    let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
-    if err != K_AX_ERROR_SUCCESS || value.is_null() {
-        return None;
-    }
-    let cf_num: CFNumber = TCFType::wrap_under_create_rule(std::mem::transmute(value));
-    cf_num.to_i64()
 }
 
 pub unsafe fn get_point_attr(element: AXUIElementRef, attr: &str) -> Option<CGPoint> {
@@ -146,4 +118,68 @@ pub unsafe fn get_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
     }
     let cf_array: CFArray<CFTypeRef> = TCFType::wrap_under_create_rule(std::mem::transmute(value));
     cf_array.iter().map(|p| *p as AXUIElementRef).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cfstr_basic() {
+        let s = cfstr("test");
+        assert_eq!(s.to_string(), "test");
+    }
+
+    #[test]
+    fn test_cfstr_empty() {
+        let s = cfstr("");
+        assert_eq!(s.to_string(), "");
+    }
+
+    #[test]
+    fn test_cfstr_with_spaces() {
+        let s = cfstr("hello world");
+        assert_eq!(s.to_string(), "hello world");
+    }
+
+    #[test]
+    fn test_cgpoint_struct() {
+        let point = CGPoint { x: 100.0, y: 200.0 };
+        assert_eq!(point.x, 100.0);
+        assert_eq!(point.y, 200.0);
+    }
+
+    #[test]
+    fn test_cgsize_struct() {
+        let size = CGSize { width: 50.0, height: 75.0 };
+        assert_eq!(size.width, 50.0);
+        assert_eq!(size.height, 75.0);
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(K_AX_ERROR_SUCCESS, 0);
+        assert_eq!(K_AX_VALUE_CGPOINT_TYPE, 2);
+        assert_eq!(K_AX_VALUE_CGSIZE_TYPE, 3);
+    }
+
+    #[test]
+    fn test_cgpoint_negative() {
+        let point = CGPoint { x: -10.0, y: -20.0 };
+        assert_eq!(point.x, -10.0);
+        assert_eq!(point.y, -20.0);
+    }
+
+    #[test]
+    fn test_cgsize_zero() {
+        let size = CGSize { width: 0.0, height: 0.0 };
+        assert_eq!(size.width, 0.0);
+        assert_eq!(size.height, 0.0);
+    }
+
+    #[test]
+    fn test_cfstr_special_chars() {
+        let s = cfstr("test-with-dashes");
+        assert_eq!(s.to_string(), "test-with-dashes");
+    }
 }

@@ -297,6 +297,7 @@ struct MockActionProvider {
 }
 
 impl MockActionProvider {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             call_log: Arc::new(Mutex::new(Vec::new())),
@@ -561,7 +562,7 @@ async fn e2e_find_not_found() {
 
 #[tokio::test]
 async fn e2e_click_with_target() {
-    let (server, p_log, a_log) = make_server().await;
+    let (server, _p_log, a_log) = make_server().await;
 
     let resp = server
         .handle_request(make_request(
@@ -617,7 +618,7 @@ async fn e2e_click_with_coordinate() {
 
 #[tokio::test]
 async fn e2e_type_into_field() {
-    let (server, p_log, a_log) = make_server().await;
+    let (server, _p_log, a_log) = make_server().await;
 
     let resp = server
         .handle_request(make_request(

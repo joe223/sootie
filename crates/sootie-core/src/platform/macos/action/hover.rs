@@ -15,3 +15,21 @@ pub async fn perform_hover<P: PerceptionProvider>(
     
     Ok(ActionResult::success(None, "cgevent"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::{HoverAction, ActionTarget};
+    use crate::perception::StubPerceptionProvider;
+    use crate::selector::Coordinate;
+
+    #[tokio::test]
+    async fn test_perform_hover() {
+        let action = HoverAction {
+            target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_hover(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+}

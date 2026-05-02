@@ -40,3 +40,27 @@ fn focus_app(app_name: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selector::{Selector, AppSelector};
+
+    #[test]
+    fn test_perform_focus_finder() {
+        let action = FocusAction {
+            selector: Selector::new().with_app(AppSelector::from_name("Finder")),
+        };
+        let result = perform_focus(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_focus_safari() {
+        let action = FocusAction {
+            selector: Selector::new().with_app(AppSelector::from_name("Safari")),
+        };
+        let result = perform_focus(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+}

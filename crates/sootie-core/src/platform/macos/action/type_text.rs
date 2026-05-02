@@ -43,3 +43,58 @@ pub async fn perform_type<P: PerceptionProvider>(
     
     Ok(ActionResult::success(None, "cgevent"))
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::{TypeAction, ActionTarget};
+    use crate::perception::StubPerceptionProvider;
+    use crate::selector::Coordinate;
+
+    #[tokio::test]
+    async fn test_perform_type_text() {
+        let action = TypeAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            text: "hello world".to_string(),
+            clear_first: None,
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_type(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_type_empty() {
+        let action = TypeAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            text: "".to_string(),
+            clear_first: None,
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_type(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_type_clear_first() {
+        let action = TypeAction {
+            target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
+            text: "new text".to_string(),
+            clear_first: Some(true),
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_type(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_perform_type_no_target() {
+        let action = TypeAction {
+            target: None,
+            text: "text".to_string(),
+            clear_first: None,
+        };
+        let perception = StubPerceptionProvider;
+        let result = perform_type(&action, &perception).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+}

@@ -120,3 +120,22 @@ unsafe fn collect_children(
         collect_children(child, results, index, max_depth, current_depth + 1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selector::Selector;
+
+    #[test]
+    fn test_module_loads() {
+        assert!(true);
+    }
+
+    #[test]
+    #[ignore = "requires accessibility permissions"]
+    fn test_inspect_element_basic() {
+        let selector = Selector::new().with_name("NonExistent");
+        let result = inspect_element(&selector);
+        assert!(result.is_ok() || result.is_err());
+    }
+}

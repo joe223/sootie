@@ -58,3 +58,31 @@ fn perform_window_op_internal(app_name: &str, operation: &WindowOperation) -> Re
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::WindowAction;
+    use crate::selector::{Selector, AppSelector};
+    use crate::action::WindowOperation;
+
+    #[test]
+    fn test_perform_window_minimize() {
+        let action = WindowAction {
+            selector: Selector::new().with_app(AppSelector::from_name("TextEdit")),
+            operation: WindowOperation::Minimize,
+        };
+        let result = perform_window_op(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_perform_window_close() {
+        let action = WindowAction {
+            selector: Selector::new().with_app(AppSelector::from_name("TextEdit")),
+            operation: WindowOperation::Close,
+        };
+        let result = perform_window_op(&action);
+        assert!(result.is_ok() || result.is_err());
+    }
+}

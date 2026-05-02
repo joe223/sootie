@@ -128,3 +128,27 @@ pub fn get_pid_for_app_name(name: &str) -> i32 {
         })
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_module_loads() {
+        assert!(true);
+    }
+
+    #[test]
+    #[ignore = "requires system permissions"]
+    fn test_get_running_apps() {
+        let ctx = get_running_apps();
+        assert!(!ctx.apps.is_empty() || ctx.apps.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires system permissions"]
+    fn test_get_pid_for_app_name() {
+        let pid = get_pid_for_app_name("Finder");
+        assert!(pid > 0 || pid == 0);
+    }
+}

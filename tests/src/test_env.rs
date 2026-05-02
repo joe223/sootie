@@ -9,6 +9,7 @@ pub struct ChromeProcess {
 
 pub struct HttpServer {
     process: Child,
+    #[allow(dead_code)]
     port: u16,
 }
 
