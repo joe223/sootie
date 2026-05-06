@@ -1,15 +1,17 @@
+mod apps;
 mod context;
 mod find;
 mod inspect;
-mod wait;
 mod screenshot;
 mod utils;
+mod wait;
 
 use async_trait::async_trait;
 use tracing::debug;
 
+use crate::cdp::try_find_via_cdp;
 use crate::perception::{
-    Context, DeepInspection, PerceptionError, PerceptionProvider, ScreenshotData,
+    Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider, ScreenshotData,
     WaitCondition, WaitResult,
 };
 use crate::selector::{Bounds, Selector};
@@ -29,8 +31,14 @@ impl PerceptionProvider for MacPerceptionProvider {
         Ok(context::get_running_apps())
     }
 
-    async fn find(&self, selector: &Selector) -> Result<crate::selector::ResolvedTarget, PerceptionError> {
+    async fn find(
+        &self,
+        selector: &Selector,
+    ) -> Result<crate::selector::ResolvedTarget, PerceptionError> {
         debug!("Finding elements with selector: {:?}", selector);
+        if let Ok(Some(result)) = try_find_via_cdp(selector).await {
+            return Ok(result);
+        }
         find::find_elements(selector)
     }
 
@@ -55,6 +63,15 @@ impl PerceptionProvider for MacPerceptionProvider {
     ) -> Result<ScreenshotData, PerceptionError> {
         debug!("Taking screenshot");
         screenshot::take_screenshot(region)
+    }
+
+    async fn find_apps(
+        &self,
+        pattern: &str,
+        limit: Option<u32>,
+    ) -> Result<FindAppsResult, PerceptionError> {
+        debug!(pattern = %pattern, limit = ?limit, "Finding installed apps");
+        Ok(apps::find_installed_apps(pattern, limit))
     }
 }
 
@@ -96,7 +113,12 @@ mod tests {
     #[tokio::test]
     async fn test_mac_provider_screenshot_region() {
         let provider = MacPerceptionProvider::new();
-        let region = Bounds { x: 0.0, y: 0.0, width: 100.0, height: 100.0 };
+        let region = Bounds {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
         let result = provider.screenshot(None, Some(&region)).await;
         assert!(result.is_ok() || result.is_err());
     }

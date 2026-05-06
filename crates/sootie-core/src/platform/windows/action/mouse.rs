@@ -1,5 +1,5 @@
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::Foundation::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 pub fn mouse_move(x: i32, y: i32) -> Result<(), String> {
     unsafe {

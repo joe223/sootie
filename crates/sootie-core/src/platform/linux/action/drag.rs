@@ -1,37 +1,15 @@
 use std::process::Command;
 
 use crate::action::{ActionError, ActionResult, ActionTarget, DragAction};
+use crate::cascade::resolve_target_with_cascade;
 use crate::perception::PerceptionProvider;
 
 pub async fn perform_drag<P: PerceptionProvider>(
     action: &DragAction,
     perception: &P,
 ) -> Result<ActionResult, ActionError> {
-    let from = match &action.from {
-        ActionTarget::Coordinate(coord) => coord.clone(),
-        ActionTarget::Selector(selector) => {
-            let result = perception.find(selector).await
-                .map_err(|e| ActionError::ActionFailed(format!("Find failed: {}", e)))?;
-            if result.elements.is_empty() {
-                return Err(ActionError::TargetNotFound("no element matches selector".to_string()));
-            }
-            let (cx, cy) = result.elements[0].bounds.center();
-            crate::selector::Coordinate { x: cx, y: cy }
-        }
-    };
-
-    let to = match &action.to {
-        ActionTarget::Coordinate(coord) => coord.clone(),
-        ActionTarget::Selector(selector) => {
-            let result = perception.find(selector).await
-                .map_err(|e| ActionError::ActionFailed(format!("Find failed: {}", e)))?;
-            if result.elements.is_empty() {
-                return Err(ActionError::TargetNotFound("no element matches selector".to_string()));
-            }
-            let (cx, cy) = result.elements[0].bounds.center();
-            crate::selector::Coordinate { x: cx, y: cy }
-        }
-    };
+    let (from, from_backend) = resolve_target_with_cascade(perception, &action.from).await?;
+    let (to, to_backend) = resolve_target_with_cascade(perception, &action.to).await?;
 
     Command::new("xdotool")
         .arg("mousemove")
@@ -63,5 +41,12 @@ pub async fn perform_drag<P: PerceptionProvider>(
         .output()
         .map_err(|e| ActionError::ActionFailed(format!("MouseUp failed: {}", e)))?;
 
-    Ok(ActionResult::success(None, "xdotool"))
+    let backend_used = if matches!(from_backend, Some(crate::cascade::Backend::Vision))
+        || matches!(to_backend, Some(crate::cascade::Backend::Vision))
+    {
+        "vision+xdotool"
+    } else {
+        "xdotool"
+    };
+    Ok(ActionResult::success(None, backend_used))
 }

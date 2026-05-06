@@ -68,20 +68,44 @@ pub fn map_key_to_code(key: &str) -> u16 {
 
 pub fn char_to_keycode(ch: char) -> u16 {
     match ch {
-        'a'..='z' => (ch as u16) - ('a' as u16),
-        'A'..='Z' => (ch as u16) - ('A' as u16),
-        '0' => 29, '1' => 18, '2' => 19, '3' => 20, '4' => 21,
-        '5' => 23, '6' => 22, '7' => 26, '8' => 28, '9' => 25,
+        'a'..='z' => map_key_to_code(&ch.to_string()),
+        'A'..='Z' => map_key_to_code(&ch.to_ascii_lowercase().to_string()),
+        '0'..='9' => map_key_to_code(&ch.to_string()),
         ' ' => 49,
         '\n' | '\r' => 36,
         '\t' => 48,
-        '!' => 18, '@' => 19, '#' => 20, '$' => 21, '%' => 23,
-        '^' => 22, '&' => 26, '*' => 28, '(' => 25, ')' => 29,
-        '-' => 27, '=' => 24, '[' => 33, ']' => 30, '\\' => 42,
-        ';' => 41, '\'' => 39, ',' => 43, '.' => 47, '/' => 44,
-        '_' => 27, '+' => 24, '{' => 33, '}' => 30, '|' => 42,
-        ':' => 41, '"' => 39, '<' => 43, '>' => 47, '?' => 44,
-        '`' => 50, '~' => 50,
+        '!' => 18,
+        '@' => 19,
+        '#' => 20,
+        '$' => 21,
+        '%' => 23,
+        '^' => 22,
+        '&' => 26,
+        '*' => 28,
+        '(' => 25,
+        ')' => 29,
+        '-' => 27,
+        '=' => 24,
+        '[' => 33,
+        ']' => 30,
+        '\\' => 42,
+        ';' => 41,
+        '\'' => 39,
+        ',' => 43,
+        '.' => 47,
+        '/' => 44,
+        '_' => 27,
+        '+' => 24,
+        '{' => 33,
+        '}' => 30,
+        '|' => 42,
+        ':' => 41,
+        '"' => 39,
+        '<' => 43,
+        '>' => 47,
+        '?' => 44,
+        '`' => 50,
+        '~' => 50,
         _ => 0,
     }
 }
@@ -115,8 +139,7 @@ pub fn simulate_type(text: &str) -> Result<(), String> {
 
     for ch in text.chars() {
         let keycode = char_to_keycode(ch);
-        let needs_shift = ch.is_ascii_uppercase()
-            || "!@#$%^&*()_+{}|:\"<>?~".contains(ch);
+        let needs_shift = ch.is_ascii_uppercase() || "!@#$%^&*()_+{}|:\"<>?~".contains(ch);
 
         let flags = if needs_shift {
             CGEventFlags::CGEventFlagShift
@@ -142,7 +165,7 @@ pub fn simulate_type(text: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-#[test]
+    #[test]
     fn test_map_key_to_code() {
         assert_eq!(map_key_to_code("return"), 36);
         assert_eq!(map_key_to_code("enter"), 36);
@@ -203,6 +226,9 @@ mod tests {
         let code_a = char_to_keycode('a');
         let code_a_upper = char_to_keycode('A');
         assert_eq!(code_a, code_a_upper);
+        assert_eq!(char_to_keycode('r'), map_key_to_code("r"));
+        assert_eq!(char_to_keycode('i'), map_key_to_code("i"));
+        assert_eq!(char_to_keycode('t'), map_key_to_code("t"));
     }
 
     #[test]
@@ -233,84 +259,44 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_simulate_key_press() {
         let result = simulate_key_press("return");
         assert!(result.is_ok() || result.is_err());
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_simulate_key_press_f1() {
         let result = simulate_key_press("f1");
         assert!(result.is_ok() || result.is_err());
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_simulate_type() {
         let result = simulate_type("hello");
         assert!(result.is_ok() || result.is_err());
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_simulate_type_empty() {
         let result = simulate_type("");
         assert!(result.is_ok() || result.is_err());
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_simulate_type_uppercase() {
         let result = simulate_type("HELLO");
         assert!(result.is_ok() || result.is_err());
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_simulate_type_with_numbers() {
         let result = simulate_type("test123");
         assert!(result.is_ok() || result.is_err());
     }
 }
-
-    #[test]
-    fn test_map_key_to_code_case_insensitive() {
-        assert_eq!(map_key_to_code("RETURN"), 36);
-        assert_eq!(map_key_to_code("Tab"), 48);
-        assert_eq!(map_key_to_code("SPACE"), 49);
-    }
-
-    #[test]
-    fn test_char_to_keycode_letters() {
-        let code_a = char_to_keycode('a');
-        let code_a_upper = char_to_keycode('A');
-        assert_eq!(code_a, code_a_upper);
-    }
-
-    #[test]
-    fn test_char_to_keycode_numbers() {
-        let code_0 = char_to_keycode('0');
-        let code_9 = char_to_keycode('9');
-        assert!(code_0 > 0);
-        assert!(code_9 > 0);
-    }
-
-    #[test]
-    fn test_char_to_keycode_special() {
-        let code_space = char_to_keycode(' ');
-        assert!(code_space > 0);
-    }
-
-    #[test]
-    fn test_simulate_key_press() {
-        let result = simulate_key_press("return");
-        assert!(result.is_ok() || result.is_err());
-    }
-
-    #[test]
-    fn test_simulate_type() {
-        let result = simulate_type("hello");
-        assert!(result.is_ok() || result.is_err());
-    }
-
-    #[test]
-    fn test_simulate_type_empty() {
-        let result = simulate_type("");
-        assert!(result.is_ok() || result.is_err());
-    }

@@ -1,9 +1,9 @@
 use crate::perception::{DeepInspection, PerceptionError};
 use crate::selector::{Bounds, Element, ElementState, Selector};
 
+use super::super::ax_fns::*;
 use super::find::find_elements;
 use super::utils::normalize_role;
-use super::super::ax_fns::*;
 
 pub fn inspect_element(selector: &Selector) -> Result<DeepInspection, PerceptionError> {
     let resolved = find_elements(selector)?;
@@ -33,6 +33,7 @@ pub fn inspect_element(selector: &Selector) -> Result<DeepInspection, Perception
     let mut child_index = 0u32;
     unsafe {
         collect_children(app_element, &mut children, &mut child_index, 3, 0);
+        release_ax_element(app_element);
     }
 
     let actions = vec!["click".to_string(), "hover".to_string()];
@@ -97,11 +98,7 @@ unsafe fn collect_children(
         results.push(Element {
             role: normalize_role(&role),
             name,
-            text: if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            },
+            text: if value.is_empty() { None } else { Some(value) },
             id: if identifier.is_empty() {
                 None
             } else {
@@ -118,6 +115,7 @@ unsafe fn collect_children(
         *index += 1;
 
         collect_children(child, results, index, max_depth, current_depth + 1);
+        release_ax_element(child);
     }
 }
 

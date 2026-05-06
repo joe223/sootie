@@ -57,6 +57,8 @@ Sootie
 
 Built in Rust. Single binary. No runtime dependencies.
 
+By default, `sootie serve` writes runtime logs to a platform-local file under the Sootie data directory. Use `--log-file` to override that path explicitly.
+
 ## Platform Support
 
 | Capability | macOS | Windows | Linux |

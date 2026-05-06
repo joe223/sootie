@@ -89,6 +89,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_click() {
         let provider = MacActionProvider::new();
         let action = ClickAction {
@@ -101,6 +102,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_press() {
         let provider = MacActionProvider::new();
         let action = PressAction { key: "Return".to_string() };
@@ -109,6 +111,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_hotkey() {
         let provider = MacActionProvider::new();
         let action = HotkeyAction { keys: vec!["Cmd".to_string(), "C".to_string()] };
@@ -117,6 +120,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_scroll() {
         let provider = MacActionProvider::new();
         let action = ScrollAction {
@@ -129,6 +133,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_hover() {
         let provider = MacActionProvider::new();
         let action = HoverAction {
@@ -139,6 +144,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_drag() {
         let provider = MacActionProvider::new();
         let action = DragAction {
@@ -150,6 +156,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_focus() {
         let provider = MacActionProvider::new();
         let action = FocusAction {
@@ -160,6 +167,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_launch() {
         let provider = MacActionProvider::new();
         let action = LaunchAction {
@@ -171,6 +179,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_window() {
         let provider = MacActionProvider::new();
         let action = WindowAction {

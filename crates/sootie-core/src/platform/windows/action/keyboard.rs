@@ -71,8 +71,7 @@ pub fn type_text(text: &str) -> Result<(), String> {
     unsafe {
         for ch in text.chars() {
             let vk = char_to_vk(ch);
-            let needs_shift = ch.is_ascii_uppercase()
-                || "!@#$%^&*()_+{}|:\"<>?~".contains(ch);
+            let needs_shift = ch.is_ascii_uppercase() || "!@#$%^&*()_+{}|:\"<>?~".contains(ch);
 
             if needs_shift {
                 keybd_event(VK_SHIFT.0 as u8, 0, KEYEVENTF_EXTENDEDKEY, None);
@@ -82,7 +81,12 @@ pub fn type_text(text: &str) -> Result<(), String> {
             keybd_event(vk, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, None);
 
             if needs_shift {
-                keybd_event(VK_SHIFT.0 as u8, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, None);
+                keybd_event(
+                    VK_SHIFT.0 as u8,
+                    0,
+                    KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP,
+                    None,
+                );
             }
         }
     }

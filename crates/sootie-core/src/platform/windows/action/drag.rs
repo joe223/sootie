@@ -1,38 +1,18 @@
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::Foundation::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 use crate::action::{ActionError, ActionResult, ActionTarget, DragAction};
+use crate::cascade::resolve_target_with_cascade;
 use crate::perception::PerceptionProvider;
 
 pub async fn perform_drag<P: PerceptionProvider>(
     action: &DragAction,
     perception: &P,
 ) -> Result<ActionResult, ActionError> {
-    let from = match &action.from {
-        ActionTarget::Coordinate(coord) => (coord.x as i32, coord.y as i32),
-        ActionTarget::Selector(selector) => {
-            let result = perception.find(selector).await
-                .map_err(|e| ActionError::ActionFailed(format!("Find failed: {}", e)))?;
-            if result.elements.is_empty() {
-                return Err(ActionError::TargetNotFound("no element matches selector".to_string()));
-            }
-            let (cx, cy) = result.elements[0].bounds.center();
-            (cx as i32, cy as i32)
-        }
-    };
-
-    let to = match &action.to {
-        ActionTarget::Coordinate(coord) => (coord.x as i32, coord.y as i32),
-        ActionTarget::Selector(selector) => {
-            let result = perception.find(selector).await
-                .map_err(|e| ActionError::ActionFailed(format!("Find failed: {}", e)))?;
-            if result.elements.is_empty() {
-                return Err(ActionError::TargetNotFound("no element matches selector".to_string()));
-            }
-            let (cx, cy) = result.elements[0].bounds.center();
-            (cx as i32, cy as i32)
-        }
-    };
+    let (from, from_backend) = resolve_target_with_cascade(perception, &action.from).await?;
+    let (to, to_backend) = resolve_target_with_cascade(perception, &action.to).await?;
+    let from = (from.x as i32, from.y as i32);
+    let to = (to.x as i32, to.y as i32);
 
     unsafe {
         SetCursorPos(from.0, from.1);
@@ -42,5 +22,12 @@ pub async fn perform_drag<P: PerceptionProvider>(
         mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None);
     }
 
-    Ok(ActionResult::success(None, "win32"))
+    let backend_used = if matches!(from_backend, Some(crate::cascade::Backend::Vision))
+        || matches!(to_backend, Some(crate::cascade::Backend::Vision))
+    {
+        "vision+win32"
+    } else {
+        "win32"
+    };
+    Ok(ActionResult::success(None, backend_used))
 }

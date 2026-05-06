@@ -16,9 +16,9 @@ pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, Percep
     let tmp_path = tmp_dir.join(format!("sootie_screenshot_{}.png", std::process::id()));
     cmd.arg(&tmp_path);
 
-    let output = cmd.output().map_err(|e| {
-        PerceptionError::ScreenshotFailed(format!("screencapture failed: {}", e))
-    })?;
+    let output = cmd
+        .output()
+        .map_err(|e| PerceptionError::ScreenshotFailed(format!("screencapture failed: {}", e)))?;
 
     if !output.status.success() {
         return Err(PerceptionError::ScreenshotFailed(

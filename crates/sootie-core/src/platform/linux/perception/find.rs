@@ -73,7 +73,9 @@ fn get_window_info(window_id: &str) -> Option<WindowInfo> {
         .ok()?;
 
     let title = if title_output.status.success() {
-        String::from_utf8_lossy(&title_output.stdout).trim().to_string()
+        String::from_utf8_lossy(&title_output.stdout)
+            .trim()
+            .to_string()
     } else {
         String::new()
     };
@@ -105,17 +107,35 @@ fn parse_geometry(geometry_str: &str) -> Bounds {
         if part.starts_with("Position:") {
             let pos_parts: Vec<&str> = part.split(',').collect();
             if pos_parts.len() >= 2 {
-                let x = pos_parts[0].replace("Position:", "").trim().parse().unwrap_or(0.0);
+                let x = pos_parts[0]
+                    .replace("Position:", "")
+                    .trim()
+                    .parse()
+                    .unwrap_or(0.0);
                 let y = pos_parts[1].trim().parse().unwrap_or(0.0);
-                return Bounds { x, y, width: 800.0, height: 600.0 };
+                return Bounds {
+                    x,
+                    y,
+                    width: 800.0,
+                    height: 600.0,
+                };
             }
         }
         if part.starts_with("Geometry:") {
             let geo_parts: Vec<&str> = part.split('x').collect();
             if geo_parts.len() >= 2 {
-                let width = geo_parts[0].replace("Geometry:", "").trim().parse().unwrap_or(800.0);
+                let width = geo_parts[0]
+                    .replace("Geometry:", "")
+                    .trim()
+                    .parse()
+                    .unwrap_or(800.0);
                 let height = geo_parts[1].trim().parse().unwrap_or(600.0);
-                return Bounds { x: 0.0, y: 0.0, width, height };
+                return Bounds {
+                    x: 0.0,
+                    y: 0.0,
+                    width,
+                    height,
+                };
             }
         }
     }

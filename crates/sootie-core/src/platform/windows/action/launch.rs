@@ -1,27 +1,29 @@
-use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::Foundation::*;
 use windows::core::PCWSTR;
+use windows::Win32::Foundation::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::action::{ActionError, ActionResult, LaunchAction};
 
 pub fn perform_launch(action: &LaunchAction) -> Result<ActionResult, ActionError> {
-    let app_identifier = action
-        .app
-        .name
-        .or(action.app.bundle_id)
-        .clone();
+    let app_identifier = action.app.name.or(action.app.bundle_id).clone();
 
     match app_identifier {
         Some(identifier) => {
             unsafe {
-                let exe_path = identifier.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
-                
+                let exe_path = identifier
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect::<Vec<u16>>();
+
                 let mut args_string = identifier.clone();
                 for arg in &action.args {
                     args_string.push(' ');
                     args_string.push_str(arg);
                 }
-                let params = args_string.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+                let params = args_string
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect::<Vec<u16>>();
 
                 let result = ShellExecuteW(
                     HWND(0),
@@ -33,7 +35,10 @@ pub fn perform_launch(action: &LaunchAction) -> Result<ActionResult, ActionError
                 );
 
                 if result <= 32 {
-                    return Err(ActionError::ActionFailed(format!("ShellExecute failed: {}", result)));
+                    return Err(ActionError::ActionFailed(format!(
+                        "ShellExecute failed: {}",
+                        result
+                    )));
                 }
             }
 

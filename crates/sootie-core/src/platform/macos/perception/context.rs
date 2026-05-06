@@ -66,14 +66,23 @@ pub fn get_running_apps() -> crate::perception::Context {
 }
 
 pub fn get_app_windows(pid: i32) -> Vec<crate::selector::Window> {
+    if !is_process_trusted() {
+        return vec![];
+    }
+
     unsafe {
         let app_element = AXUIElementCreateApplication(pid);
+        if app_element.is_null() {
+            return vec![];
+        }
+
         let mut windows = Vec::new();
 
         let window_refs = get_children(app_element);
         for (index, window_ref) in window_refs.iter().enumerate() {
             let role = get_string_attr(*window_ref, "AXRole").unwrap_or_default();
             if role != "AXWindow" {
+                release_ax_element(*window_ref);
                 continue;
             }
 
@@ -81,7 +90,7 @@ pub fn get_app_windows(pid: i32) -> Vec<crate::selector::Window> {
             let position = get_point_attr(*window_ref, "AXPosition");
             let size = get_size_attr(*window_ref, "AXSize");
 
-let focused = get_bool_attr(*window_ref, "AXFocused").unwrap_or(false);
+            let focused = get_bool_attr(*window_ref, "AXFocused").unwrap_or(false);
 
             let bounds = match (position, size) {
                 (Some(pos), Some(sz)) => crate::selector::Bounds {
@@ -105,18 +114,17 @@ let focused = get_bool_attr(*window_ref, "AXFocused").unwrap_or(false);
                 focused,
                 bounds,
             });
+
+            release_ax_element(*window_ref);
         }
 
+        release_ax_element(app_element);
         windows
     }
 }
 
 pub fn get_pid_for_app_name(name: &str) -> i32 {
-    let output = Command::new("pgrep")
-        .arg("-x")
-        .arg(name)
-        .output()
-        .ok();
+    let output = Command::new("pgrep").arg("-x").arg(name).output().ok();
 
     output
         .and_then(|o| {

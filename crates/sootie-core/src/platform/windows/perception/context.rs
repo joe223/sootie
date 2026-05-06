@@ -1,7 +1,8 @@
-use windows::Win32::UI::WindowsAndMessaging::*;
+use std::path::Path;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::ProcessStatus::*;
 use windows::Win32::System::Threading::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::perception::{AppContext, Context};
 use crate::selector::{App, Bounds, Window};
@@ -37,31 +38,36 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     let mut process_id: u32 = 0;
     GetWindowThreadProcessId(hwnd, Some(&mut process_id));
 
-    let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, process_id);
+    let process_handle = OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+        false,
+        process_id,
+    );
     if process_handle.is_err() {
         return BOOL(1);
     }
 
     let mut exe_name = [0u16; 260];
-    let exe_len = GetModuleFileNameExW(
-        process_handle.unwrap(),
-        HMODULE(0),
-        &mut exe_name,
-        260,
-    );
+    let exe_len = GetModuleFileNameExW(process_handle.unwrap(), HMODULE(0), &mut exe_name, 260);
 
     let exe_string = if exe_len > 0 {
         String::from_utf16_lossy(&exe_name[..exe_len as usize])
     } else {
         "Unknown".to_string()
     };
+    let app_name = normalize_process_name(&exe_string);
 
     let is_visible = IsWindowVisible(hwnd).as_bool();
     if !is_visible {
         return BOOL(1);
     }
 
-    let mut rect = windows::Win32::Graphics::Gdi::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut rect = windows::Win32::Graphics::Gdi::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     GetWindowRect(hwnd, &mut rect);
 
     let bounds = Bounds {
@@ -73,7 +79,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
 
     apps.push(AppContext {
         app: App {
-            name: exe_string.clone(),
+            name: app_name,
             bundle_id: exe_string,
             is_frontmost: GetForegroundWindow() == hwnd,
         },
@@ -87,4 +93,12 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     });
 
     BOOL(1)
+}
+
+fn normalize_process_name(exe_path: &str) -> String {
+    Path::new(exe_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(exe_path)
+        .to_string()
 }

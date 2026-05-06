@@ -50,8 +50,8 @@ pub fn wait_for_element(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::selector::{Selector};
     use crate::perception::WaitCondition;
+    use crate::selector::Selector;
     use std::collections::HashMap;
 
     #[test]

@@ -17,9 +17,9 @@ pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, Percep
 
     cmd.arg(&tmp_path);
 
-    let output = cmd.output().map_err(|e| {
-        PerceptionError::ScreenshotFailed(format!("import command failed: {}", e))
-    })?;
+    let output = cmd
+        .output()
+        .map_err(|e| PerceptionError::ScreenshotFailed(format!("import command failed: {}", e)))?;
 
     if !output.status.success() {
         return Err(PerceptionError::ScreenshotFailed(

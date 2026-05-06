@@ -16,6 +16,19 @@ pub struct AppContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppInfo {
+    pub name: String,
+    pub bundle_id: Option<String>,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FindAppsResult {
+    pub apps: Vec<AppInfo>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScreenshotData {
     pub format: ScreenshotFormat,
     pub data: Vec<u8>,
@@ -79,6 +92,12 @@ pub trait PerceptionProvider: Send + Sync {
         target: Option<&Selector>,
         region: Option<&Bounds>,
     ) -> Result<ScreenshotData, PerceptionError>;
+
+    async fn find_apps(
+        &self,
+        pattern: &str,
+        limit: Option<u32>,
+    ) -> Result<FindAppsResult, PerceptionError>;
 }
 
 pub struct StubPerceptionProvider;
@@ -116,6 +135,16 @@ impl PerceptionProvider for StubPerceptionProvider {
         _target: Option<&Selector>,
         _region: Option<&Bounds>,
     ) -> Result<ScreenshotData, PerceptionError> {
+        Err(PerceptionError::NotImplemented(
+            "stub provider".to_string(),
+        ))
+    }
+
+    async fn find_apps(
+        &self,
+        _pattern: &str,
+        _limit: Option<u32>,
+    ) -> Result<FindAppsResult, PerceptionError> {
         Err(PerceptionError::NotImplemented(
             "stub provider".to_string(),
         ))

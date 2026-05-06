@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, Write};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -10,7 +11,11 @@ use sootie_mcp::server::SootieServer;
 use sootie_mcp::types::JsonRpcRequest;
 
 #[derive(Parser)]
-#[command(name = "sootie", version, about = "Cross-platform computer-use for AI agents")]
+#[command(
+    name = "sootie",
+    version,
+    about = "Cross-platform computer-use for AI agents"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -26,7 +31,7 @@ enum Commands {
         #[arg(long, default_value = "info")]
         log_level: String,
 
-        /// Log file path (optional, logs to stderr by default)
+        /// Log file path (optional, defaults to the platform data directory)
         #[arg(long)]
         log_file: Option<String>,
     },
@@ -38,7 +43,10 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Setup => run_setup(),
-        Commands::Serve { log_level, log_file } => run_serve(log_level, log_file).await,
+        Commands::Serve {
+            log_level,
+            log_file,
+        } => run_serve(log_level, log_file).await,
     }
 }
 
@@ -98,43 +106,69 @@ fn run_setup() -> Result<()> {
     println!();
     println!("Logging options:");
     println!("  sootie serve --log-level debug");
+    println!("  default log file: {}", default_log_file_path().display());
     println!("  sootie serve --log-level debug --log-file /tmp/sootie.log");
+    println!();
+    println!("Log sanitization:");
+    println!("  Sensitive data (passwords, API keys, emails) is automatically redacted in logs.");
+    println!("  To disable sanitization for debugging:");
+    println!("    Set log config: sanitize_logs: false");
+    println!();
+    println!("  Custom sensitive fields via environment:");
+    println!("    SOOTIE_SENSITIVE_FIELDS=[\"custom_field1\",\"custom_field2\"]");
+
+    Ok(())
+}
+
+fn default_log_file_path() -> PathBuf {
+    dirs_next::data_local_dir()
+        .or_else(dirs_next::config_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sootie")
+        .join("logs")
+        .join("sootie.log")
+}
+
+fn resolve_log_file_path(log_file: Option<String>) -> PathBuf {
+    log_file
+        .map(PathBuf::from)
+        .unwrap_or_else(default_log_file_path)
+}
+
+fn init_logging(log_level: &str, log_path: &Path) -> Result<()> {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+
+    let log_dir = log_path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(log_dir)?;
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_writer(file)
+        .init();
 
     Ok(())
 }
 
 async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&log_level));
+    let log_path = resolve_log_file_path(log_file);
+    init_logging(&log_level, &log_path)?;
+    info!(log_file = %log_path.display(), "Logging to file initialized");
 
-    if let Some(ref path) = log_file {
-        let log_dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("."));
-        std::fs::create_dir_all(log_dir)?;
-
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
-
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_target(true)
-            .with_thread_ids(true)
-            .with_file(true)
-            .with_line_number(true)
-            .with_writer(file)
-            .init();
-
-        info!(log_file = %path, "Logging to file initialized");
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_target(true)
-            .with_thread_ids(true)
-            .init();
-    }
-
-    info!(platform = std::env::consts::OS, version = env!("CARGO_PKG_VERSION"), "Sootie MCP server starting");
+    info!(
+        platform = std::env::consts::OS,
+        version = env!("CARGO_PKG_VERSION"),
+        "Sootie MCP server starting"
+    );
 
     let perception = platform::create_perception_provider();
     let action = platform::create_action_provider();
@@ -205,7 +239,10 @@ mod tests {
         let cli = Cli::try_parse_from(["sootie", "serve"]);
         assert!(cli.is_ok());
         match cli.unwrap().command {
-            Commands::Serve { log_level, log_file } => {
+            Commands::Serve {
+                log_level,
+                log_file,
+            } => {
                 assert_eq!(log_level, "info");
                 assert!(log_file.is_none());
             }
@@ -264,10 +301,20 @@ mod tests {
 
     #[test]
     fn test_cli_parse_serve_with_all_options() {
-        let cli = Cli::try_parse_from(["sootie", "serve", "--log-level", "trace", "--log-file", "/tmp/test.log"]);
+        let cli = Cli::try_parse_from([
+            "sootie",
+            "serve",
+            "--log-level",
+            "trace",
+            "--log-file",
+            "/tmp/test.log",
+        ]);
         assert!(cli.is_ok());
         match cli.unwrap().command {
-            Commands::Serve { log_level, log_file } => {
+            Commands::Serve {
+                log_level,
+                log_file,
+            } => {
                 assert_eq!(log_level, "trace");
                 assert_eq!(log_file, Some("/tmp/test.log".to_string()));
             }
@@ -279,5 +326,27 @@ mod tests {
     fn test_run_setup_does_not_panic() {
         let result = run_setup();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_default_log_file_path_uses_sootie_log_suffix() {
+        let path = default_log_file_path();
+        let suffix = Path::new("sootie").join("logs").join("sootie.log");
+        assert!(
+            path.ends_with(&suffix),
+            "unexpected default log path: {}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn test_resolve_log_file_path_falls_back_to_default() {
+        assert_eq!(resolve_log_file_path(None), default_log_file_path());
+    }
+
+    #[test]
+    fn test_resolve_log_file_path_preserves_explicit_value() {
+        let path = resolve_log_file_path(Some("/tmp/custom.log".to_string()));
+        assert_eq!(path, PathBuf::from("/tmp/custom.log"));
     }
 }

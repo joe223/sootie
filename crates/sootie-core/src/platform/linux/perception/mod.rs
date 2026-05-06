@@ -5,8 +5,9 @@ mod screenshot;
 use async_trait::async_trait;
 use tracing::debug;
 
+use crate::cdp::try_find_via_cdp;
 use crate::perception::{
-    Context, DeepInspection, PerceptionError, PerceptionProvider, ScreenshotData,
+    Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider, ScreenshotData,
     WaitCondition, WaitResult,
 };
 use crate::selector::{Bounds, Selector};
@@ -26,8 +27,14 @@ impl PerceptionProvider for LinuxPerceptionProvider {
         context::get_running_apps()
     }
 
-    async fn find(&self, selector: &Selector) -> Result<crate::selector::ResolvedTarget, PerceptionError> {
+    async fn find(
+        &self,
+        selector: &Selector,
+    ) -> Result<crate::selector::ResolvedTarget, PerceptionError> {
         debug!("Finding elements with selector: {:?}", selector);
+        if let Ok(Some(result)) = try_find_via_cdp(selector).await {
+            return Ok(result);
+        }
         find::find_elements(selector)
     }
 
@@ -35,7 +42,9 @@ impl PerceptionProvider for LinuxPerceptionProvider {
         debug!("Inspecting element");
         let resolved = self.find(selector).await?;
         if resolved.elements.is_empty() {
-            return Err(PerceptionError::TargetNotFound("no element matches selector".to_string()));
+            return Err(PerceptionError::TargetNotFound(
+                "no element matches selector".to_string(),
+            ));
         }
         let element = resolved.elements[0].clone();
         Ok(DeepInspection {
@@ -62,8 +71,12 @@ impl PerceptionProvider for LinuxPerceptionProvider {
             if !result.elements.is_empty() {
                 let element = &result.elements[0];
                 let want_visible = condition.state.get("visible").and_then(|v| v.as_bool());
+                let want_enabled = condition.state.get("enabled").and_then(|v| v.as_bool());
+                let want_focused = condition.state.get("focused").and_then(|v| v.as_bool());
                 let visible_ok = want_visible.map_or(true, |v| element.state.visible == v);
-                if visible_ok {
+                let enabled_ok = want_enabled.map_or(true, |v| element.state.enabled == Some(v));
+                let focused_ok = want_focused.map_or(true, |v| element.state.focused == Some(v));
+                if visible_ok && enabled_ok && focused_ok {
                     return Ok(WaitResult {
                         matched: true,
                         element: Some(element.clone()),
@@ -91,5 +104,15 @@ impl PerceptionProvider for LinuxPerceptionProvider {
     ) -> Result<ScreenshotData, PerceptionError> {
         debug!("Taking screenshot");
         screenshot::take_screenshot(region)
+    }
+
+    async fn find_apps(
+        &self,
+        _pattern: &str,
+        _limit: Option<u32>,
+    ) -> Result<FindAppsResult, PerceptionError> {
+        Err(PerceptionError::NotImplemented(
+            "find_apps not implemented for Linux".to_string(),
+        ))
     }
 }

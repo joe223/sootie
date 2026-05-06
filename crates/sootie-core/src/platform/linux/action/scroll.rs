@@ -1,24 +1,19 @@
 use std::process::Command;
 
 use crate::action::{ActionError, ActionResult, ActionTarget, ScrollAction};
+use crate::cascade::resolve_target_with_cascade;
 use crate::perception::PerceptionProvider;
 
 pub async fn perform_scroll<P: PerceptionProvider>(
     action: &ScrollAction,
     perception: &P,
 ) -> Result<ActionResult, ActionError> {
-    let (x, y) = match &action.target {
-        Some(ActionTarget::Coordinate(coord)) => (coord.x, coord.y),
-        Some(ActionTarget::Selector(selector)) => {
-            let result = perception.find(selector).await
-                .map_err(|e| ActionError::ActionFailed(format!("Find failed: {}", e)))?;
-            if result.elements.is_empty() {
-                return Err(ActionError::TargetNotFound("no element matches selector".to_string()));
-            }
-            let (cx, cy) = result.elements[0].bounds.center();
-            (cx, cy)
+    let (x, y, backend) = match &action.target {
+        Some(target) => {
+            let (coord, backend) = resolve_target_with_cascade(perception, target).await?;
+            (coord.x, coord.y, backend)
         }
-        None => (0.0, 0.0),
+        None => (0.0, 0.0, None),
     };
 
     let direction_arg = match action.direction {
@@ -47,5 +42,9 @@ pub async fn perform_scroll<P: PerceptionProvider>(
             .map_err(|e| ActionError::ActionFailed(format!("Scroll click failed: {}", e)))?;
     }
 
-    Ok(ActionResult::success(None, "xdotool"))
+    let backend_used = match backend {
+        Some(crate::cascade::Backend::Vision) => "vision+xdotool",
+        _ => "xdotool",
+    };
+    Ok(ActionResult::success(None, backend_used))
 }

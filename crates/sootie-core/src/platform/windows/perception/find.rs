@@ -1,6 +1,6 @@
+use windows::Win32::Foundation::*;
 use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::Foundation::*;
 
 use crate::perception::PerceptionError;
 use crate::selector::{Bounds, Element, ElementState, MatchStatus, ResolvedTarget, Selector};
@@ -71,7 +71,12 @@ unsafe fn find_elements_in_window(
         .unwrap_or(true);
 
     if matches_role && matches_name {
-        let mut rect = windows::Win32::Graphics::Gdi::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut rect = windows::Win32::Graphics::Gdi::RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
         GetWindowRect(hwnd, &mut rect);
 
         let bounds = Bounds {
@@ -189,7 +194,7 @@ fn role_to_string(role: i32) -> String {
         ROLE_SYSTEM_TITLEBAR => "titlebar",
         ROLE_SYSTEM_MENUBAR => "menubar",
         ROLE_SYSTEM_SCROLLBAR => "scrollbar",
-        ROLE_SYSTEM grip => "grip",
+        ROLE_SYSTEM_GRIP => "grip",
         ROLE_SYSTEM_SOUND => "sound",
         ROLE_SYSTEM_CURSOR => "cursor",
         ROLE_SYSTEM_CARET => "caret",

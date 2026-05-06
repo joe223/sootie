@@ -75,6 +75,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_create_perception_provider_type() {
         let provider = create_perception_provider();
         let result = provider.get_context().await;
@@ -82,6 +83,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_create_action_provider_type() {
         let provider = create_action_provider();
         let action = ClickAction {

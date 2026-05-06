@@ -1,8 +1,10 @@
 use tracing::{debug, warn};
 
 use crate::action::{ActionError, ActionTarget};
+use crate::cdp::try_find_via_cdp;
 use crate::perception::{PerceptionError, PerceptionProvider};
-use crate::selector::{Coordinate, Selector};
+use crate::selector::{Bounds, Coordinate, Selector};
+use crate::vision::{RuntimeVisionProvider, VisionProvider, VisionRequest};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Backend {
@@ -21,13 +23,14 @@ impl std::fmt::Display for Backend {
     }
 }
 
-pub struct Cascade<P: PerceptionProvider> {
-    perception: P,
+pub struct Cascade<'a, P: PerceptionProvider, V: VisionProvider> {
+    perception: &'a P,
+    vision: Option<&'a V>,
 }
 
-impl<P: PerceptionProvider> Cascade<P> {
-    pub fn new(perception: P) -> Self {
-        Self { perception }
+impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
+    pub fn new(perception: &'a P, vision: Option<&'a V>) -> Self {
+        Self { perception, vision }
     }
 
     pub async fn resolve_coordinate(
@@ -36,9 +39,7 @@ impl<P: PerceptionProvider> Cascade<P> {
     ) -> Result<(Coordinate, Option<Backend>), ActionError> {
         match target {
             ActionTarget::Coordinate(coord) => Ok((coord.clone(), None)),
-            ActionTarget::Selector(selector) => {
-                self.resolve_selector_coordinate(selector).await
-            }
+            ActionTarget::Selector(selector) => self.resolve_selector_coordinate(selector).await,
         }
     }
 
@@ -46,7 +47,30 @@ impl<P: PerceptionProvider> Cascade<P> {
         &self,
         selector: &Selector,
     ) -> Result<(Coordinate, Option<Backend>), ActionError> {
-        debug!("Attempting structured resolution for selector");
+        debug!("Attempting CDP/structured resolution for selector");
+
+        match try_find_via_cdp(selector).await {
+            Ok(Some(result)) if result.status == crate::selector::MatchStatus::Unique => {
+                if let Some(element) = result.elements.first() {
+                    let center = element.bounds.center();
+                    debug!("CDP resolution succeeded at ({}, {})", center.0, center.1);
+                    return Ok((
+                        Coordinate {
+                            x: center.0,
+                            y: center.1,
+                        },
+                        Some(Backend::Cdp),
+                    ));
+                }
+            }
+            Ok(Some(_)) => {
+                debug!("CDP returned no unique match, falling back to AT tree");
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!("CDP resolution error: {}, falling back to AT tree", error);
+            }
+        }
 
         match self.perception.find(selector).await {
             Ok(result) if result.status == crate::selector::MatchStatus::Unique => {
@@ -85,22 +109,100 @@ impl<P: PerceptionProvider> Cascade<P> {
 
     async fn resolve_via_vision(
         &self,
-        _selector: &Selector,
+        selector: &Selector,
     ) -> Result<(Coordinate, Option<Backend>), ActionError> {
-        debug!("Vision fallback not yet implemented");
-        Err(ActionError::NotImplemented(
-            "vision fallback requires vision provider".to_string(),
-        ))
+        let Some(vision) = self.vision else {
+            debug!("Vision fallback not available");
+            return Err(ActionError::NotImplemented(
+                "vision fallback requires vision provider".to_string(),
+            ));
+        };
+
+        let screenshot = self
+            .perception
+            .screenshot(Some(selector), selector_region(selector).as_ref())
+            .await
+            .map_err(|e| ActionError::ActionFailed(format!("Screenshot failed: {}", e)))?;
+
+        let request = VisionRequest {
+            screenshot,
+            target_description: describe_selector(selector),
+            context: selector
+                .app
+                .as_ref()
+                .and_then(|app| app.name.clone())
+                .or_else(|| {
+                    selector
+                        .window
+                        .as_ref()
+                        .and_then(|window| window.title.clone())
+                }),
+        };
+
+        let result = vision
+            .detect(&request)
+            .await
+            .map_err(|e| ActionError::ActionFailed(format!("Vision fallback failed: {}", e)))?;
+
+        Ok((result.coordinate, Some(Backend::Vision)))
+    }
+}
+
+pub async fn resolve_target_with_cascade<P: PerceptionProvider>(
+    perception: &P,
+    target: &ActionTarget,
+) -> Result<(Coordinate, Option<Backend>), ActionError> {
+    let vision = RuntimeVisionProvider::from_env();
+    let cascade = Cascade::new(perception, Some(&vision));
+    cascade.resolve_coordinate(target).await
+}
+
+fn selector_region(selector: &Selector) -> Option<Bounds> {
+    selector.window.as_ref().and_then(|window| {
+        window.id.as_ref()?;
+        None
+    })
+}
+
+fn describe_selector(selector: &Selector) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(app) = selector.app.as_ref().and_then(|app| app.name.as_ref()) {
+        parts.push(format!("app={}", app));
+    }
+    if let Some(window) = selector
+        .window
+        .as_ref()
+        .and_then(|window| window.title.as_ref())
+    {
+        parts.push(format!("window={}", window));
+    }
+    if let Some(role) = selector.element.role.as_ref() {
+        parts.push(format!("role={}", role));
+    }
+    if let Some(name) = selector.element.name.as_ref() {
+        parts.push(format!("name={}", name));
+    }
+    if let Some(text) = selector.element.text.as_ref() {
+        parts.push(format!("text={}", text));
+    }
+    if let Some(id) = selector.element.id.as_ref() {
+        parts.push(format!("id={}", id));
+    }
+
+    if parts.is_empty() {
+        "unknown target".to_string()
+    } else {
+        parts.join(", ")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::perception::{
-        Context, ScreenshotData, StubPerceptionProvider, WaitCondition, WaitResult,
-    };
+    use crate::perception::{Context, FindAppsResult, ScreenshotData, WaitCondition, WaitResult};
     use crate::selector::*;
+    use crate::vision::{VisionError, VisionResult};
 
     struct MockPerceptionProvider {
         find_result: Option<ResolvedTarget>,
@@ -148,7 +250,39 @@ mod tests {
             _target: Option<&Selector>,
             _region: Option<&Bounds>,
         ) -> Result<ScreenshotData, PerceptionError> {
+            Ok(ScreenshotData {
+                format: crate::perception::ScreenshotFormat::Png,
+                data: Vec::new(),
+                bounds: Some(Bounds {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 300.0,
+                }),
+            })
+        }
+
+        async fn find_apps(
+            &self,
+            _pattern: &str,
+            _limit: Option<u32>,
+        ) -> Result<FindAppsResult, PerceptionError> {
             Err(PerceptionError::NotImplemented("mock".to_string()))
+        }
+    }
+
+    struct MockVisionProvider {
+        coordinate: Coordinate,
+    }
+
+    #[async_trait::async_trait]
+    impl VisionProvider for MockVisionProvider {
+        async fn detect(&self, _request: &VisionRequest) -> Result<VisionResult, VisionError> {
+            Ok(VisionResult {
+                coordinate: self.coordinate.clone(),
+                confidence: 0.9,
+                model_used: "mock".to_string(),
+            })
         }
     }
 
@@ -183,10 +317,27 @@ mod tests {
         }
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_resolve_selector_with_vision_fallback() {
         let provider = MockPerceptionProvider::empty();
-        let cascade = Cascade::new(provider);
+        let vision = MockVisionProvider {
+            coordinate: Coordinate { x: 11.0, y: 22.0 },
+        };
+        let cascade = Cascade::new(&provider, Some(&vision));
+
+        let selector = Selector::new().with_name("Submit");
+        let target = ActionTarget::Selector(selector);
+
+        let result = cascade.resolve_coordinate(&target).await.unwrap();
+        assert_eq!(result.0.x, 11.0);
+        assert_eq!(result.0.y, 22.0);
+        assert_eq!(result.1, Some(Backend::Vision));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_selector_without_vision_provider() {
+        let provider = MockPerceptionProvider::empty();
+        let cascade = Cascade::<_, MockVisionProvider>::new(&provider, None);
 
         let selector = Selector::new().with_name("Submit");
         let target = ActionTarget::Selector(selector);
@@ -194,9 +345,7 @@ mod tests {
         let result = cascade.resolve_coordinate(&target).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            ActionError::NotImplemented(msg) => {
-                assert!(msg.contains("vision"));
-            }
+            ActionError::NotImplemented(msg) => assert!(msg.contains("vision")),
             _ => panic!("Expected NotImplemented error"),
         }
     }
@@ -212,25 +361,32 @@ mod tests {
             elements: vec![element],
         };
         let provider = MockPerceptionProvider::with_find_result(resolved);
-        let cascade = Cascade::new(provider);
+        let vision = MockVisionProvider {
+            coordinate: Coordinate { x: 7.0, y: 8.0 },
+        };
+        let cascade = Cascade::new(&provider, Some(&vision));
 
         let selector = Selector::new().with_role("button");
         let target = ActionTarget::Selector(selector);
 
-        let result = cascade.resolve_coordinate(&target).await;
-        assert!(result.is_err());
+        let result = cascade.resolve_coordinate(&target).await.unwrap();
+        assert_eq!(result.1, Some(Backend::Vision));
     }
 
     #[tokio::test]
     async fn test_resolve_selector_perception_error() {
         let provider = MockPerceptionProvider::empty();
-        let cascade = Cascade::new(provider);
+        let vision = MockVisionProvider {
+            coordinate: Coordinate { x: 13.0, y: 14.0 },
+        };
+        let cascade = Cascade::new(&provider, Some(&vision));
 
         let selector = Selector::new().with_name("NonExistent");
         let target = ActionTarget::Selector(selector);
 
-        let result = cascade.resolve_coordinate(&target).await;
-        assert!(result.is_err());
+        let result = cascade.resolve_coordinate(&target).await.unwrap();
+        assert_eq!(result.0.x, 13.0);
+        assert_eq!(result.0.y, 14.0);
     }
 
     #[test]
@@ -246,7 +402,10 @@ mod tests {
         let target = make_resolved_target(element);
 
         let provider = MockPerceptionProvider::with_find_result(target);
-        let cascade = Cascade::new(provider);
+        let vision = MockVisionProvider {
+            coordinate: Coordinate { x: 0.0, y: 0.0 },
+        };
+        let cascade = Cascade::new(&provider, Some(&vision));
 
         let selector = Selector::new().with_role("button").with_name("Test");
         let action_target = ActionTarget::Selector(selector);
@@ -258,52 +417,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_selector_fallback_on_not_found() {
-        let provider = MockPerceptionProvider::empty();
-        let cascade = Cascade::new(provider);
-
-        let selector = Selector::new().with_role("button").with_name("Missing");
-        let action_target = ActionTarget::Selector(selector);
-
-        let result = cascade.resolve_coordinate(&action_target).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
     async fn test_resolve_click_with_coordinate() {
-        let provider = StubPerceptionProvider;
-        let cascade = Cascade::new(provider);
-
-        let target = ActionTarget::Coordinate(Coordinate { x: 50.0, y: 75.0 });
-        let action = crate::action::ClickAction {
-            target,
-            button: Some(crate::action::MouseButton::Left),
-            count: Some(1),
+        let provider = MockPerceptionProvider::empty();
+        let vision = MockVisionProvider {
+            coordinate: Coordinate { x: 0.0, y: 0.0 },
         };
+        let cascade = Cascade::new(&provider, Some(&vision));
+        let action_target = ActionTarget::Coordinate(Coordinate { x: 10.0, y: 20.0 });
 
-        let (coord, _) = cascade.resolve_coordinate(&action.target).await.unwrap();
-        assert_eq!(coord.x, 50.0);
-        assert_eq!(coord.y, 75.0);
-    }
-
-    #[tokio::test]
-    async fn test_resolve_hover_with_selector() {
-        let element = make_element(300.0, 400.0, 80.0, 30.0);
-        let target = make_resolved_target(element);
-
-        let provider = MockPerceptionProvider::with_find_result(target);
-        let cascade = Cascade::new(provider);
-
-        let selector = Selector::new()
-            .with_app(AppSelector::from_name("Chrome"))
-            .with_role("link")
-            .with_name("Home");
-
-        let action_target = ActionTarget::Selector(selector);
         let (coord, backend) = cascade.resolve_coordinate(&action_target).await.unwrap();
-
-        assert_eq!(coord.x, 340.0);
-        assert_eq!(coord.y, 415.0);
-        assert_eq!(backend, Some(Backend::AtTree));
+        assert_eq!(coord.x, 10.0);
+        assert_eq!(coord.y, 20.0);
+        assert_eq!(backend, None);
     }
 }

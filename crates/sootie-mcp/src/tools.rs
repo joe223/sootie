@@ -1,8 +1,6 @@
-use sootie_core::action::{
-    ActionTarget, MouseButton, ScrollDirection,
-};
-use sootie_core::recipe::{StepTarget};
-use sootie_core::selector::{AppSelector, Coordinate, Selector, WindowSelector};
+use sootie_core::action::{ActionTarget, MouseButton, ScrollDirection};
+use sootie_core::recipe::StepTarget;
+use sootie_core::selector::{AppSelector, Coordinate, Selector, WindowSelector, WindowState};
 
 use crate::types::ToolDefinition;
 
@@ -13,6 +11,7 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         perception_inspect(),
         perception_wait(),
         perception_screenshot(),
+        perception_find_apps(),
         action_click(),
         action_type(),
         action_press(),
@@ -33,7 +32,9 @@ pub fn all_tools() -> Vec<ToolDefinition> {
 fn perception_context() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_context".to_string(),
-        description: "Get the macro environment state: a tree of running apps and their open windows".to_string(),
+        description:
+            "Get the macro environment state: a tree of running apps and their open windows"
+                .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {}
@@ -44,7 +45,9 @@ fn perception_context() -> ToolDefinition {
 fn perception_find() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_find".to_string(),
-        description: "Resolve UI targets across desktop apps and web apps with the unified selector scheme".to_string(),
+        description:
+            "Resolve UI targets across desktop apps and web apps with the unified selector scheme"
+                .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -78,7 +81,8 @@ fn perception_find() -> ToolDefinition {
 fn perception_inspect() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_inspect".to_string(),
-        description: "Return normalized metadata and full sub-tree for one resolved target".to_string(),
+        description: "Return normalized metadata and full sub-tree for one resolved target"
+            .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -96,7 +100,8 @@ fn perception_inspect() -> ToolDefinition {
 fn perception_wait() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_wait".to_string(),
-        description: "Pause execution until a target matches a specific state or timeout".to_string(),
+        description: "Pause execution until a target matches a specific state or timeout"
+            .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -137,6 +142,30 @@ fn perception_screenshot() -> ToolDefinition {
                     }
                 }
             }
+        }),
+    }
+}
+
+fn perception_find_apps() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_find_apps".to_string(),
+        description:
+            "Find installed applications by name pattern (supports wildcards like '*Chrome*')"
+                .to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "App name pattern (supports wildcards: 'Chrome', '*Chrome*', 'Google*')"
+                },
+                "limit": {
+                    "type": "number",
+                    "description": "Maximum number of results to return",
+                    "default": 10
+                }
+            },
+            "required": ["pattern"]
         }),
     }
 }
@@ -469,17 +498,58 @@ pub fn parse_selector_from_args(args: &serde_json::Value) -> Selector {
         sel.element.id = Some(id.to_string());
     }
 
+    if let Some(state) = args.get("state") {
+        if let Ok(state) = serde_json::from_value::<WindowState>(state.clone()) {
+            sel.element.state = Some(state);
+        }
+    }
+
     sel
 }
 
 pub fn parse_action_target(args: &serde_json::Value) -> Option<ActionTarget> {
     if let Some(coord) = args.get("coordinate") {
-        if let (Some(x), Some(y)) = (coord.get("x").and_then(|v| v.as_f64()), coord.get("y").and_then(|v| v.as_f64())) {
+        if let (Some(x), Some(y)) = (
+            coord.get("x").and_then(|v| v.as_f64()),
+            coord.get("y").and_then(|v| v.as_f64()),
+        ) {
             return Some(ActionTarget::Coordinate(Coordinate { x, y }));
         }
     }
 
-    if args.get("target").is_some() || args.get("app").is_some() || args.get("role").is_some() {
+    if let Some(target) = args.get("target") {
+        if let Some(coord) = target.get("coordinate") {
+            if let (Some(x), Some(y)) = (
+                coord.get("x").and_then(|v| v.as_f64()),
+                coord.get("y").and_then(|v| v.as_f64()),
+            ) {
+                return Some(ActionTarget::Coordinate(Coordinate { x, y }));
+            }
+        }
+
+        if target.is_object() {
+            let selector = parse_selector_from_args(target);
+            if selector.app.is_some()
+                || selector.window.is_some()
+                || selector.element.role.is_some()
+                || selector.element.name.is_some()
+                || selector.element.text.is_some()
+                || selector.element.id.is_some()
+                || selector.element.state.is_some()
+            {
+                return Some(ActionTarget::Selector(selector));
+            }
+        }
+    }
+
+    if args.get("app").is_some()
+        || args.get("window").is_some()
+        || args.get("role").is_some()
+        || args.get("name").is_some()
+        || args.get("text").is_some()
+        || args.get("id").is_some()
+        || args.get("state").is_some()
+    {
         let selector = parse_selector_from_args(args);
         return Some(ActionTarget::Selector(selector));
     }
@@ -507,7 +577,10 @@ pub fn parse_scroll_direction(s: &str) -> ScrollDirection {
 
 pub fn parse_step_target(value: &serde_json::Value) -> Option<StepTarget> {
     if let Some(coord) = value.get("coordinate") {
-        if let (Some(x), Some(y)) = (coord.get("x").and_then(|v| v.as_f64()), coord.get("y").and_then(|v| v.as_f64())) {
+        if let (Some(x), Some(y)) = (
+            coord.get("x").and_then(|v| v.as_f64()),
+            coord.get("y").and_then(|v| v.as_f64()),
+        ) {
             return Some(StepTarget::Coordinate(Coordinate { x, y }));
         }
     }
@@ -528,7 +601,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 19);
+        assert_eq!(tools.len(), 20);
     }
 
     #[test]
@@ -585,6 +658,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_selector_from_args_state() {
+        let args = serde_json::json!({
+            "name": "Compose",
+            "state": { "visible": true, "focused": false }
+        });
+
+        let sel = parse_selector_from_args(&args);
+        let state = sel.element.state.unwrap();
+        assert_eq!(state.visible, Some(true));
+        assert_eq!(state.focused, Some(false));
+    }
+
+    #[test]
     fn test_parse_action_target_coordinate() {
         let args = serde_json::json!({
             "coordinate": { "x": 100.0, "y": 200.0 }
@@ -613,6 +699,29 @@ mod tests {
             ActionTarget::Selector(s) => {
                 assert_eq!(s.app.unwrap().name, Some("Chrome".to_string()));
                 assert_eq!(s.element.role, Some("button".to_string()));
+            }
+            _ => panic!("expected selector"),
+        }
+    }
+
+    #[test]
+    fn test_parse_action_target_nested_target_selector() {
+        let args = serde_json::json!({
+            "target": {
+                "app": "Chrome",
+                "window": "Gmail",
+                "role": "button",
+                "name": "Compose"
+            }
+        });
+
+        let target = parse_action_target(&args).unwrap();
+        match target {
+            ActionTarget::Selector(s) => {
+                assert_eq!(s.app.unwrap().name.as_deref(), Some("Chrome"));
+                assert_eq!(s.window.unwrap().title.as_deref(), Some("Gmail"));
+                assert_eq!(s.element.role.as_deref(), Some("button"));
+                assert_eq!(s.element.name.as_deref(), Some("Compose"));
             }
             _ => panic!("expected selector"),
         }

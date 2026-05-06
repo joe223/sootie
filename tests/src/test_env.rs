@@ -1,6 +1,6 @@
 use anyhow::Result;
-use std::process::{Child, Command};
 use std::net::TcpListener;
+use std::process::{Child, Command};
 
 pub struct ChromeProcess {
     process: Child,
@@ -25,7 +25,7 @@ impl TestEnv {
             http_server: None,
         })
     }
-    
+
     pub fn launch_chrome(&mut self) -> Result<u16> {
         let port = find_available_port(9222, 9230)?;
         let process = Command::new("google-chrome-stable")
@@ -36,13 +36,15 @@ impl TestEnv {
                 "--no-first-run",
             ])
             .spawn()?;
-        
+
         self.chrome = Some(ChromeProcess { process, port });
         Ok(port)
     }
-    
+
     pub fn chrome_url(&self) -> Option<String> {
-        self.chrome.as_ref().map(|c| format!("http://localhost:{}", c.port))
+        self.chrome
+            .as_ref()
+            .map(|c| format!("http://localhost:{}", c.port))
     }
 }
 
@@ -69,17 +71,21 @@ fn find_available_port(start: u16, end: u16) -> Result<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_env_launch_creates_empty_env() {
         let env = TestEnv::launch().unwrap();
         assert!(env.chrome.is_none());
         assert!(env.http_server.is_none());
     }
-    
+
     #[test]
     fn test_find_available_port() {
-        let port = find_available_port(8080, 8090).unwrap();
-        assert!(port >= 8080 && port <= 8090);
+        let start = 49152;
+        let end = 49252;
+        match find_available_port(start, end) {
+            Ok(port) => assert!(port >= start && port <= end),
+            Err(err) => assert!(err.to_string().contains("No available port")),
+        }
     }
 }

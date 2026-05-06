@@ -51,6 +51,7 @@ mod tests {
     use crate::selector::Coordinate;
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_type_text() {
         let action = TypeAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
@@ -63,6 +64,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_type_empty() {
         let action = TypeAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
@@ -75,6 +77,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_type_clear_first() {
         let action = TypeAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
@@ -87,6 +90,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_type_no_target() {
         let action = TypeAction {
             target: None,

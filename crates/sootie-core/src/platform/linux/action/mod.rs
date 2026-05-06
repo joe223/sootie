@@ -1,22 +1,23 @@
 mod click;
-mod type_text;
-mod press;
-mod hotkey;
-mod scroll;
-mod hover;
 mod drag;
 mod focus;
-mod launch;
-mod window;
-mod mouse;
+mod hotkey;
+mod hover;
 mod keyboard;
+mod launch;
+mod mouse;
+mod press;
+mod resolver;
+mod scroll;
+mod type_text;
+mod window;
 
 use async_trait::async_trait;
 use tracing::debug;
 
 use crate::action::{
-    ActionError, ActionProvider, ActionResult, ClickAction, DragAction, FocusAction,
-    HotkeyAction, HoverAction, LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction,
+    ActionError, ActionProvider, ActionResult, ClickAction, DragAction, FocusAction, HotkeyAction,
+    HoverAction, LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction,
 };
 
 use super::perception::LinuxPerceptionProvider;
@@ -70,18 +71,15 @@ impl ActionProvider for LinuxActionProvider {
         drag::perform_drag(action, &self.perception).await
     }
 
-async fn focus(&self, action: &FocusAction) -> Result<ActionResult, ActionError> {
+    async fn focus(&self, action: &FocusAction) -> Result<ActionResult, ActionError> {
+        debug!("Performing focus action");
         focus::perform_focus(action)
     }
 
     async fn launch(&self, action: &LaunchAction) -> Result<ActionResult, ActionError> {
+        debug!("Performing launch action");
         launch::perform_launch(action)
     }
-
-    async fn window_op(&self, action: &WindowAction) -> Result<ActionResult, ActionError> {
-        window::perform_window_op(action)
-    }
-}
 
     async fn window_op(&self, action: &WindowAction) -> Result<ActionResult, ActionError> {
         debug!("Performing window operation");

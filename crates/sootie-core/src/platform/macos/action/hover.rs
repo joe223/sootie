@@ -24,6 +24,7 @@ mod tests {
     use crate::selector::Coordinate;
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_hover() {
         let action = HoverAction {
             target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),

@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -82,17 +84,38 @@ pub enum RecipeError {
 
 pub struct RecipeEngine {
     recipes: HashMap<String, Recipe>,
+    storage_dir: Option<PathBuf>,
 }
 
 impl RecipeEngine {
     pub fn new() -> Self {
+        let mut engine = Self {
+            recipes: HashMap::new(),
+            storage_dir: default_recipe_storage_dir(),
+        };
+        engine.load_from_storage();
+        engine
+    }
+
+    pub fn new_in_memory() -> Self {
         Self {
             recipes: HashMap::new(),
+            storage_dir: None,
         }
+    }
+
+    pub fn new_with_storage_dir(storage_dir: PathBuf) -> Self {
+        let mut engine = Self {
+            recipes: HashMap::new(),
+            storage_dir: Some(storage_dir),
+        };
+        engine.load_from_storage();
+        engine
     }
 
     pub fn load(&mut self, recipe: Recipe) -> Result<(), RecipeError> {
         validate_recipe(&recipe)?;
+        self.persist_recipe(&recipe)?;
         self.recipes.insert(recipe.name.clone(), recipe);
         Ok(())
     }
@@ -106,9 +129,12 @@ impl RecipeEngine {
     }
 
     pub fn delete(&mut self, name: &str) -> Result<Recipe, RecipeError> {
-        self.recipes
+        let recipe = self
+            .recipes
             .remove(name)
-            .ok_or_else(|| RecipeError::NotFound(name.to_string()))
+            .ok_or_else(|| RecipeError::NotFound(name.to_string()))?;
+        self.delete_persisted_recipe(name)?;
+        Ok(recipe)
     }
 
     pub fn resolve_params(
@@ -136,13 +162,69 @@ impl RecipeEngine {
         step: &RecipeStep,
         params: &HashMap<String, serde_json::Value>,
     ) -> RecipeStep {
-        let mut step = step.clone();
+        let Ok(value) = serde_json::to_value(step) else {
+            return step.clone();
+        };
+        let substituted = substitute_value(value, params);
+        serde_json::from_value(substituted).unwrap_or_else(|_| step.clone())
+    }
 
-        if let Some(ref text) = step.text {
-            step.text = Some(substitute_string(text, params));
+    fn load_from_storage(&mut self) {
+        let Some(storage_dir) = self.storage_dir.as_ref() else {
+            return;
+        };
+
+        let Ok(entries) = fs::read_dir(storage_dir) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !is_recipe_file(&path) {
+                continue;
+            }
+
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(recipe) = serde_json::from_str::<Recipe>(&contents) else {
+                continue;
+            };
+            if validate_recipe(&recipe).is_ok() {
+                self.recipes.insert(recipe.name.clone(), recipe);
+            }
         }
+    }
 
-        step
+    fn persist_recipe(&self, recipe: &Recipe) -> Result<(), RecipeError> {
+        let Some(storage_dir) = self.storage_dir.as_ref() else {
+            return Ok(());
+        };
+
+        fs::create_dir_all(storage_dir).map_err(|e| {
+            RecipeError::StorageError(format!("failed to create recipe dir: {}", e))
+        })?;
+        let path = recipe_path(storage_dir, &recipe.name);
+        let json = serde_json::to_vec_pretty(recipe)
+            .map_err(|e| RecipeError::StorageError(format!("failed to serialize recipe: {}", e)))?;
+        fs::write(path, json).map_err(|e| {
+            RecipeError::StorageError(format!("failed to write recipe file: {}", e))
+        })?;
+        Ok(())
+    }
+
+    fn delete_persisted_recipe(&self, name: &str) -> Result<(), RecipeError> {
+        let Some(storage_dir) = self.storage_dir.as_ref() else {
+            return Ok(());
+        };
+
+        let path = recipe_path(storage_dir, name);
+        if path.exists() {
+            fs::remove_file(path).map_err(|e| {
+                RecipeError::StorageError(format!("failed to delete recipe file: {}", e))
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -152,10 +234,7 @@ impl Default for RecipeEngine {
     }
 }
 
-fn substitute_string(
-    template: &str,
-    params: &HashMap<String, serde_json::Value>,
-) -> String {
+fn substitute_string(template: &str, params: &HashMap<String, serde_json::Value>) -> String {
     let mut result = template.to_string();
     for (key, value) in params {
         let placeholder = format!("${{{}}}", key);
@@ -166,6 +245,89 @@ fn substitute_string(
         result = result.replace(&placeholder, &replacement);
     }
     result
+}
+
+fn substitute_value(
+    value: serde_json::Value,
+    params: &HashMap<String, serde_json::Value>,
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => serde_json::Value::String(substitute_string(&s, params)),
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|item| substitute_value(item, params))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (key, substitute_value(value, params)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn default_recipe_storage_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("SOOTIE_RECIPE_DIR") {
+        return Some(PathBuf::from(path));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .map(|path| path.join("sootie").join("recipes"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return std::env::var_os("HOME").map(PathBuf::from).map(|path| {
+            path.join("Library")
+                .join("Application Support")
+                .join("sootie")
+                .join("recipes")
+        });
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|path| path.join(".local").join("share"))
+            })
+            .map(|path| path.join("sootie").join("recipes"))
+    }
+}
+
+fn recipe_path(storage_dir: &Path, recipe_name: &str) -> PathBuf {
+    storage_dir.join(format!("{}.json", sanitize_recipe_name(recipe_name)))
+}
+
+fn sanitize_recipe_name(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            result.push(ch);
+        } else {
+            result.push('_');
+        }
+    }
+    if result.is_empty() {
+        "_".to_string()
+    } else {
+        result
+    }
+}
+
+fn is_recipe_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
 }
 
 pub fn validate_recipe(recipe: &Recipe) -> Result<(), RecipeError> {
@@ -189,7 +351,8 @@ pub fn validate_recipe(recipe: &Recipe) -> Result<(), RecipeError> {
     }
 
     for (i, step) in recipe.steps.iter().enumerate() {
-        validate_step(step).map_err(|e| RecipeError::InvalidRecipe(format!("step {}: {}", i, e)))?;
+        validate_step(step)
+            .map_err(|e| RecipeError::InvalidRecipe(format!("step {}: {}", i, e)))?;
     }
 
     Ok(())
@@ -238,12 +401,17 @@ fn validate_step(step: &RecipeStep) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::selector::AppSelector;
 
     fn make_recipe(name: &str, steps: Vec<RecipeStep>) -> Recipe {
         Recipe {
             schema_version: CURRENT_SCHEMA_VERSION,
             name: name.to_string(),
-            platforms: vec!["macos".to_string(), "windows".to_string(), "linux".to_string()],
+            platforms: vec![
+                "macos".to_string(),
+                "windows".to_string(),
+                "linux".to_string(),
+            ],
             params: vec![],
             steps,
         }
@@ -331,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_recipe_engine_load_and_get() {
-        let mut engine = RecipeEngine::new();
+        let mut engine = RecipeEngine::new_in_memory();
         let recipe = make_recipe("my_recipe", vec![make_step("click")]);
         engine.load(recipe).unwrap();
 
@@ -341,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_recipe_engine_list() {
-        let mut engine = RecipeEngine::new();
+        let mut engine = RecipeEngine::new_in_memory();
         engine
             .load(make_recipe("recipe1", vec![make_step("click")]))
             .unwrap();
@@ -355,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_recipe_engine_delete() {
-        let mut engine = RecipeEngine::new();
+        let mut engine = RecipeEngine::new_in_memory();
         engine
             .load(make_recipe("to_delete", vec![make_step("click")]))
             .unwrap();
@@ -367,13 +535,13 @@ mod tests {
 
     #[test]
     fn test_recipe_engine_delete_not_found() {
-        let mut engine = RecipeEngine::new();
+        let mut engine = RecipeEngine::new_in_memory();
         assert!(engine.delete("nonexistent").is_err());
     }
 
     #[test]
     fn test_resolve_params_with_provided() {
-        let engine = RecipeEngine::new();
+        let engine = RecipeEngine::new_in_memory();
         let recipe = Recipe {
             schema_version: CURRENT_SCHEMA_VERSION,
             name: "test".to_string(),
@@ -402,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_resolve_params_missing_required() {
-        let engine = RecipeEngine::new();
+        let engine = RecipeEngine::new_in_memory();
         let recipe = Recipe {
             schema_version: CURRENT_SCHEMA_VERSION,
             name: "test".to_string(),
@@ -422,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_resolve_params_with_default() {
-        let engine = RecipeEngine::new();
+        let engine = RecipeEngine::new_in_memory();
         let recipe = Recipe {
             schema_version: CURRENT_SCHEMA_VERSION,
             name: "test".to_string(),
@@ -446,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_substitute_step_text() {
-        let engine = RecipeEngine::new();
+        let engine = RecipeEngine::new_in_memory();
         let step = RecipeStep {
             action: "type".to_string(),
             target: None,
@@ -473,7 +641,78 @@ mod tests {
         );
 
         let resolved = engine.substitute_step(&step, &params);
-        assert_eq!(resolved.text, Some("Hello World, welcome to Sootie".to_string()));
+        assert_eq!(
+            resolved.text,
+            Some("Hello World, welcome to Sootie".to_string())
+        );
+    }
+
+    #[test]
+    fn test_substitute_step_target_fields() {
+        let engine = RecipeEngine::new_in_memory();
+        let step = RecipeStep {
+            action: "click".to_string(),
+            target: Some(StepTarget::Selector(
+                Selector::new()
+                    .with_app(AppSelector::from_name("${app}"))
+                    .with_name("${button_name}"),
+            )),
+            text: None,
+            key: None,
+            keys: None,
+            direction: None,
+            amount: None,
+            button: None,
+            count: None,
+            timeout: None,
+            to_target: None,
+            params: None,
+        };
+
+        let mut params = HashMap::new();
+        params.insert(
+            "app".to_string(),
+            serde_json::Value::String("Chrome".to_string()),
+        );
+        params.insert(
+            "button_name".to_string(),
+            serde_json::Value::String("Compose".to_string()),
+        );
+
+        let resolved = engine.substitute_step(&step, &params);
+        match resolved.target.unwrap() {
+            StepTarget::Selector(selector) => {
+                assert_eq!(selector.app.unwrap().name.as_deref(), Some("Chrome"));
+                assert_eq!(selector.element.name.as_deref(), Some("Compose"));
+            }
+            _ => panic!("expected selector target"),
+        }
+    }
+
+    #[test]
+    fn test_recipe_engine_persists_to_storage() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let recipe_path = recipe_path(temp_dir.path(), "persist-me");
+        let mut engine = RecipeEngine::new_with_storage_dir(temp_dir.path().to_path_buf());
+        let recipe = make_recipe("persist-me", vec![make_step("click")]);
+
+        engine.load(recipe).unwrap();
+
+        assert!(recipe_path.exists());
+        let persisted = fs::read_to_string(recipe_path).unwrap();
+        assert!(persisted.contains("\"name\": \"persist-me\""));
+    }
+
+    #[test]
+    fn test_recipe_engine_loads_from_storage() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let recipe = make_recipe("from-disk", vec![make_step("click")]);
+        let path = recipe_path(temp_dir.path(), &recipe.name);
+        fs::write(path, serde_json::to_vec_pretty(&recipe).unwrap()).unwrap();
+
+        let engine = RecipeEngine::new_with_storage_dir(temp_dir.path().to_path_buf());
+
+        assert!(engine.get("from-disk").is_some());
     }
 
     #[test]

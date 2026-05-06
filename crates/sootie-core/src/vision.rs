@@ -84,21 +84,21 @@ impl LocalModelProvider {
     pub fn new(config: LocalModelConfig) -> Self {
         Self { config }
     }
-    
+
     fn preprocess_image(&self, screenshot: &ScreenshotData) -> Result<Vec<f32>, VisionError> {
         let img = image::load_from_memory(&screenshot.data)
             .map_err(|e| VisionError::InferenceFailed(format!("Failed to decode image: {}", e)))?;
-        
+
         let target_size = 224u32;
-        
+
         let resized = img.resize(
             target_size,
             target_size,
             image::imageops::FilterType::Triangle,
         );
-        
+
         let rgba_img = resized.to_rgba8();
-        
+
         let mut pixels = Vec::with_capacity((target_size as usize) * (target_size as usize) * 3);
         for pixel in rgba_img.pixels() {
             let [r, g, b, _] = pixel.0;
@@ -106,7 +106,7 @@ impl LocalModelProvider {
             pixels.push((g as f32 / 255.0 - 0.5) / 0.5);
             pixels.push((b as f32 / 255.0 - 0.5) / 0.5);
         }
-        
+
         Ok(pixels)
     }
 }
@@ -115,20 +115,31 @@ impl LocalModelProvider {
 impl VisionProvider for LocalModelProvider {
     async fn detect(&self, request: &VisionRequest) -> Result<VisionResult, VisionError> {
         use std::path::Path;
-        
+
         let model_path = Path::new(&self.config.model_path);
         if !model_path.exists() {
-            return Err(VisionError::ModelNotLoaded(
-                format!("Model file not found: {}", self.config.model_path)
-            ));
+            return Err(VisionError::ModelNotLoaded(format!(
+                "Model file not found: {}",
+                self.config.model_path
+            )));
         }
-        
+
         let _pixels = self.preprocess_image(&request.screenshot)?;
-        
+
         Ok(VisionResult {
             coordinate: Coordinate {
-                x: request.screenshot.bounds.as_ref().map(|b| b.width / 2.0).unwrap_or(100.0),
-                y: request.screenshot.bounds.as_ref().map(|b| b.height / 2.0).unwrap_or(100.0),
+                x: request
+                    .screenshot
+                    .bounds
+                    .as_ref()
+                    .map(|b| b.width / 2.0)
+                    .unwrap_or(100.0),
+                y: request
+                    .screenshot
+                    .bounds
+                    .as_ref()
+                    .map(|b| b.height / 2.0)
+                    .unwrap_or(100.0),
             },
             confidence: 0.85,
             model_used: "gui-actor-2b".to_string(),
@@ -142,6 +153,38 @@ pub struct StubVisionProvider;
 impl VisionProvider for StubVisionProvider {
     async fn detect(&self, _request: &VisionRequest) -> Result<VisionResult, VisionError> {
         Err(VisionError::NotImplemented("stub provider".to_string()))
+    }
+}
+
+pub enum RuntimeVisionProvider {
+    Local(LocalModelProvider),
+    Stub(StubVisionProvider),
+}
+
+impl RuntimeVisionProvider {
+    pub fn from_env() -> Self {
+        if let Some(model_path) = std::env::var_os("SOOTIE_VISION_MODEL_PATH") {
+            let use_gpu = std::env::var("SOOTIE_VISION_USE_GPU")
+                .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false);
+
+            return Self::Local(LocalModelProvider::new(LocalModelConfig {
+                model_path: model_path.to_string_lossy().into_owned(),
+                use_gpu,
+            }));
+        }
+
+        Self::Stub(StubVisionProvider)
+    }
+}
+
+#[async_trait]
+impl VisionProvider for RuntimeVisionProvider {
+    async fn detect(&self, request: &VisionRequest) -> Result<VisionResult, VisionError> {
+        match self {
+            RuntimeVisionProvider::Local(provider) => provider.detect(request).await,
+            RuntimeVisionProvider::Stub(provider) => provider.detect(request).await,
+        }
     }
 }
 
@@ -176,10 +219,7 @@ mod tests {
     #[test]
     fn test_vision_result_serialize() {
         let result = VisionResult {
-            coordinate: Coordinate {
-                x: 150.0,
-                y: 300.0,
-            },
+            coordinate: Coordinate { x: 150.0, y: 300.0 },
             confidence: 0.95,
             model_used: "gui-actor-2b".to_string(),
         };
@@ -231,9 +271,9 @@ mod tests {
             model_path: "/nonexistent/model.onnx".to_string(),
             use_gpu: false,
         };
-        
+
         let provider = LocalModelProvider::new(config);
-        
+
         let request = VisionRequest {
             screenshot: ScreenshotData {
                 format: ScreenshotFormat::Png,
@@ -248,7 +288,7 @@ mod tests {
             target_description: "button".to_string(),
             context: None,
         };
-        
+
         let result = provider.detect(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -264,9 +304,9 @@ mod tests {
             model_path: "/nonexistent/model.onnx".to_string(),
             use_gpu: false,
         };
-        
+
         let provider = LocalModelProvider::new(config);
-        
+
         let request = VisionRequest {
             screenshot: ScreenshotData {
                 format: ScreenshotFormat::Png,
@@ -281,7 +321,7 @@ mod tests {
             target_description: "Compose button".to_string(),
             context: Some("Gmail inbox".to_string()),
         };
-        
+
         let result = provider.detect(&request).await;
         assert!(result.is_err());
     }
@@ -293,20 +333,24 @@ mod tests {
         let model_path = temp_dir.path().join("test_model.onnx");
         let mut model_file = std::fs::File::create(&model_path).unwrap();
         model_file.write_all(&[0u8; 100]).unwrap();
-        
+
         let config = LocalModelConfig {
             model_path: model_path.to_str().unwrap().to_string(),
             use_gpu: false,
         };
-        
+
         let provider = LocalModelProvider::new(config);
-        
+
         let img = image::DynamicImage::ImageRgba8(
-            image::RgbaImage::from_raw(100, 100, vec![255u8; 100 * 100 * 4]).unwrap()
+            image::RgbaImage::from_raw(100, 100, vec![255u8; 100 * 100 * 4]).unwrap(),
         );
         let mut png_bytes = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png).unwrap();
-        
+        img.write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
         let request = VisionRequest {
             screenshot: ScreenshotData {
                 format: ScreenshotFormat::Png,
@@ -321,7 +365,7 @@ mod tests {
             target_description: "Submit button".to_string(),
             context: Some("Form page".to_string()),
         };
-        
+
         let result = provider.detect(&request).await;
         assert!(result.is_ok());
         let vision_result = result.unwrap();
@@ -348,7 +392,7 @@ mod tests {
             model: "test-model".to_string(),
         };
         let provider = CloudVlmProvider::new(config);
-        
+
         let request = VisionRequest {
             screenshot: ScreenshotData {
                 format: ScreenshotFormat::Png,
@@ -358,7 +402,7 @@ mod tests {
             target_description: "test".to_string(),
             context: None,
         };
-        
+
         let result = provider.detect(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -371,13 +415,13 @@ mod tests {
     fn test_vision_error_variants() {
         let err1 = VisionError::InferenceFailed("test error".to_string());
         assert!(err1.to_string().contains("test error"));
-        
+
         let err2 = VisionError::NotDetected("button".to_string());
         assert!(err2.to_string().contains("button"));
-        
+
         let err3 = VisionError::NetworkError("timeout".to_string());
         assert!(err3.to_string().contains("timeout"));
-        
+
         let err5 = VisionError::NotImplemented("stub".to_string());
         assert!(err5.to_string().contains("stub"));
     }
@@ -385,7 +429,7 @@ mod tests {
     #[tokio::test]
     async fn test_stub_vision_provider_returns_not_implemented() {
         let provider = StubVisionProvider;
-        
+
         let request = VisionRequest {
             screenshot: ScreenshotData {
                 format: ScreenshotFormat::Png,
@@ -395,7 +439,7 @@ mod tests {
             target_description: "test".to_string(),
             context: None,
         };
-        
+
         let result = provider.detect(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {

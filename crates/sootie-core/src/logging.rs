@@ -21,6 +21,7 @@ pub struct LogConfig {
     pub log_actions: bool,
     pub log_cascade: bool,
     pub log_recipes: bool,
+    pub sanitize_logs: bool,
 }
 
 impl Default for LogConfig {
@@ -33,6 +34,7 @@ impl Default for LogConfig {
             log_actions: true,
             log_cascade: true,
             log_recipes: true,
+            sanitize_logs: true,
         }
     }
 }
@@ -94,6 +96,10 @@ pub struct SootieLogger {
 impl SootieLogger {
     pub fn new(config: LogConfig) -> Self {
         Self { config }
+    }
+
+    pub fn config(&self) -> &LogConfig {
+        &self.config
     }
 
     pub fn log_tool_call(&self, log: &ToolCallLog) {
@@ -273,6 +279,127 @@ pub fn create_duration_ms(start: std::time::Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
 
+/// Default sensitive field names (lowercase for matching)
+const DEFAULT_SENSITIVE_FIELDS: &[&str] = &[
+    "password", "pwd", "pass",
+    "api_key", "apikey", "key", "token", "secret",
+    "credential", "auth", "private",
+    "authorization", "bearer",
+];
+
+/// Sensitive field patterns from environment variable
+fn get_sensitive_fields_from_env() -> Vec<String> {
+    std::env::var("SOOTIE_SENSITIVE_FIELDS")
+        .ok()
+        .and_then(|val| serde_json::from_str::<Vec<String>>(&val).ok())
+        .unwrap_or_default()
+}
+
+/// Combined list of sensitive field patterns
+fn get_sensitive_fields() -> Vec<String> {
+    let defaults: Vec<String> = DEFAULT_SENSITIVE_FIELDS.iter().map(|s| s.to_string()).collect();
+    let env_override = get_sensitive_fields_from_env();
+
+    if env_override.is_empty() {
+        defaults
+    } else {
+        env_override
+    }
+}
+
+/// Check if field name is sensitive (case-insensitive)
+fn is_sensitive_field(field_name: &str) -> bool {
+    let field_lower = field_name.to_lowercase();
+    get_sensitive_fields().iter().any(|s| field_lower.contains(&s.to_lowercase()))
+}
+
+/// Sanitize email: "user@domain.com" → "u***@domain.com"
+fn sanitize_email(email: &str) -> String {
+    if let Some(at_pos) = email.find('@') {
+        if at_pos > 0 {
+            let domain = &email[at_pos..];
+            return format!("u***{}", domain);
+        }
+    }
+    "[REDACTED:email]".to_string()
+}
+
+/// Sanitize credit card: "1234-5678-9012-3456" → "[REDACTED:cc]"
+fn sanitize_credit_card(text: &str) -> Option<String> {
+    let cc_pattern = regex::Regex::new(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b").unwrap();
+    if cc_pattern.is_match(text) {
+        return Some("[REDACTED:cc]".to_string());
+    }
+    None
+}
+
+/// Sanitize SSN: "123-45-6789" → "[REDACTED:ssn]"
+fn sanitize_ssn(text: &str) -> Option<String> {
+    let ssn_pattern = regex::Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").unwrap();
+    if ssn_pattern.is_match(text) {
+        return Some("[REDACTED:ssn]".to_string());
+    }
+    None
+}
+
+/// Sanitize a string value based on patterns
+fn sanitize_string_value(value: &str) -> String {
+    if let Some(cc_redacted) = sanitize_credit_card(value) {
+        return cc_redacted;
+    }
+    if let Some(ssn_redacted) = sanitize_ssn(value) {
+        return ssn_redacted;
+    }
+
+    let email_pattern = regex::Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
+    if email_pattern.is_match(value) {
+        return sanitize_email(value);
+    }
+
+    value.to_string()
+}
+
+/// Recursive JSON sanitization
+pub fn sanitize_json_value(
+    value: serde_json::Value,
+    field_name: Option<&str>,
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            if let Some(name) = field_name {
+                if is_sensitive_field(name) {
+                    return serde_json::Value::String(format!("[REDACTED:{}]", name.to_lowercase()));
+                }
+            }
+            serde_json::Value::String(sanitize_string_value(&s))
+        },
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|item| sanitize_json_value(item, None))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let sanitized_value = sanitize_json_value(value, Some(&key));
+                    (key, sanitized_value)
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// Sanitize ToolCallLog arguments
+pub fn sanitize_tool_call_args(args: &serde_json::Value, config: &LogConfig) -> serde_json::Value {
+    if config.sanitize_logs {
+        sanitize_json_value(args.clone(), None)
+    } else {
+        args.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +545,7 @@ mod tests {
             log_actions: false,
             log_cascade: false,
             log_recipes: false,
+            sanitize_logs: true,
         };
         let logger = SootieLogger::new(config);
         
@@ -681,5 +809,217 @@ mod tests {
             backend_used: None,
         };
         logger.log_tool_call(&log);
+    }
+
+    mod sanitization_tests {
+        use super::*;
+
+        #[test]
+        fn test_is_sensitive_field_password() {
+            assert!(is_sensitive_field("password"));
+            assert!(is_sensitive_field("PASSWORD"));
+            assert!(is_sensitive_field("user_password"));
+        }
+
+        #[test]
+        fn test_is_sensitive_field_api_key() {
+            assert!(is_sensitive_field("api_key"));
+            assert!(is_sensitive_field("apikey"));
+            assert!(is_sensitive_field("API_KEY"));
+            assert!(is_sensitive_field("x-api-key"));
+        }
+
+        #[test]
+        fn test_is_sensitive_field_token() {
+            assert!(is_sensitive_field("token"));
+            assert!(is_sensitive_field("access_token"));
+            assert!(is_sensitive_field("auth_token"));
+        }
+
+        #[test]
+        fn test_is_not_sensitive_field() {
+            assert!(!is_sensitive_field("username"));
+            assert!(!is_sensitive_field("email"));
+            assert!(!is_sensitive_field("name"));
+            assert!(!is_sensitive_field("count"));
+        }
+
+        #[test]
+        fn test_sanitize_email() {
+            assert_eq!(sanitize_email("user@domain.com"), "u***@domain.com");
+            assert_eq!(sanitize_email("admin@company.org"), "u***@company.org");
+            assert_eq!(sanitize_email("test@localhost"), "u***@localhost");
+        }
+
+        #[test]
+        fn test_sanitize_credit_card() {
+            assert_eq!(
+                sanitize_credit_card("1234-5678-9012-3456"),
+                Some("[REDACTED:cc]".to_string())
+            );
+            assert_eq!(
+                sanitize_credit_card("1234567890123456"),
+                Some("[REDACTED:cc]".to_string())
+            );
+            assert_eq!(sanitize_credit_card("not a card"), None);
+        }
+
+        #[test]
+        fn test_sanitize_ssn() {
+            assert_eq!(
+                sanitize_ssn("123-45-6789"),
+                Some("[REDACTED:ssn]".to_string())
+            );
+            assert_eq!(
+                sanitize_ssn("123456789"),
+                Some("[REDACTED:ssn]".to_string())
+            );
+            assert_eq!(sanitize_ssn("not an ssn"), None);
+        }
+
+        #[test]
+        fn test_sanitize_json_simple_object() {
+            let input = serde_json::json!({
+                "username": "john_doe",
+                "password": "secret123"
+            });
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output["username"], "john_doe");
+            assert_eq!(output["password"], "[REDACTED:password]");
+        }
+
+        #[test]
+        fn test_sanitize_json_nested_object() {
+            let input = serde_json::json!({
+                "user": {
+                    "name": "Alice",
+                    "email": "alice@example.com",
+                    "credentials": {
+                        "api_key": "sk-1234567890"
+                    }
+                }
+            });
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output["user"]["name"], "Alice");
+            assert_eq!(output["user"]["email"], "u***@example.com");
+            assert_eq!(output["user"]["credentials"]["api_key"], "[REDACTED:api_key]");
+        }
+
+        #[test]
+        fn test_sanitize_json_array() {
+            let input = serde_json::json!([
+                {"name": "Item1", "token": "abc123"},
+                {"name": "Item2", "token": "def456"}
+            ]);
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output[0]["name"], "Item1");
+            assert_eq!(output[0]["token"], "[REDACTED:token]");
+            assert_eq!(output[1]["token"], "[REDACTED:token]");
+        }
+
+        #[test]
+        fn test_sanitize_json_preserves_numbers_and_bools() {
+            let input = serde_json::json!({
+                "count": 42,
+                "enabled": true,
+                "ratio": 3.14,
+                "password": "secret"
+            });
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output["count"], 42);
+            assert_eq!(output["enabled"], true);
+            assert_eq!(output["ratio"], 3.14);
+            assert_eq!(output["password"], "[REDACTED:password]");
+        }
+
+        #[test]
+        fn test_sanitize_json_credit_card_in_text() {
+            let input = serde_json::json!({
+                "notes": "Card number: 1234-5678-9012-3456"
+            });
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output["notes"], "[REDACTED:cc]");
+        }
+
+        #[test]
+        fn test_sanitize_json_ssn_in_text() {
+            let input = serde_json::json!({
+                "document": "SSN: 123-45-6789"
+            });
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output["document"], "[REDACTED:ssn]");
+        }
+
+        #[test]
+        fn test_sanitize_tool_call_args_enabled() {
+            let config = LogConfig {
+                sanitize_logs: true,
+                ..Default::default()
+            };
+            let args = serde_json::json!({
+                "username": "alice",
+                "password": "secret"
+            });
+            let sanitized = sanitize_tool_call_args(&args, &config);
+            assert_eq!(sanitized["username"], "alice");
+            assert_eq!(sanitized["password"], "[REDACTED:password]");
+        }
+
+        #[test]
+        fn test_sanitize_tool_call_args_disabled() {
+            let config = LogConfig {
+                sanitize_logs: false,
+                ..Default::default()
+            };
+            let args = serde_json::json!({
+                "username": "alice",
+                "password": "secret"
+            });
+            let sanitized = sanitize_tool_call_args(&args, &config);
+            assert_eq!(sanitized["username"], "alice");
+            assert_eq!(sanitized["password"], "secret");
+        }
+
+        #[test]
+        fn test_sanitize_deeply_nested() {
+            let input = serde_json::json!({
+                "level1": {
+                    "level2": {
+                        "level3": {
+                            "secret_token": "hidden_value",
+                            "public_data": "visible"
+                        }
+                    }
+                }
+            });
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output["level1"]["level2"]["level3"]["secret_token"], "[REDACTED:secret_token]");
+            assert_eq!(output["level1"]["level2"]["level3"]["public_data"], "visible");
+        }
+
+        #[test]
+        fn test_sanitize_mixed_types() {
+            let input = serde_json::json!({
+                "credentials": [
+                    {"type": "api_key", "secret": "sk-abc123"},
+                    {"type": "oauth_token", "token": "oauth-xyz789"}
+                ],
+                "metadata": {
+                    "count": 5,
+                    "enabled": true
+                }
+            });
+            let output = sanitize_json_value(input, None);
+            assert_eq!(output["credentials"][0]["secret"], "[REDACTED:secret]");
+            assert_eq!(output["credentials"][1]["token"], "[REDACTED:token]");
+            assert_eq!(output["metadata"]["count"], 5);
+            assert_eq!(output["metadata"]["enabled"], true);
+        }
+
+        #[test]
+        fn test_log_config_sanitize_flag() {
+            let config = LogConfig::default();
+            assert!(config.sanitize_logs);
+        }
     }
 }

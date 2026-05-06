@@ -30,6 +30,7 @@ mod tests {
     use crate::selector::Coordinate;
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_click_left_button() {
         let action = ClickAction {
             target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
@@ -42,6 +43,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_click_right_button() {
         let action = ClickAction {
             target: ActionTarget::Coordinate(Coordinate { x: 150.0, y: 250.0 }),
@@ -54,6 +56,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_click_middle_button() {
         let action = ClickAction {
             target: ActionTarget::Coordinate(Coordinate { x: 200.0, y: 300.0 }),
@@ -66,6 +69,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_click_double_click() {
         let action = ClickAction {
             target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
@@ -78,6 +82,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_click_default_button() {
         let action = ClickAction {
             target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),
@@ -90,6 +95,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_click_default_count() {
         let action = ClickAction {
             target: ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 }),

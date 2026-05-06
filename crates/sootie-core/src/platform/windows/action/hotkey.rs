@@ -1,5 +1,5 @@
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::Foundation::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 use crate::action::{ActionError, ActionResult, HotkeyAction};
 

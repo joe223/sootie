@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -6,10 +7,10 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use sootie_core::action::{
-    ActionProvider, ClickAction, DragAction, FocusAction, HotkeyAction, HoverAction,
+    ActionProvider, ActionTarget, ClickAction, DragAction, FocusAction, HotkeyAction, HoverAction,
     LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction, WindowOperation,
 };
-use sootie_core::logging::{SootieLogger, LogConfig, ToolCallLog, create_duration_ms};
+use sootie_core::logging::{create_duration_ms, LogConfig, SootieLogger, ToolCallLog, sanitize_tool_call_args};
 use sootie_core::perception::{PerceptionProvider, WaitCondition};
 use sootie_core::recipe::{Recipe, RecipeEngine, StepTarget};
 use sootie_core::selector::AppSelector;
@@ -36,6 +37,35 @@ impl SootieServer {
             perception: Arc::new(perception),
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(RecipeEngine::new())),
+            logger: SootieLogger::new(LogConfig::default()),
+        }
+    }
+
+    pub fn new_in_memory(
+        perception: Box<dyn PerceptionProvider>,
+        action: Box<dyn ActionProvider>,
+    ) -> Self {
+        Self {
+            perception: Arc::new(perception),
+            action: Arc::new(action),
+            recipe_engine: Arc::new(Mutex::new(RecipeEngine::new_in_memory())),
+            logger: SootieLogger::new(LogConfig::default()),
+        }
+    }
+
+    pub fn new_with_recipe_storage_dir(
+        perception: Box<dyn PerceptionProvider>,
+        action: Box<dyn ActionProvider>,
+        recipe_storage_dir: Option<PathBuf>,
+    ) -> Self {
+        let recipe_engine = recipe_storage_dir
+            .map(RecipeEngine::new_with_storage_dir)
+            .unwrap_or_else(RecipeEngine::new_in_memory);
+
+        Self {
+            perception: Arc::new(perception),
+            action: Arc::new(action),
+            recipe_engine: Arc::new(Mutex::new(recipe_engine)),
             logger: SootieLogger::new(LogConfig::default()),
         }
     }
@@ -68,12 +98,14 @@ impl SootieServer {
         let duration = start.elapsed();
         match result {
             Ok(value) => {
-                self.logger.log_mcp_response(&request.method, true, duration);
+                self.logger
+                    .log_mcp_response(&request.method, true, duration);
                 JsonRpcResponse::success(id, value)
             }
             Err((code, msg)) => {
                 error!(method = %request.method, error = %msg, "MCP request failed");
-                self.logger.log_mcp_response(&request.method, false, duration);
+                self.logger
+                    .log_mcp_response(&request.method, false, duration);
                 JsonRpcResponse::error(id, code, msg)
             }
         }
@@ -96,9 +128,7 @@ impl SootieServer {
     }
 
     fn handle_list_tools(&self) -> Result<serde_json::Value, (i64, String)> {
-        let result = ListToolsResult {
-            tools: all_tools(),
-        };
+        let result = ListToolsResult { tools: all_tools() };
         serde_json::to_value(result).map_err(|e| (-32603, e.to_string()))
     }
 
@@ -127,6 +157,7 @@ impl SootieServer {
             "sootie_inspect" => self.tool_inspect(&args).await,
             "sootie_wait" => self.tool_wait(&args).await,
             "sootie_screenshot" => self.tool_screenshot(&args).await,
+            "sootie_find_apps" => self.tool_find_apps(&args).await,
             "sootie_click" => self.tool_click(&args).await,
             "sootie_type" => self.tool_type(&args).await,
             "sootie_press" => self.tool_press(&args).await,
@@ -151,10 +182,12 @@ impl SootieServer {
 
         match result {
             Ok(value) => {
+                let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
+
                 self.logger.log_tool_call(&ToolCallLog {
                     tool_name: name.to_string(),
                     request_id,
-                    arguments: args,
+                    arguments: sanitized_args,
                     success: true,
                     error_message: None,
                     duration_ms,
@@ -168,10 +201,12 @@ impl SootieServer {
                 serde_json::to_value(call_result).map_err(|e| (-32603, e.to_string()))
             }
             Err(msg) => {
+                let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
+
                 self.logger.log_tool_call(&ToolCallLog {
                     tool_name: name.to_string(),
                     request_id,
-                    arguments: args,
+                    arguments: sanitized_args,
                     success: false,
                     error_message: Some(msg.clone()),
                     duration_ms,
@@ -218,14 +253,13 @@ impl SootieServer {
 
     async fn tool_wait(&self, args: &serde_json::Value) -> Result<String, String> {
         let selector = parse_selector_from_args(args);
-        let timeout = args
-            .get("timeout")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(5000);
+        let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(5000);
 
         let state = args
             .get("state")
-            .and_then(|v| serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone()).ok())
+            .and_then(|v| {
+                serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone()).ok()
+            })
             .unwrap_or_default();
 
         let condition = WaitCondition {
@@ -269,9 +303,24 @@ impl SootieServer {
         serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
     }
 
+    async fn tool_find_apps(&self, args: &serde_json::Value) -> Result<String, String> {
+        let pattern = args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing required field: pattern")?;
+
+        let limit = args.get("limit").and_then(|v| v.as_u64()).map(|v| v as u32);
+
+        let result = self
+            .perception
+            .find_apps(pattern, limit)
+            .await
+            .map_err(|e| format!("Find apps failed: {}", e))?;
+        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+    }
+
     async fn tool_click(&self, args: &serde_json::Value) -> Result<String, String> {
-        let target = parse_action_target(args)
-            .ok_or("Must provide target or coordinate")?;
+        let target = parse_action_target(args).ok_or("Must provide target or coordinate")?;
 
         let button = args
             .get("button")
@@ -360,7 +409,10 @@ impl SootieServer {
             .to_string();
 
         let target = parse_action_target(args);
-        let amount = args.get("amount").and_then(|v| v.as_u64()).map(|v| v as u32);
+        let amount = args
+            .get("amount")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
 
         let action = ScrollAction {
             target,
@@ -377,8 +429,7 @@ impl SootieServer {
     }
 
     async fn tool_hover(&self, args: &serde_json::Value) -> Result<String, String> {
-        let target = parse_action_target(args)
-            .ok_or("Must provide target or coordinate")?;
+        let target = parse_action_target(args).ok_or("Must provide target or coordinate")?;
 
         let action = HoverAction { target };
         let result = self
@@ -428,8 +479,7 @@ impl SootieServer {
     }
 
     async fn tool_launch(&self, args: &serde_json::Value) -> Result<String, String> {
-        let app = args.get("app")
-            .ok_or("Missing required field: app")?;
+        let app = args.get("app").ok_or("Missing required field: app")?;
 
         let app_selector = if let Some(s) = app.as_str() {
             AppSelector::from_name(s)
@@ -438,7 +488,8 @@ impl SootieServer {
                 .map_err(|e| format!("Invalid app selector: {}", e))?
         };
 
-        let args_list: Vec<String> = args.get("args")
+        let args_list: Vec<String> = args
+            .get("args")
             .and_then(|a| serde_json::from_value::<Vec<String>>(a.clone()).ok())
             .unwrap_or_default();
 
@@ -509,37 +560,45 @@ impl SootieServer {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let engine = self.recipe_engine.lock().await;
-        let recipe = engine
-            .get(name)
-            .ok_or_else(|| format!("Recipe not found: {}", name))?
-            .clone();
+        let (recipe, substituted_steps) = {
+            let engine = self.recipe_engine.lock().await;
+            let recipe = engine
+                .get(name)
+                .ok_or_else(|| format!("Recipe not found: {}", name))?
+                .clone();
 
-        let resolved_params = engine
-            .resolve_params(&recipe, &params)
-            .map_err(|e| format!("Parameter error: {}", e))?;
+            let resolved_params = engine
+                .resolve_params(&recipe, &params)
+                .map_err(|e| format!("Parameter error: {}", e))?;
 
-        let steps: Vec<String> = recipe
-            .steps
-            .iter()
-            .map(|step| {
-                let resolved = engine.substitute_step(step, &resolved_params);
-                serde_json::to_string(&resolved).unwrap_or_default()
-            })
-            .collect();
+            let steps = recipe
+                .steps
+                .iter()
+                .map(|step| engine.substitute_step(step, &resolved_params))
+                .collect::<Vec<_>>();
+
+            (recipe, steps)
+        };
+
+        let mut results = Vec::with_capacity(substituted_steps.len());
+        for (index, step) in substituted_steps.iter().enumerate() {
+            let result = self
+                .execute_recipe_step(index, step)
+                .await
+                .map_err(|e| format!("Recipe execution failed: {}", e))?;
+            results.push(result);
+        }
 
         Ok(serde_json::json!({
-            "recipe": name,
-            "steps": steps,
-            "status": "ready"
+            "recipe": recipe.name,
+            "status": "completed",
+            "results": results,
         })
         .to_string())
     }
 
     async fn tool_recipe_save(&self, args: &serde_json::Value) -> Result<String, String> {
-        let recipe_val = args
-            .get("recipe")
-            .ok_or("Missing required field: recipe")?;
+        let recipe_val = args.get("recipe").ok_or("Missing required field: recipe")?;
 
         let recipe: Recipe = serde_json::from_value(recipe_val.clone())
             .map_err(|e| format!("Invalid recipe: {}", e))?;
@@ -573,19 +632,423 @@ impl SootieServer {
         })
         .to_string())
     }
+
+    async fn execute_recipe_step(
+        &self,
+        index: usize,
+        step: &sootie_core::recipe::RecipeStep,
+    ) -> Result<serde_json::Value, sootie_core::recipe::RecipeError> {
+        use sootie_core::recipe::RecipeError;
+
+        let result = match step.action.as_str() {
+            "click" => {
+                let target = step
+                    .target
+                    .as_ref()
+                    .map(step_target_to_action_target)
+                    .ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "click requires target".to_string(),
+                    })?;
+
+                let action = ClickAction {
+                    target,
+                    button: step.button.as_deref().map(parse_mouse_button),
+                    count: step.count,
+                };
+                let result =
+                    self.action
+                        .click(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "type" => {
+                let action = TypeAction {
+                    target: step.target.as_ref().map(step_target_to_action_target),
+                    text: step.text.clone().ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "type requires text".to_string(),
+                    })?,
+                    clear_first: None,
+                };
+                let result =
+                    self.action
+                        .r#type(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "press" => {
+                let action = PressAction {
+                    key: step.key.clone().ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "press requires key".to_string(),
+                    })?,
+                };
+                let result =
+                    self.action
+                        .press(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "hotkey" => {
+                let action = HotkeyAction {
+                    keys: step.keys.clone().ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "hotkey requires keys".to_string(),
+                    })?,
+                };
+                let result =
+                    self.action
+                        .hotkey(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "scroll" => {
+                let direction = step
+                    .direction
+                    .clone()
+                    .ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "scroll requires direction".to_string(),
+                    })?;
+                let action = ScrollAction {
+                    target: step.target.as_ref().map(step_target_to_action_target),
+                    direction: parse_scroll_direction(&direction),
+                    amount: step.amount,
+                };
+                let result =
+                    self.action
+                        .scroll(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "hover" => {
+                let target = step
+                    .target
+                    .as_ref()
+                    .map(step_target_to_action_target)
+                    .ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "hover requires target".to_string(),
+                    })?;
+                let action = HoverAction { target };
+                let result =
+                    self.action
+                        .hover(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "drag" => {
+                let from = step
+                    .target
+                    .as_ref()
+                    .map(step_target_to_action_target)
+                    .ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "drag requires target".to_string(),
+                    })?;
+                let to = step
+                    .to_target
+                    .as_ref()
+                    .map(step_target_to_action_target)
+                    .ok_or_else(|| RecipeError::StepFailed {
+                        step: index,
+                        error: "drag requires to_target".to_string(),
+                    })?;
+                let action = DragAction { from, to };
+                let result =
+                    self.action
+                        .drag(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "focus" => {
+                let selector = step_target_to_selector(step.target.as_ref()).ok_or_else(|| {
+                    RecipeError::StepFailed {
+                        step: index,
+                        error: "focus requires selector target".to_string(),
+                    }
+                })?;
+                let action = FocusAction { selector };
+                let result =
+                    self.action
+                        .focus(&action)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.to_string(),
+                        })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "wait" => {
+                let selector = step_target_to_selector(step.target.as_ref()).ok_or_else(|| {
+                    RecipeError::StepFailed {
+                        step: index,
+                        error: "wait requires selector target".to_string(),
+                    }
+                })?;
+                let condition = wait_condition_from_selector(&selector, step.timeout);
+                let result = self
+                    .perception
+                    .wait(&selector, &condition)
+                    .await
+                    .map_err(|e| RecipeError::StepFailed {
+                        step: index,
+                        error: e.to_string(),
+                    })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            "screenshot" => {
+                let selector = step_target_to_selector(step.target.as_ref());
+                let result = self
+                    .perception
+                    .screenshot(selector.as_ref(), None)
+                    .await
+                    .map_err(|e| RecipeError::StepFailed {
+                        step: index,
+                        error: e.to_string(),
+                    })?;
+                serde_json::to_value(result).map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.to_string(),
+                })?
+            }
+            other => {
+                return Err(RecipeError::StepFailed {
+                    step: index,
+                    error: format!("unsupported action: {}", other),
+                });
+            }
+        };
+
+        Ok(serde_json::json!({
+            "step": index,
+            "action": step.action,
+            "result": result,
+        }))
+    }
+}
+
+fn step_target_to_action_target(target: &StepTarget) -> ActionTarget {
+    match target {
+        StepTarget::Coordinate(coord) => ActionTarget::Coordinate(coord.clone()),
+        StepTarget::Selector(selector) => ActionTarget::Selector(selector.clone()),
+    }
+}
+
+fn step_target_to_selector(target: Option<&StepTarget>) -> Option<sootie_core::selector::Selector> {
+    match target {
+        Some(StepTarget::Selector(selector)) => Some(selector.clone()),
+        _ => None,
+    }
+}
+
+fn wait_condition_from_selector(
+    selector: &sootie_core::selector::Selector,
+    timeout: Option<u64>,
+) -> WaitCondition {
+    let mut state = HashMap::new();
+    if let Some(selector_state) = selector.element.state.as_ref() {
+        if let Some(visible) = selector_state.visible {
+            state.insert("visible".to_string(), serde_json::Value::Bool(visible));
+        }
+        if let Some(focused) = selector_state.focused {
+            state.insert("focused".to_string(), serde_json::Value::Bool(focused));
+        }
+    }
+
+    WaitCondition {
+        state,
+        timeout_ms: timeout.unwrap_or(5000),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sootie_core::action::StubActionProvider;
-    use sootie_core::perception::StubPerceptionProvider;
+    use sootie_core::action::{
+        ActionError, ActionProvider, ActionResult, ClickAction, DragAction, FocusAction,
+        HotkeyAction, HoverAction, LaunchAction, PressAction, ScrollAction, TypeAction,
+        WindowAction,
+    };
+    use sootie_core::perception::{
+        Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider,
+        ScreenshotData, StubPerceptionProvider, WaitCondition, WaitResult,
+    };
+    use sootie_core::selector::{Bounds, Selector};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct NoopActionProvider;
+
+    #[async_trait::async_trait]
+    impl ActionProvider for NoopActionProvider {
+        async fn click(&self, _action: &ClickAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn r#type(&self, _action: &TypeAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn press(&self, _action: &PressAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn hotkey(&self, _action: &HotkeyAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn scroll(&self, _action: &ScrollAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn hover(&self, _action: &HoverAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn drag(&self, _action: &DragAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn focus(&self, _action: &FocusAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn launch(&self, _action: &LaunchAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+        async fn window_op(&self, _action: &WindowAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "noop"))
+        }
+    }
+
+    struct NoopPerceptionProvider;
+
+    #[async_trait::async_trait]
+    impl PerceptionProvider for NoopPerceptionProvider {
+        async fn get_context(&self) -> Result<Context, PerceptionError> {
+            Ok(Context { apps: vec![] })
+        }
+        async fn find(
+            &self,
+            _selector: &Selector,
+        ) -> Result<sootie_core::selector::ResolvedTarget, PerceptionError> {
+            Err(PerceptionError::TargetNotFound("noop".to_string()))
+        }
+        async fn inspect(&self, _selector: &Selector) -> Result<DeepInspection, PerceptionError> {
+            Err(PerceptionError::NotImplemented("noop".to_string()))
+        }
+        async fn wait(
+            &self,
+            _selector: &Selector,
+            condition: &WaitCondition,
+        ) -> Result<WaitResult, PerceptionError> {
+            Ok(WaitResult {
+                matched: condition.state.is_empty(),
+                element: None,
+                timed_out: !condition.state.is_empty(),
+            })
+        }
+        async fn screenshot(
+            &self,
+            _target: Option<&Selector>,
+            _region: Option<&Bounds>,
+        ) -> Result<ScreenshotData, PerceptionError> {
+            Ok(ScreenshotData {
+                format: sootie_core::perception::ScreenshotFormat::Png,
+                data: vec![1, 2, 3],
+                bounds: Some(Bounds {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                }),
+            })
+        }
+        async fn find_apps(
+            &self,
+            _pattern: &str,
+            _limit: Option<u32>,
+        ) -> Result<FindAppsResult, PerceptionError> {
+            Ok(FindAppsResult {
+                apps: vec![],
+                total: 0,
+            })
+        }
+    }
 
     fn make_server() -> SootieServer {
-        SootieServer::new(
+        SootieServer::new_in_memory(
             Box::new(StubPerceptionProvider),
-            Box::new(StubActionProvider),
+            Box::new(NoopActionProvider),
         )
+    }
+
+    fn make_server_with_storage_dir(path: PathBuf) -> SootieServer {
+        SootieServer::new_with_recipe_storage_dir(
+            Box::new(NoopPerceptionProvider),
+            Box::new(NoopActionProvider),
+            Some(path),
+        )
+    }
+
+    fn unique_temp_recipe_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "sootie-recipe-test-{}-{}",
+            std::process::id(),
+            nanos
+        ))
     }
 
     fn make_request(method: &str, id: i64, params: Option<serde_json::Value>) -> JsonRpcRequest {
@@ -617,7 +1080,7 @@ mod tests {
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 19);
+        assert_eq!(tools.len(), 20);
     }
 
     #[tokio::test]
@@ -751,7 +1214,7 @@ mod tests {
                             { "name": "to", "type": "string", "required": true }
                         ],
                         "steps": [
-                            { "action": "click" },
+                            { "action": "click", "target": { "role": "button", "name": "Compose" } },
                             { "action": "type", "text": "${to}" }
                         ]
                     }
@@ -774,7 +1237,53 @@ mod tests {
         let resp = server.handle_request(run_req).await;
         assert!(resp.error.is_none());
         let content = &resp.result.unwrap()["content"][0]["text"];
-        assert!(content.as_str().unwrap().contains("test-run"));
+        let run_result: serde_json::Value =
+            serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(run_result["recipe"], "test-run");
+        assert_eq!(run_result["status"], "completed");
+        assert_eq!(run_result["results"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_recipe_save_persists_to_disk() {
+        let recipe_dir = unique_temp_recipe_dir();
+        let server = make_server_with_storage_dir(recipe_dir.clone());
+
+        let save_req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_recipe_save",
+                "arguments": {
+                    "recipe": {
+                        "schema_version": 3,
+                        "name": "persisted-recipe",
+                        "steps": [{ "action": "click", "target": { "role": "button", "name": "Compose" } }]
+                    }
+                }
+            })),
+        );
+        let resp = server.handle_request(save_req).await;
+        assert!(resp.error.is_none());
+
+        let recipe_file = recipe_dir.join("persisted-recipe.json");
+        assert!(recipe_file.exists());
+
+        let server_reloaded = make_server_with_storage_dir(recipe_dir.clone());
+        let list_req = make_request(
+            "tools/call",
+            2,
+            Some(serde_json::json!({
+                "name": "sootie_recipes",
+                "arguments": {}
+            })),
+        );
+        let resp = server_reloaded.handle_request(list_req).await;
+        assert!(resp.error.is_none());
+        let content = &resp.result.unwrap()["content"][0]["text"];
+        assert!(content.as_str().unwrap().contains("persisted-recipe"));
+
+        let _ = std::fs::remove_dir_all(recipe_dir);
     }
 
     #[tokio::test]

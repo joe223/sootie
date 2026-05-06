@@ -4,11 +4,12 @@ mod find;
 use async_trait::async_trait;
 use tracing::debug;
 
+use crate::cdp::try_find_via_cdp;
 use crate::perception::{
-    Context, DeepInspection, PerceptionError, PerceptionProvider, ScreenshotData,
+    Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider, ScreenshotData,
     WaitCondition, WaitResult,
 };
-use crate::selector::{Selector};
+use crate::selector::Selector;
 
 pub struct WindowsPerceptionProvider;
 
@@ -25,8 +26,14 @@ impl PerceptionProvider for WindowsPerceptionProvider {
         context::get_running_apps()
     }
 
-    async fn find(&self, selector: &Selector) -> Result<crate::selector::ResolvedTarget, PerceptionError> {
+    async fn find(
+        &self,
+        selector: &Selector,
+    ) -> Result<crate::selector::ResolvedTarget, PerceptionError> {
         debug!("Finding elements with selector: {:?}", selector);
+        if let Ok(Some(result)) = try_find_via_cdp(selector).await {
+            return Ok(result);
+        }
         find::find_elements(selector)
     }
 
@@ -34,7 +41,9 @@ impl PerceptionProvider for WindowsPerceptionProvider {
         debug!("Inspecting element");
         let resolved = self.find(selector).await?;
         if resolved.elements.is_empty() {
-            return Err(PerceptionError::TargetNotFound("no element matches selector".to_string()));
+            return Err(PerceptionError::TargetNotFound(
+                "no element matches selector".to_string(),
+            ));
         }
         let element = resolved.elements[0].clone();
         Ok(DeepInspection {
@@ -61,8 +70,12 @@ impl PerceptionProvider for WindowsPerceptionProvider {
             if !result.elements.is_empty() {
                 let element = &result.elements[0];
                 let want_visible = condition.state.get("visible").and_then(|v| v.as_bool());
+                let want_enabled = condition.state.get("enabled").and_then(|v| v.as_bool());
+                let want_focused = condition.state.get("focused").and_then(|v| v.as_bool());
                 let visible_ok = want_visible.map_or(true, |v| element.state.visible == v);
-                if visible_ok {
+                let enabled_ok = want_enabled.map_or(true, |v| element.state.enabled == Some(v));
+                let focused_ok = want_focused.map_or(true, |v| element.state.focused == Some(v));
+                if visible_ok && enabled_ok && focused_ok {
                     return Ok(WaitResult {
                         matched: true,
                         element: Some(element.clone()),
@@ -89,8 +102,10 @@ impl PerceptionProvider for WindowsPerceptionProvider {
         region: Option<&crate::selector::Bounds>,
     ) -> Result<ScreenshotData, PerceptionError> {
         debug!("Taking screenshot");
-        use windows::Win32::Graphics::Gdi::*;
+        use image::codecs::png::PngEncoder;
+        use image::{ColorType, ImageEncoder};
         use windows::Win32::Foundation::*;
+        use windows::Win32::Graphics::Gdi::*;
 
         let hwnd = if let Some(b) = region {
             HWND(0)
@@ -99,16 +114,16 @@ impl PerceptionProvider for WindowsPerceptionProvider {
         };
 
         let hdc = GetDC(hwnd);
-        let width = region.map(|b| b.width as i32).unwrap_or_else(|| {
-            GetSystemMetrics(SM_CXSCREEN)
-        });
-        let height = region.map(|b| b.height as i32).unwrap_or_else(|| {
-            GetSystemMetrics(SM_CYSCREEN)
-        });
+        let width = region
+            .map(|b| b.width as i32)
+            .unwrap_or_else(|| GetSystemMetrics(SM_CXSCREEN));
+        let height = region
+            .map(|b| b.height as i32)
+            .unwrap_or_else(|| GetSystemMetrics(SM_CYSCREEN));
 
         let memdc = CreateCompatibleDC(hdc);
         let hbitmap = CreateCompatibleBitmap(hdc, width, height);
-        SelectObject(memdc, hbitmap);
+        let old_bitmap = SelectObject(memdc, hbitmap);
 
         BitBlt(
             memdc,
@@ -122,30 +137,27 @@ impl PerceptionProvider for WindowsPerceptionProvider {
             SRCCOPY,
         );
 
-        ReleaseDC(hwnd, hdc);
-        DeleteDC(memdc);
-
         let mut bitmap_info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
                 biWidth: width,
-            biHeight: -height,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            biSizeImage: 0,
-            biXPelsPerMeter: 0,
-            biYPelsPerMeter: 0,
-            biClrUsed: 0,
-            biClrImportant: 0,
-        },
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
             bmiColors: [0; 1],
         };
 
         let size = (width * height * 4) as usize;
         let mut data = vec![0u8; size];
 
-        GetDIBits(
+        let scanlines = GetDIBits(
             memdc,
             hbitmap,
             0,
@@ -155,12 +167,40 @@ impl PerceptionProvider for WindowsPerceptionProvider {
             DIB_RGB_COLORS,
         );
 
+        SelectObject(memdc, old_bitmap);
+        DeleteDC(memdc);
+        ReleaseDC(hwnd, hdc);
         DeleteObject(hbitmap);
+
+        if scanlines == 0 {
+            return Err(PerceptionError::ScreenshotFailed(
+                "GetDIBits returned 0 scanlines".to_string(),
+            ));
+        }
+
+        for pixel in data.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+
+        let mut png_data = Vec::new();
+        PngEncoder::new(&mut png_data)
+            .write_image(&data, width as u32, height as u32, ColorType::Rgba8.into())
+            .map_err(|e| PerceptionError::ScreenshotFailed(format!("PNG encode failed: {}", e)))?;
 
         Ok(ScreenshotData {
             format: crate::perception::ScreenshotFormat::Png,
-            data,
+            data: png_data,
             bounds: region.cloned(),
         })
+    }
+
+    async fn find_apps(
+        &self,
+        _pattern: &str,
+        _limit: Option<u32>,
+    ) -> Result<FindAppsResult, PerceptionError> {
+        Err(PerceptionError::NotImplemented(
+            "find_apps not implemented for Windows".to_string(),
+        ))
     }
 }

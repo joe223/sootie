@@ -38,6 +38,7 @@ mod tests {
     use crate::selector::Coordinate;
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_scroll_up() {
         let action = ScrollAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
@@ -50,6 +51,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_scroll_down() {
         let action = ScrollAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
@@ -62,6 +64,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_scroll_left() {
         let action = ScrollAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
@@ -74,6 +77,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_scroll_right() {
         let action = ScrollAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),
@@ -86,6 +90,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires accessibility permissions"]
     async fn test_perform_scroll_default_amount() {
         let action = ScrollAction {
             target: Some(ActionTarget::Coordinate(Coordinate { x: 100.0, y: 200.0 })),

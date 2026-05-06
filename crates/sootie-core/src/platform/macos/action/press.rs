@@ -15,6 +15,7 @@ mod tests {
     use crate::action::PressAction;
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_perform_press_return() {
         let action = PressAction { key: "return".to_string() };
         let result = perform_press(&action);
@@ -22,6 +23,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_perform_press_tab() {
         let action = PressAction { key: "tab".to_string() };
         let result = perform_press(&action);
@@ -29,6 +31,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires accessibility permissions"]
     fn test_perform_press_space() {
         let action = PressAction { key: "space".to_string() };
         let result = perform_press(&action);

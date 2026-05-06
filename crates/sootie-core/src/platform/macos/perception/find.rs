@@ -1,9 +1,9 @@
 use crate::perception::PerceptionError;
 use crate::selector::{Bounds, Element, ElementState, MatchStatus, ResolvedTarget, Selector};
 
+use super::super::ax_fns::*;
 use super::context::get_pid_for_app_name;
 use super::utils::normalize_role;
-use super::super::ax_fns::*;
 
 pub fn find_elements(selector: &Selector) -> Result<ResolvedTarget, PerceptionError> {
     let pid = find_pid_for_app(selector);
@@ -19,6 +19,7 @@ pub fn find_elements(selector: &Selector) -> Result<ResolvedTarget, PerceptionEr
 
     unsafe {
         find_elements_in_tree(app_element, selector, &mut results, &mut index);
+        release_ax_element(app_element);
     }
 
     let app_info = pid.and_then(|p| {
@@ -166,11 +167,7 @@ unsafe fn find_elements_in_tree(
         results.push(Element {
             role: normalize_role(&role),
             name,
-            text: if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            },
+            text: if value.is_empty() { None } else { Some(value) },
             id: if identifier.is_empty() {
                 None
             } else {
@@ -190,6 +187,7 @@ unsafe fn find_elements_in_tree(
     let children = get_children(element);
     for child in children {
         find_elements_in_tree(child, selector, results, index);
+        release_ax_element(child);
     }
 }
 
