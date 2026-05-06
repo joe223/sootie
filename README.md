@@ -24,7 +24,7 @@ Other computer-use tools are either platform-locked or rely on screenshots and p
 - **Cross-platform** — macOS, Windows, Linux. One API, any OS.
 - **Accessibility-first** — Native AT tree (AX/UIA/AT-SPI2) for structured data. CDP for browsers. Vision fallback when needed.
 - **CDP-first for web** — Chrome DevTools Protocol bypasses the unreliable accessibility tree for web apps. No more AXGroup guessing.
-- **Cloud + local vision** — Cloud VLM API for instant use. Local ONNX model for offline scenarios.
+- **Local vision** — Local ONNX model for offline scenarios.
 - **Transparent workflows** — Recipes are JSON. Read every step before running. No black box.
 - **Open** — MCP protocol. Works with Claude Code, Cursor, VS Code, or any MCP client.
 
@@ -331,16 +331,6 @@ cd sootie
 cargo build --release
 ./target/release/sootie setup
 ```
-
-Requires Rust 1.75+ and platform-specific dependencies (see `docs/platforms.md`).
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). We need:
-- Platform-specific testing and bug reports
-- Recipes for more apps
-- Vision model improvements
-- Documentation
 
 ## License
 
