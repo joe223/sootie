@@ -8,7 +8,7 @@ pub fn take_screenshot(
     display_id: Option<u32>,
 ) -> Result<ScreenshotData, PerceptionError> {
     let mut cmd = Command::new("screencapture");
-    cmd.arg("-x").arg("-t").arg("png");
+    cmd.arg("-x").arg("-t").arg("jpg");  // 使用 JPEG 格式，体积减少 80-90%
 
     // Add display selection if specified (macOS display IDs start from 1)
     if let Some(did) = display_id {
@@ -21,7 +21,7 @@ pub fn take_screenshot(
     }
 
     let tmp_dir = std::env::temp_dir();
-    let tmp_path = tmp_dir.join(format!("sootie_screenshot_{}.png", std::process::id()));
+    let tmp_path = tmp_dir.join(format!("sootie_screenshot_{}.jpg", std::process::id()));
     cmd.arg(&tmp_path);
 
     let output = cmd
@@ -43,7 +43,7 @@ pub fn take_screenshot(
     let bounds = region.cloned();
 
     Ok(ScreenshotData {
-        format: ScreenshotFormat::Png,
+        format: ScreenshotFormat::Jpeg,  // JPEG 格式
         data,
         bounds,
     })
@@ -59,7 +59,7 @@ mod tests {
         let result = take_screenshot(None, None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
-            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert_eq!(data.format, ScreenshotFormat::Jpeg);
             assert!(!data.data.is_empty());
         }
     }
@@ -75,7 +75,7 @@ mod tests {
         let result = take_screenshot(Some(&region), None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
-            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert_eq!(data.format, ScreenshotFormat::Jpeg);
             assert!(data.data.is_empty() || !data.data.is_empty());
         }
     }
@@ -85,7 +85,7 @@ mod tests {
         let result = take_screenshot(None, Some(1));
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
-            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert_eq!(data.format, ScreenshotFormat::Jpeg);
             assert!(!data.data.is_empty());
         }
     }
@@ -101,7 +101,7 @@ mod tests {
         let result = take_screenshot(Some(&region), None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
-            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert_eq!(data.format, ScreenshotFormat::Jpeg);
             if let Some(b) = data.bounds {
                 assert_eq!(b.width, 1920.0);
                 assert_eq!(b.height, 1080.0);
@@ -114,7 +114,7 @@ mod tests {
         let result = take_screenshot(None, None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
-            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert_eq!(data.format, ScreenshotFormat::Jpeg);
             assert!(data.bounds.is_none());
         }
     }
@@ -130,7 +130,7 @@ mod tests {
         let result = take_screenshot(Some(&region), Some(2));
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
-            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert_eq!(data.format, ScreenshotFormat::Jpeg);
             assert!(data.bounds.is_some());
             if let Some(b) = data.bounds {
                 assert_eq!(b.x, 50.0);

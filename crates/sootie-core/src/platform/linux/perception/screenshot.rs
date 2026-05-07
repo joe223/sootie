@@ -5,7 +5,7 @@ use crate::selector::Bounds;
 
 pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, PerceptionError> {
     let tmp_dir = std::env::temp_dir();
-    let tmp_path = tmp_dir.join(format!("sootie_screenshot_{}.png", std::process::id()));
+    let tmp_path = tmp_dir.join(format!("sootie_screenshot_{}.jpg", std::process::id()));
 
     let mut cmd = Command::new("import");
     cmd.arg("-window").arg("root");
@@ -34,7 +34,7 @@ pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, Percep
     let _ = std::fs::remove_file(&tmp_path);
 
     Ok(ScreenshotData {
-        format: ScreenshotFormat::Png,
+        format: ScreenshotFormat::Jpeg,  // JPEG 格式
         data,
         bounds: region.cloned(),
     })

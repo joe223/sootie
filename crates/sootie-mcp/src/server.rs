@@ -17,7 +17,7 @@ use sootie_core::selector::AppSelector;
 
 use crate::tools::{
     all_tools, parse_action_target, parse_mouse_button, parse_scroll_direction,
-    parse_selector_from_args, parse_step_target,
+    parse_selector_from_args, parse_step_target, validate_selector,
 };
 use crate::types::{
     CallToolResult, InitializeResult, JsonRpcRequest, JsonRpcResponse, ListToolsResult,
@@ -233,6 +233,7 @@ impl SootieServer {
 
     async fn tool_find(&self, args: &serde_json::Value) -> Result<String, String> {
         let selector = parse_selector_from_args(args);
+        validate_selector(&selector)?;
         let result = self
             .perception
             .find(&selector)
@@ -243,6 +244,7 @@ impl SootieServer {
 
     async fn tool_inspect(&self, args: &serde_json::Value) -> Result<String, String> {
         let selector = parse_selector_from_args(args);
+        validate_selector(&selector)?;
         let result = self
             .perception
             .inspect(&selector)
@@ -253,6 +255,7 @@ impl SootieServer {
 
     async fn tool_wait(&self, args: &serde_json::Value) -> Result<String, String> {
         let selector = parse_selector_from_args(args);
+        validate_selector(&selector)?;
         let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(5000);
 
         let state = args
@@ -323,6 +326,10 @@ impl SootieServer {
 
     async fn tool_click(&self, args: &serde_json::Value) -> Result<String, String> {
         let target = parse_action_target(args).ok_or("Must provide target or coordinate")?;
+        
+        if let ActionTarget::Selector(selector) = &target {
+            validate_selector(selector)?;
+        }
 
         let button = args
             .get("button")
@@ -345,29 +352,35 @@ impl SootieServer {
         serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
     }
 
-    async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
-        let text = args
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing required field: text")?
-            .to_string();
+async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
+    let text = args
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required field: text")?
+        .to_string();
 
-        let target = parse_action_target(args);
-        let clear_first = args.get("clear_first").and_then(|v| v.as_bool());
-
-        let action = TypeAction {
-            target,
-            text,
-            clear_first,
-        };
-
-        let result = self
-            .action
-            .r#type(&action)
-            .await
-            .map_err(|e| format!("Type failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+    let target = parse_action_target(args)
+        .ok_or("Missing required field: target (or coordinate). Use sootie_find to locate elements first")?;
+    
+    if let ActionTarget::Selector(selector) = &target {
+        validate_selector(selector)?;
     }
+    
+    let clear_first = args.get("clear_first").and_then(|v| v.as_bool());
+
+    let action = TypeAction {
+        target: Some(target),
+        text,
+        clear_first,
+    };
+
+    let result = self
+        .action
+        .r#type(&action)
+        .await
+        .map_err(|e| format!("Type failed: {}", e))?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
 
     async fn tool_press(&self, args: &serde_json::Value) -> Result<String, String> {
         let key = args
@@ -432,6 +445,10 @@ impl SootieServer {
 
     async fn tool_hover(&self, args: &serde_json::Value) -> Result<String, String> {
         let target = parse_action_target(args).ok_or("Must provide target or coordinate")?;
+        
+        if let ActionTarget::Selector(selector) = &target {
+            validate_selector(selector)?;
+        }
 
         let action = HoverAction { target };
         let result = self
@@ -459,6 +476,14 @@ impl SootieServer {
                 StepTarget::Selector(s) => sootie_core::action::ActionTarget::Selector(s),
             })
             .ok_or("Invalid 'to' target")?;
+        
+        if let ActionTarget::Selector(selector) = &from {
+            validate_selector(selector)?;
+        }
+        
+        if let ActionTarget::Selector(selector) = &to {
+            validate_selector(selector)?;
+        }
 
         let action = DragAction { from, to };
         let result = self
@@ -469,16 +494,20 @@ impl SootieServer {
         serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
     }
 
-    async fn tool_focus(&self, args: &serde_json::Value) -> Result<String, String> {
-        let selector = parse_selector_from_args(args);
-        let action = FocusAction { selector };
-        let result = self
-            .action
-            .focus(&action)
-            .await
-            .map_err(|e| format!("Focus failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+async fn tool_focus(&self, args: &serde_json::Value) -> Result<String, String> {
+    if args.get("app").is_none() {
+        return Err("Missing required field: app. Must specify which application to focus".to_string());
     }
+    
+    let selector = parse_selector_from_args(args);
+    let action = FocusAction { selector };
+    let result = self
+        .action
+        .focus(&action)
+        .await
+        .map_err(|e| format!("Focus failed: {}", e))?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
 
     async fn tool_launch(&self, args: &serde_json::Value) -> Result<String, String> {
         let app = args.get("app").ok_or("Missing required field: app")?;
@@ -508,41 +537,45 @@ impl SootieServer {
         serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
     }
 
-    async fn tool_window(&self, args: &serde_json::Value) -> Result<String, String> {
-        let selector = parse_selector_from_args(args);
-        let op_str = args
-            .get("operation")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing required field: operation")?;
-
-        let operation = match op_str {
-            "minimize" => WindowOperation::Minimize,
-            "maximize" => WindowOperation::Maximize,
-            "close" => WindowOperation::Close,
-            "move" => {
-                let x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                WindowOperation::Move { x, y }
-            }
-            "resize" => {
-                let width = args.get("width").and_then(|v| v.as_f64()).unwrap_or(800.0);
-                let height = args.get("height").and_then(|v| v.as_f64()).unwrap_or(600.0);
-                WindowOperation::Resize { width, height }
-            }
-            _ => return Err(format!("Unknown window operation: {}", op_str)),
-        };
-
-        let action = WindowAction {
-            selector,
-            operation,
-        };
-        let result = self
-            .action
-            .window_op(&action)
-            .await
-            .map_err(|e| format!("Window operation failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+async fn tool_window(&self, args: &serde_json::Value) -> Result<String, String> {
+    if args.get("app").is_none() {
+        return Err("Missing required field: app. Must specify which application's window to operate on".to_string());
     }
+    
+    let selector = parse_selector_from_args(args);
+    let op_str = args
+        .get("operation")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required field: operation")?;
+
+    let operation = match op_str {
+        "minimize" => WindowOperation::Minimize,
+        "maximize" => WindowOperation::Maximize,
+        "close" => WindowOperation::Close,
+        "move" => {
+            let x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            WindowOperation::Move { x, y }
+        }
+        "resize" => {
+            let width = args.get("width").and_then(|v| v.as_f64()).unwrap_or(800.0);
+            let height = args.get("height").and_then(|v| v.as_f64()).unwrap_or(600.0);
+            WindowOperation::Resize { width, height }
+        }
+        _ => return Err(format!("Unknown window operation: {}", op_str)),
+    };
+
+    let action = WindowAction {
+        selector,
+        operation,
+    };
+    let result = self
+        .action
+        .window_op(&action)
+        .await
+        .map_err(|e| format!("Window operation failed: {}", e))?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
 
     async fn tool_recipes(&self) -> Result<String, String> {
         let engine = self.recipe_engine.lock().await;

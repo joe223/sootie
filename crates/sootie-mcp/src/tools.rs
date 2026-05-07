@@ -126,7 +126,7 @@ fn perception_wait() -> ToolDefinition {
 fn perception_screenshot() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_screenshot".to_string(),
-        description: "Capture a screen, window, or region screenshot".to_string(),
+        description: "Capture a screen, window, or region screenshot. Uses JPEG format for efficient transmission (80-90% smaller than PNG).".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -208,30 +208,33 @@ fn action_click() -> ToolDefinition {
 fn action_type() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_type".to_string(),
-        description: "Type into a resolved target or current cursor".to_string(),
+        description: "Type text into a UI element. Use sootie_find to locate elements first. Requires target with app and at least one element identifier (role, name, id).".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
-                    "description": "Selector object to type into"
-                },
-                "coordinate": {
-                    "type": "object",
-                    "properties": {
-                        "x": { "type": "number" },
-                        "y": { "type": "number" }
-                    }
-                },
                 "text": {
                     "type": "string",
                     "description": "Text to type"
                 },
+                "target": {
+                    "type": "object",
+                    "description": "Selector defining where to type. Must include app and at least one element identifier.",
+                    "properties": {
+                        "app": { "type": "string", "description": "Application name" },
+                        "role": { "type": "string", "description": "UI element role (e.g. textfield, button)" },
+                        "name": { "type": "string", "description": "Element accessible name" },
+                        "id": { "type": "string", "description": "Element identifier" },
+                        "text": { "type": "string", "description": "Element text content" }
+                    },
+                    "required": ["app"]
+                },
                 "clear_first": {
                     "type": "boolean",
-                    "default": false
+                    "default": false,
+                    "description": "Clear existing text before typing"
                 }
             },
-            "required": ["text"]
+            "required": ["text", "target"]
         }),
     }
 }
@@ -346,13 +349,20 @@ fn action_drag() -> ToolDefinition {
 fn window_focus() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_focus".to_string(),
-        description: "Bring any app or window to the front".to_string(),
+        description: "Bring an application or specific window to the front".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": {},
-                "window": {}
-            }
+                "app": {
+                    "type": "string",
+                    "description": "Application name to focus (required)"
+                },
+                "window": {
+                    "type": "string",
+                    "description": "Window title to focus specific window (optional)"
+                }
+            },
+            "required": ["app"]
         }),
     }
 }
@@ -381,22 +391,29 @@ fn app_launch() -> ToolDefinition {
 fn window_op() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_window".to_string(),
-        description: "Minimize, maximize, close, move, or resize a window".to_string(),
+        description: "Minimize, maximize, close, move, or resize a window. Requires app to specify which application's window to operate on.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": {},
-                "window": {},
+                "app": {
+                    "type": "string",
+                    "description": "Application name (required)"
+                },
+                "window": {
+                    "type": "string",
+                    "description": "Window title (optional, defaults to frontmost window)"
+                },
                 "operation": {
                     "type": "string",
-                    "enum": ["minimize", "maximize", "close", "move", "resize"]
+                    "enum": ["minimize", "maximize", "close", "move", "resize"],
+                    "description": "Window operation to perform"
                 },
-                "x": { "type": "number" },
-                "y": { "type": "number" },
-                "width": { "type": "number" },
-                "height": { "type": "number" }
+                "x": { "type": "number", "description": "X position for move" },
+                "y": { "type": "number", "description": "Y position for move" },
+                "width": { "type": "number", "description": "Width for resize" },
+                "height": { "type": "number", "description": "Height for resize" }
             },
-            "required": ["operation"]
+            "required": ["operation", "app"]
         }),
     }
 }
@@ -550,7 +567,6 @@ pub fn parse_action_target(args: &serde_json::Value) -> Option<ActionTarget> {
         || args.get("window").is_some()
         || args.get("role").is_some()
         || args.get("name").is_some()
-        || args.get("text").is_some()
         || args.get("id").is_some()
         || args.get("state").is_some()
     {
@@ -559,6 +575,22 @@ pub fn parse_action_target(args: &serde_json::Value) -> Option<ActionTarget> {
     }
 
     None
+}
+
+pub fn validate_selector(selector: &Selector) -> Result<(), String> {
+    if selector.app.is_none() {
+        return Err("Selector must include 'app' field to specify which application".to_string());
+    }
+    
+    if selector.element.role.is_none()
+        && selector.element.name.is_none()
+        && selector.element.id.is_none()
+        && selector.element.text.is_none()
+    {
+        return Err("Selector must include at least one element identifier (role, name, id, or text)".to_string());
+    }
+    
+    Ok(())
 }
 
 pub fn parse_mouse_button(s: &str) -> MouseButton {
