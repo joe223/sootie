@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: sootie-macos-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: sootie-macos-arm64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: sootie-linux-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: sootie-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary
+        shell: bash
+        run: |
+          mkdir -p release
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/sootie.exe release/${{ matrix.artifact }}
+          else
+            cp target/${{ matrix.target }}/release/sootie release/${{ matrix.artifact }}
+            chmod +x release/${{ matrix.artifact }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/${{ matrix.artifact }}
+
+  create-release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          cd artifacts
+          echo "## Checksums" > ../CHECKSUMS.txt
+          echo "" >> ../CHECKSUMS.txt
+          for file in */*; do
+            if [ -f "$file" ]; then
+              sha256sum "$file" >> ../CHECKSUMS.txt
+            fi
+          done
+          cat ../CHECKSUMS.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          name: Release v${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## Sootie v${{ steps.get_version.outputs.VERSION }}
+
+            ### Quick Install
+
+            **macOS / Linux:**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/joe223/sootie/main/install.sh | bash
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            iwr -useb https://raw.githubusercontent.com/joe223/sootie/main/install.ps1 | iex
+            ```
+
+            ### Manual Installation
+
+            **macOS (Intel):**
+            ```bash
+            curl -L https://github.com/joe223/sootie/releases/download/v${{ steps.get_version.outputs.VERSION }}/sootie-macos-x64 -o sootie
+            chmod +x sootie
+            ./sootie setup
+            ```
+
+            **macOS (ARM/M1/M2):**
+            ```bash
+            curl -L https://github.com/joe223/sootie/releases/download/v${{ steps.get_version.outputs.VERSION }}/sootie-macos-arm64 -o sootie
+            chmod +x sootie
+            ./sootie setup
+            ```
+
+            **Linux:**
+            ```bash
+            curl -L https://github.com/joe223/sootie/releases/download/v${{ steps.get_version.outputs.VERSION }}/sootie-linux-x64 -o sootie
+            chmod +x sootie
+            ./sootie setup
+            ```
+
+            **Windows:**
+            Download `sootie-windows-x64.exe` and run `sootie setup`.
+
+            ### Package Managers
+
+            - **macOS**: `brew tap joe223/sootie && brew install sootie`
+            - **Windows**: `scoop bucket add sootie https://github.com/joe223/sootie && scoop install sootie`
+
+          files: |
+            artifacts/sootie-macos-x64/*
+            artifacts/sootie-macos-arm64/*
+            artifacts/sootie-linux-x64/*
+            artifacts/sootie-windows-x64.exe/*
+            CHECKSUMS.txt
+          draft: false
+          prerelease: false

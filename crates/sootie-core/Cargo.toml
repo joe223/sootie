@@ -3,6 +3,10 @@ name = "sootie-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors = ["Joe Developer <joe@example.com>"]
+description = "Core library for Sootie - cross-platform perception and action providers"
+repository = "https://github.com/joe223/sootie"
+keywords = ["mcp", "accessibility", "vision", "automation"]
 
 [dependencies]
 serde.workspace = true

@@ -3,14 +3,24 @@ name = "sootie-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors = ["Joe Developer <joe@example.com>"]
+description = "Cross-platform computer-use for AI agents via MCP (Model Context Protocol)"
+repository = "https://github.com/joe223/sootie"
+homepage = "https://github.com/joe223/sootie"
+readme = "../README.md"
+keywords = ["mcp", "ai", "automation", "computer-use", "accessibility", "desktop", "agent"]
+categories = ["command-line-utilities", "development-tools::testing", "science::robotics"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [[bin]]
 name = "sootie"
 path = "src/main.rs"
 
 [dependencies]
-sootie-core = { path = "../sootie-core" }
-sootie-mcp = { path = "../sootie-mcp" }
+sootie-core = { version = "0.1.0", path = "../sootie-core" }
+sootie-mcp = { version = "0.1.0", path = "../sootie-mcp" }
 serde.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }

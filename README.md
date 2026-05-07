@@ -21,21 +21,53 @@ Sootie changes that. One install, and any AI agent can see and operate every app
 
 ### 1. Installation
 
-Sootie is distributed as a single Rust binary. You can install it via Cargo:
+**macOS**
 
 ```bash
-cargo install sootie
+# Homebrew (recommended)
+brew tap joe223/sootie
+brew install sootie
+
+# Or use install script
+curl -fsSL https://raw.githubusercontent.com/joe223/sootie/main/install.sh | bash
 ```
 
-*(Pre-built binaries for macOS, Windows, and Linux will be available via Homebrew and apt in upcoming releases.)*
+**Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joe223/sootie/main/install.sh | bash
+```
+
+**Windows**
+
+```powershell
+# Scoop (recommended)
+scoop bucket add sootie https://github.com/joe223/sootie
+scoop install sootie
+
+# Or use PowerShell install script
+iwr -useb https://raw.githubusercontent.com/joe223/sootie/main/install.ps1 | iex
+```
+
+**Via Agent (Claude Code / OpenCode / etc.)**
+
+Copy and paste this to your AI agent:
+
+```text
+Install Sootie for me from https://github.com/joe223/sootie. Use Homebrew on macOS, the install script (https://raw.githubusercontent.com/joe223/sootie/main/install.sh) on Linux, or Scoop on Windows. After installation, run `sootie setup` to initialize.
+```
+
+The agent will detect your platform and execute the appropriate command.
 
 ### 2. Initialization
 
-Before the first run, initialize Sootie. This command automatically sets up the local environment, including downloading the isolated GUI-Actor-2B vision sidecar model for visual fallbacks:
+After installation, run:
 
 ```bash
 sootie setup
 ```
+
+This configures permissions, Chrome CDP, and optionally downloads the vision sidecar model (~2GB).
 
 ### 3. Usage (MCP Configuration)
 
@@ -337,36 +369,6 @@ When your agent figures out a workflow, it saves it as a recipe. A recipe is a J
 - Recipes are just JSON. Read every step before running.
 - Share with your team. One person learns the workflow, everyone benefits.
 - Normalized selectors stay portable even when backend choice differs by platform.
-
-## Install
-
-```bash
-# macOS (Homebrew)
-brew install sootie
-sootie setup
-
-# Windows (Scoop)
-scoop install sootie
-sootie setup
-
-# Linux (cargo)
-cargo install sootie-cli
-sootie setup
-```
-
-`sootie setup` handles permissions, MCP configuration, and optional vision model installation.
-
-## Build From Source
-
-```bash
-git clone https://github.com/joe223/sootie.git
-cd sootie
-cargo build --release
-./target/release/sootie setup
-```
-
-
-
 
 ## License
 

@@ -1,0 +1,27 @@
+{
+    "version": "0.1.0",
+    "description": "Cross-platform computer-use for AI agents via MCP",
+    "homepage": "https://github.com/joe223/sootie",
+    "license": "Apache-2.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/joe223/sootie/releases/download/v0.1.0/sootie-windows-x64.exe#/sootie.exe",
+            "bin": "sootie.exe"
+        }
+    },
+    "checkver": {
+        "github": "https://github.com/joe223/sootie"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/joe223/sootie/releases/download/v$version/sootie-windows-x64.exe#/sootie.exe"
+            }
+        }
+    },
+    "post_install": [
+        "Write-Host 'Sootie installed successfully!' -ForegroundColor Green",
+        "Write-Host 'Run: sootie setup' -ForegroundColor Cyan",
+        "Write-Host 'Documentation: https://github.com/joe223/sootie#readme' -ForegroundColor Cyan"
+    ]
+}

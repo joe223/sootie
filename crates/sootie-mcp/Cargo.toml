@@ -3,9 +3,13 @@ name = "sootie-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors = ["Joe Developer <joe@example.com>"]
+description = "MCP server implementation for Sootie"
+repository = "https://github.com/joe223/sootie"
+keywords = ["mcp", "json-rpc", "protocol"]
 
 [dependencies]
-sootie-core = { path = "../sootie-core" }
+sootie-core = { version = "0.1.0", path = "../sootie-core" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
