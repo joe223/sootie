@@ -51,7 +51,7 @@ pub fn create_action_provider() -> Box<dyn ActionProvider> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{ClickAction, ActionTarget, MouseButton};
+    use crate::action::{ActionTarget, ClickAction, MouseButton};
     use crate::selector::Coordinate;
 
     #[tokio::test]

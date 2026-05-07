@@ -97,30 +97,31 @@ pub fn create_venv(system_python: &Path, crate_version: &str) -> Result<PathBuf>
     if venv_python.exists() {
         // Check version stamp
         if version_file.exists() {
-            let existing_version = fs::read_to_string(&version_file)
-                .context("Failed to read .sootie-version")?;
+            let existing_version =
+                fs::read_to_string(&version_file).context("Failed to read .sootie-version")?;
 
             if existing_version.trim() == crate_version {
                 println!("✓ Existing venv matches sootie version {}", crate_version);
                 return Ok(venv_python);
             }
 
-            println!("Version mismatch ({} vs {}), recreating venv...", existing_version.trim(), crate_version);
-            fs::remove_dir_all(&venv_dir)
-                .context("Failed to remove stale venv")?;
+            println!(
+                "Version mismatch ({} vs {}), recreating venv...",
+                existing_version.trim(),
+                crate_version
+            );
+            fs::remove_dir_all(&venv_dir).context("Failed to remove stale venv")?;
         } else {
             // Legacy venv without stamp
             println!("Legacy venv without version stamp, recreating...");
-            fs::remove_dir_all(&venv_dir)
-                .context("Failed to remove legacy venv")?;
+            fs::remove_dir_all(&venv_dir).context("Failed to remove legacy venv")?;
         }
     }
 
     // Create venv
     let parent = venv_dir.parent().unwrap();
     if !parent.exists() {
-        fs::create_dir_all(parent)
-            .context("Failed to create venv parent directory")?;
+        fs::create_dir_all(parent).context("Failed to create venv parent directory")?;
     }
 
     println!("Creating Python virtual environment...");
@@ -134,8 +135,7 @@ pub fn create_venv(system_python: &Path, crate_version: &str) -> Result<PathBuf>
     }
 
     // Write version stamp
-    fs::write(&version_file, crate_version)
-        .context("Failed to write .sootie-version")?;
+    fs::write(&version_file, crate_version).context("Failed to write .sootie-version")?;
 
     println!("✓ Virtual environment created at {}", venv_dir.display());
     Ok(venv_python)
@@ -162,8 +162,12 @@ fn install_macos_deps(venv_python: &Path) -> Result<()> {
     // Install mlx-vlm without deps to avoid PyTorch
     let status = Command::new(venv_python)
         .args([
-            "-m", "pip", "install", "--quiet", "--no-deps",
-            "mlx-vlm==0.1.15"
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
+            "--no-deps",
+            "mlx-vlm==0.1.15",
         ])
         .status()
         .context("Failed to install mlx-vlm")?;
@@ -183,12 +187,15 @@ fn install_macos_deps(venv_python: &Path) -> Result<()> {
     // Install remaining deps
     let status = Command::new(venv_python)
         .args([
-            "-m", "pip", "install", "--quiet",
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
             "transformers==4.48.3",
             "mlx-lm>=0.21.5,<0.30.0",
             "mlx>=0.21.0,<1.0.0",
             "Pillow>=10.0.0,<12.0.0",
-            "numpy>=1.23.4"
+            "numpy>=1.23.4",
         ])
         .status()
         .context("Failed to install transformers")?;
@@ -207,11 +214,14 @@ fn install_other_deps(venv_python: &Path) -> Result<()> {
 
     let status = Command::new(venv_python)
         .args([
-            "-m", "pip", "install", "--quiet",
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
             "transformers<4.49",
             "torch",
             "Pillow>=10.0.0,<12.0.0",
-            "numpy>=1.23.4"
+            "numpy>=1.23.4",
         ])
         .status()
         .context("Failed to install transformers")?;
@@ -236,20 +246,27 @@ fn verify_deps(venv_python: &Path, platform: &str) -> Result<()> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow::anyhow!(
-                "mlx_vlm import verification failed:\n{}", stderr
+                "mlx_vlm import verification failed:\n{}",
+                stderr
             ));
         }
 
         // Verify transformers version < 4.49
         let output = Command::new(venv_python)
-            .args(["-c", "import transformers; v = transformers.__version__; print(v)"])
+            .args([
+                "-c",
+                "import transformers; v = transformers.__version__; print(v)",
+            ])
             .output()
             .context("Failed to check transformers version")?;
 
         if output.status.success() {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if version.as_str() >= "4.49" {
-                println!("Warning: transformers version {} >= 4.49, may have issues with mlx-vlm", version);
+                println!(
+                    "Warning: transformers version {} >= 4.49, may have issues with mlx-vlm",
+                    version
+                );
             }
         }
     } else {
@@ -262,7 +279,8 @@ fn verify_deps(venv_python: &Path, platform: &str) -> Result<()> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow::anyhow!(
-                "transformers import verification failed:\n{}", stderr
+                "transformers import verification failed:\n{}",
+                stderr
             ));
         }
     }
@@ -288,7 +306,9 @@ pub fn check_python_deps(platform: &str) -> Result<(bool, String)> {
         .output()
         .context("Failed to check Python version")?;
 
-    let version_str = String::from_utf8_lossy(&version_output.stdout).trim().to_string();
+    let version_str = String::from_utf8_lossy(&version_output.stdout)
+        .trim()
+        .to_string();
 
     if platform == "macos" {
         // Fast check: use pip show instead of import (10x faster)
@@ -305,16 +325,26 @@ pub fn check_python_deps(platform: &str) -> Result<(bool, String)> {
             .and_then(|o| {
                 let stdout = String::from_utf8(o.stdout).ok()?;
                 // Parse version from "Version: X.Y.Z"
-                stdout.lines()
+                stdout
+                    .lines()
                     .find(|l| l.starts_with("Version:"))
                     .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
             })
             .unwrap_or_default();
 
         if mlx_installed {
-            Ok((true, format!("{} with mlx-vlm, transformers {}", version_str, transformers_version)))
+            Ok((
+                true,
+                format!(
+                    "{} with mlx-vlm, transformers {}",
+                    version_str, transformers_version
+                ),
+            ))
         } else {
-            Ok((false, format!("{} found but mlx-vlm not installed", version_str)))
+            Ok((
+                false,
+                format!("{} found but mlx-vlm not installed", version_str),
+            ))
         }
     } else {
         let transformers_version = Command::new(&python)
@@ -323,13 +353,17 @@ pub fn check_python_deps(platform: &str) -> Result<(bool, String)> {
             .ok()
             .and_then(|o| {
                 let stdout = String::from_utf8(o.stdout).ok()?;
-                stdout.lines()
+                stdout
+                    .lines()
                     .find(|l| l.starts_with("Version:"))
                     .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
             })
             .unwrap_or_default();
 
-        Ok((true, format!("{} with transformers {}", version_str, transformers_version)))
+        Ok((
+            true,
+            format!("{} with transformers {}", version_str, transformers_version),
+        ))
     }
 }
 

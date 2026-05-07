@@ -15,7 +15,7 @@ fn test_mcp_handshake_request_format() {
             }
         }
     });
-    
+
     assert!(request["jsonrpc"] == "2.0");
     assert!(request["method"] == "initialize");
 }

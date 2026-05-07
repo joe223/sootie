@@ -158,14 +158,15 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
     init_logging(&log_level, &log_path)?;
     info!(log_file = %log_path.display(), "Logging to file initialized");
 
-    let config = setup::load_config()
-        .unwrap_or_else(|e| {
-            warn!(error = %e, "Failed to load config file, using defaults");
-            setup::SootieConfig::default()
-        });
-    
+    let config = setup::load_config().unwrap_or_else(|e| {
+        warn!(error = %e, "Failed to load config file, using defaults");
+        setup::SootieConfig::default()
+    });
+
     if std::env::var("SOOTIE_FALLBACK_PRIORITY").is_err() {
-        let priority_str = config.fallback.priority
+        let priority_str = config
+            .fallback
+            .priority
             .iter()
             .map(|b| b.to_string())
             .collect::<Vec<_>>()
@@ -182,7 +183,10 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
     }
 
     if std::env::var("SOOTIE_SIDECAR_PORT").is_err() {
-        std::env::set_var("SOOTIE_SIDECAR_PORT", config.vision.sidecar_port.to_string());
+        std::env::set_var(
+            "SOOTIE_SIDECAR_PORT",
+            config.vision.sidecar_port.to_string(),
+        );
         info!(sidecar_port = %config.vision.sidecar_port, "Sidecar port configured");
     }
 
@@ -220,7 +224,10 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
     eprintln!("  Logs: {}", log_path.display());
     eprintln!("  Ready to accept requests on stdin");
     if _sidecar.is_some() {
-        eprintln!("  Vision: Sidecar running on port {}", config.vision.sidecar_port);
+        eprintln!(
+            "  Vision: Sidecar running on port {}",
+            config.vision.sidecar_port
+        );
     } else {
         eprintln!("  Vision: Disabled (run 'sootie setup' to enable)");
     }

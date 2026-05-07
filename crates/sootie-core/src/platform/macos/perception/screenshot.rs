@@ -8,7 +8,7 @@ pub fn take_screenshot(
     display_id: Option<u32>,
 ) -> Result<ScreenshotData, PerceptionError> {
     let mut cmd = Command::new("screencapture");
-    cmd.arg("-x").arg("-t").arg("jpg");  // 使用 JPEG 格式，体积减少 80-90%
+    cmd.arg("-x").arg("-t").arg("jpg"); // 使用 JPEG 格式，体积减少 80-90%
 
     // Add display selection if specified (macOS display IDs start from 1)
     if let Some(did) = display_id {
@@ -43,7 +43,7 @@ pub fn take_screenshot(
     let bounds = region.cloned();
 
     Ok(ScreenshotData {
-        format: ScreenshotFormat::Jpeg,  // JPEG 格式
+        format: ScreenshotFormat::Jpeg, // JPEG 格式
         data,
         bounds,
     })

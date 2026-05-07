@@ -523,7 +523,10 @@ mod tests {
     fn test_focus_action_deserialize() {
         let json = r#"{"selector": {"app": "Chrome"}}"#;
         let action: FocusAction = serde_json::from_str(json).unwrap();
-        assert_eq!(action.selector.app.unwrap().name, Some("Chrome".to_string()));
+        assert_eq!(
+            action.selector.app.unwrap().name,
+            Some("Chrome".to_string())
+        );
     }
 
     // ========== WindowAction Tests ==========
@@ -612,9 +615,18 @@ mod tests {
 
     #[test]
     fn test_mouse_button_serialize() {
-        assert_eq!(serde_json::to_string(&MouseButton::Left).unwrap(), "\"left\"");
-        assert_eq!(serde_json::to_string(&MouseButton::Right).unwrap(), "\"right\"");
-        assert_eq!(serde_json::to_string(&MouseButton::Middle).unwrap(), "\"middle\"");
+        assert_eq!(
+            serde_json::to_string(&MouseButton::Left).unwrap(),
+            "\"left\""
+        );
+        assert_eq!(
+            serde_json::to_string(&MouseButton::Right).unwrap(),
+            "\"right\""
+        );
+        assert_eq!(
+            serde_json::to_string(&MouseButton::Middle).unwrap(),
+            "\"middle\""
+        );
     }
 
     #[test]
@@ -633,10 +645,22 @@ mod tests {
 
     #[test]
     fn test_scroll_direction_serialize() {
-        assert_eq!(serde_json::to_string(&ScrollDirection::Up).unwrap(), "\"up\"");
-        assert_eq!(serde_json::to_string(&ScrollDirection::Down).unwrap(), "\"down\"");
-        assert_eq!(serde_json::to_string(&ScrollDirection::Left).unwrap(), "\"left\"");
-        assert_eq!(serde_json::to_string(&ScrollDirection::Right).unwrap(), "\"right\"");
+        assert_eq!(
+            serde_json::to_string(&ScrollDirection::Up).unwrap(),
+            "\"up\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ScrollDirection::Down).unwrap(),
+            "\"down\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ScrollDirection::Left).unwrap(),
+            "\"left\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ScrollDirection::Right).unwrap(),
+            "\"right\""
+        );
     }
 
     #[test]

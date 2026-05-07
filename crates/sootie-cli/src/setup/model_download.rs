@@ -100,7 +100,9 @@ impl HfDownloader {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
-                allowed.iter().any(|ext| fname.ends_with(ext) || fname == *ext)
+                allowed
+                    .iter()
+                    .any(|ext| fname.ends_with(ext) || fname == *ext)
             })
             .filter_map(|e| {
                 if let (Some(size), Some(sha256)) = (e.size, e.sha256) {
@@ -141,11 +143,17 @@ impl HfDownloader {
             if existing_size == expected_size {
                 // Size matches, verify checksum
                 if verify_checksum(&dest_path, expected_sha256)? {
-                    pb.println(format!("  {} already exists (checksum verified), skipping", fname));
+                    pb.println(format!(
+                        "  {} already exists (checksum verified), skipping",
+                        fname
+                    ));
                     return Ok(dest_path);
                 }
                 // Checksum mismatch, delete and re-download
-                pb.println(format!("  {} exists but checksum mismatch, re-downloading", fname));
+                pb.println(format!(
+                    "  {} exists but checksum mismatch, re-downloading",
+                    fname
+                ));
                 fs::remove_file(&dest_path)?;
             } else if existing_size == 0 {
                 // Zero-length file, delete
@@ -155,9 +163,7 @@ impl HfDownloader {
                 // Size mismatch, delete and re-download
                 pb.println(format!(
                     "  {} size mismatch ({} vs {}), re-downloading",
-                    fname,
-                    existing_size,
-                    expected_size
+                    fname, existing_size, expected_size
                 ));
                 fs::remove_file(&dest_path)?;
             }

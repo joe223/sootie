@@ -203,7 +203,9 @@ Core interaction tools are backend-agnostic. Sootie uses one normalized UI selec
 Selectors describe the target element, not the backend used to reach it. The scheme defines both flexible inputs for querying and stable outputs for resolved targets.
 
 #### 1. Input (Target Selection)
-When providing a target to tools like `sootie_find` or `sootie_click`, the input supports flexible shorthand and partial matching.
+Query tools such as `sootie_find`, `sootie_inspect`, and `sootie_wait` accept flexible shorthand
+and partial matching. Mutating tools accept a stricter canonical `target` object and require an
+unambiguous selector when the target is not a coordinate.
 
 - **App Input**: Can be a string (`"Chrome"`) or a partial object (`{ "name": "Chrome", "is_frontmost": true }`).
 - **Window Input**: Can be a string (`"Gmail"`) or a partial object to resolve ambiguity (`{ "title": "Gmail", "index": 0 }`).
@@ -220,7 +222,9 @@ When providing a target to tools like `sootie_find` or `sootie_click`, the input
 ```
 
 #### 2. Output (Resolved Target)
-When tools like `sootie_context` or `sootie_find` return a target, they always use a stable, fully resolved object structure. This exact object can be safely passed back into action tools.
+When tools like `sootie_context` or `sootie_find` return a target, they always use a stable,
+fully resolved object structure. Agents should lift the relevant selector fields from this output
+into a canonical action `target` object rather than passing the resolved payload back unchanged.
 
 **App Object**
 - `name` (string): Full application name (e.g., `"Google Chrome"`)
@@ -287,30 +291,40 @@ When tools like `sootie_context` or `sootie_find` return a target, they always u
 
 ### Action
 
-Action tools accept either a structured `target` (using the Selector Scheme) or direct `coordinate`s. When a `target` is provided, Sootie automatically triggers the Action Cascade to locate the element before acting.
+Action tools publish one canonical target shape through `tools/list`:
 
-**Common Parameters (for click, type, hover, drag):**
-- `target` (object, optional): A Selector Scheme Input object (e.g., `{ "app": "Chrome", "name": "Compose" }`).
-- `coordinate` (object, optional): Direct screen coordinates (e.g., `{ "x": 500, "y": 300 }`).
-- *Note: You must provide exactly one of `target` or `coordinate`.*
+- `target` (object): Either a selector object or `{ "coordinate": { "x": 500, "y": 300 } }`
+- Selector targets for mutating tools must include `app` plus at least one element identifier such
+  as `role`, `name`, `text`, or `id`
+
+Legacy top-level selector fields and top-level `coordinate` are still accepted during migration,
+but successful calls return a `structuredContent.warnings` entry with code
+`legacy_argument_shape`.
+
+Every `tools/call` response now includes `structuredContent`:
+
+- Success: `{ "ok": true, "data": ..., "warnings": [...] }`
+- Tool-level failure: `{ "ok": false, "error": { "code", "message", "details" }, "warnings": [...] }`
+
+JSON-RPC errors remain reserved for invalid MCP envelope/method dispatch.
 
 | Tool | What it does | Additional Parameters |
 |------|-------------|----------------------|
 | `sootie_launch` | Launch a desktop app | None |
-| `sootie_click` | Click a resolved target or coordinates | `button` (left/right/middle), `count` (1/2/3) |
+| `sootie_click` | Click a resolved target or coordinates | `button` (left/right/middle), `count` (integer) |
 | `sootie_type` | Type into a resolved target or current cursor | `text` (string), `clear_first` (boolean) |
 | `sootie_press` | Press a single key | `key` (e.g., "Return", "Tab", "Escape") |
 | `sootie_hotkey` | Press key combinations | `keys` (array of strings, e.g., `["Cmd", "C"]`) |
-| `sootie_scroll` | Scroll up, down, left, or right | `direction` ("up"/"down"/"left"/"right"), `amount` (number) |
+| `sootie_scroll` | Scroll up, down, left, or right | `direction` ("up"/"down"/"left"/"right"), `amount` (integer) |
 | `sootie_hover` | Hover over a resolved target or coordinates | None |
-| `sootie_drag` | Drag from one resolved target or point to another | `to_target` or `to_coordinate` |
+| `sootie_drag` | Drag from one resolved target or point to another | `from` and `to`, each a selector or coordinate target |
 
 ### Window & Focus
 
 | Tool | What it does |
 |------|-------------|
 | `sootie_focus` | Bring any app or window to the front |
-| `sootie_window` | Minimize, maximize, close, move, or resize a window |
+| `sootie_window` | Minimize, maximize, close, move, or resize a window. `move` requires `x` and `y`; `resize` requires `width` and `height` |
 
 ### Workflow
 
@@ -360,7 +374,7 @@ When your agent figures out a workflow, it saves it as a recipe. A recipe is a J
         "role": "textfield",
         "name": "To"
       },
-      "text": "${params.to}"
+      "text": "${to}"
     }
   ]
 }

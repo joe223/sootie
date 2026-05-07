@@ -34,7 +34,7 @@ pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, Percep
     let _ = std::fs::remove_file(&tmp_path);
 
     Ok(ScreenshotData {
-        format: ScreenshotFormat::Jpeg,  // JPEG 格式
+        format: ScreenshotFormat::Jpeg, // JPEG 格式
         data,
         bounds: region.cloned(),
     })

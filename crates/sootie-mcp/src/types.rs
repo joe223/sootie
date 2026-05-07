@@ -105,6 +105,8 @@ pub struct CallToolResult {
     pub content: Vec<ToolContent>,
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
+    #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,11 +193,17 @@ mod tests {
         let result = CallToolResult {
             content: vec![ToolContent::text("element clicked")],
             is_error: None,
+            structured_content: Some(serde_json::json!({
+                "ok": true,
+                "data": { "status": "clicked" },
+                "warnings": []
+            })),
         };
 
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("element clicked"));
         assert!(json.contains("text"));
+        assert!(json.contains("structuredContent"));
     }
 
     #[test]

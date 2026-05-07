@@ -10,17 +10,16 @@ pub async fn perform_drag<P: PerceptionProvider>(
 ) -> Result<ActionResult, ActionError> {
     let from = resolve_target(&action.from, perception).await?;
     let to = resolve_target(&action.to, perception).await?;
-    
-    simulate_drag(from, to)
-        .map_err(|e| ActionError::ActionFailed(e))?;
-    
+
+    simulate_drag(from, to).map_err(|e| ActionError::ActionFailed(e))?;
+
     Ok(ActionResult::success(None, "cgevent"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{DragAction, ActionTarget};
+    use crate::action::{ActionTarget, DragAction};
     use crate::perception::StubPerceptionProvider;
     use crate::selector::Coordinate;
 

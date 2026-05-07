@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,11 @@ impl Default for FallbackBackend {
 }
 
 fn default_fallback_priority() -> Vec<FallbackBackend> {
-    vec![FallbackBackend::Cdp, FallbackBackend::AtTree, FallbackBackend::Vision]
+    vec![
+        FallbackBackend::Cdp,
+        FallbackBackend::AtTree,
+        FallbackBackend::Vision,
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

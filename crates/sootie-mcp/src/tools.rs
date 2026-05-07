@@ -1,6 +1,8 @@
 use sootie_core::action::{ActionTarget, MouseButton, ScrollDirection};
 use sootie_core::recipe::StepTarget;
-use sootie_core::selector::{AppSelector, Coordinate, Selector, WindowSelector, WindowState};
+#[cfg(test)]
+use sootie_core::selector::{AppSelector, WindowSelector, WindowState};
+use sootie_core::selector::{Coordinate, Selector};
 
 use crate::types::ToolDefinition;
 
@@ -51,12 +53,8 @@ fn perception_find() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": {
-                    "description": "App selector - string or object with name/bundle_id/is_frontmost"
-                },
-                "window": {
-                    "description": "Window selector - string or object with title/id/index/focused"
-                },
+                "app": app_selector_schema(),
+                "window": window_selector_schema(),
                 "role": {
                     "type": "string",
                     "description": "UI role (button, textfield, link, etc.)"
@@ -86,8 +84,8 @@ fn perception_inspect() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": {},
-                "window": {},
+                "app": app_selector_schema(),
+                "window": window_selector_schema(),
                 "role": { "type": "string" },
                 "name": { "type": "string" },
                 "text": { "type": "string" },
@@ -105,8 +103,8 @@ fn perception_wait() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": {},
-                "window": {},
+                "app": app_selector_schema(),
+                "window": window_selector_schema(),
                 "role": { "type": "string" },
                 "name": { "type": "string" },
                 "state": {
@@ -114,7 +112,7 @@ fn perception_wait() -> ToolDefinition {
                     "description": "State to wait for (e.g. {visible: true})"
                 },
                 "timeout": {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Timeout in milliseconds",
                     "default": 5000
                 }
@@ -130,8 +128,8 @@ fn perception_screenshot() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": {},
-                "window": {},
+                "app": app_selector_schema(),
+                "window": window_selector_schema(),
                 "region": {
                     "type": "object",
                     "properties": {
@@ -142,7 +140,7 @@ fn perception_screenshot() -> ToolDefinition {
                     }
                 },
                 "display_id": {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Display ID (macOS: 1=main, 2=secondary, etc)"
                 }
             }
@@ -164,7 +162,7 @@ fn perception_find_apps() -> ToolDefinition {
                     "description": "App name pattern (supports wildcards: 'Chrome', '*Chrome*', 'Google*')"
                 },
                 "limit": {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Maximum number of results to return",
                     "default": 10
                 }
@@ -172,6 +170,93 @@ fn perception_find_apps() -> ToolDefinition {
             "required": ["pattern"]
         }),
     }
+}
+
+fn coordinate_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+        },
+        "required": ["x", "y"]
+    })
+}
+
+fn app_selector_schema() -> serde_json::Value {
+    serde_json::json!({
+        "oneOf": [
+            { "type": "string" },
+            {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "bundle_id": { "type": "string" },
+                    "is_frontmost": { "type": "boolean" }
+                }
+            }
+        ]
+    })
+}
+
+fn window_selector_schema() -> serde_json::Value {
+    serde_json::json!({
+        "oneOf": [
+            { "type": "string" },
+            {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" },
+                    "id": { "type": "string" },
+                    "index": { "type": "integer" },
+                    "focused": { "type": "boolean" }
+                }
+            }
+        ]
+    })
+}
+
+fn action_selector_target_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "app": app_selector_schema(),
+            "window": window_selector_schema(),
+            "role": { "type": "string" },
+            "name": { "type": "string" },
+            "text": { "type": "string" },
+            "id": { "type": "string" },
+            "state": {
+                "type": "object",
+                "properties": {
+                    "visible": { "type": "boolean" },
+                    "focused": { "type": "boolean" }
+                }
+            }
+        },
+        "required": ["app"],
+        "anyOf": [
+            { "required": ["role"] },
+            { "required": ["name"] },
+            { "required": ["text"] },
+            { "required": ["id"] }
+        ]
+    })
+}
+
+fn canonical_target_schema() -> serde_json::Value {
+    serde_json::json!({
+        "oneOf": [
+            action_selector_target_schema(),
+            {
+                "type": "object",
+                "properties": {
+                    "coordinate": coordinate_schema()
+                },
+                "required": ["coordinate"]
+            }
+        ]
+    })
 }
 
 fn action_click() -> ToolDefinition {
@@ -182,14 +267,8 @@ fn action_click() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "target": {
-                    "description": "Selector object to click"
-                },
-                "coordinate": {
-                    "type": "object",
-                    "properties": {
-                        "x": { "type": "number" },
-                        "y": { "type": "number" }
-                    }
+                    "description": "Canonical target object: selector fields or a nested coordinate",
+                    "allOf": [canonical_target_schema()]
                 },
                 "button": {
                     "type": "string",
@@ -197,10 +276,11 @@ fn action_click() -> ToolDefinition {
                     "default": "left"
                 },
                 "count": {
-                    "type": "number",
+                    "type": "integer",
                     "default": 1
                 }
-            }
+            },
+            "required": ["target"]
         }),
     }
 }
@@ -217,16 +297,8 @@ fn action_type() -> ToolDefinition {
                     "description": "Text to type"
                 },
                 "target": {
-                    "type": "object",
-                    "description": "Selector defining where to type. Must include app and at least one element identifier.",
-                    "properties": {
-                        "app": { "type": "string", "description": "Application name" },
-                        "role": { "type": "string", "description": "UI element role (e.g. textfield, button)" },
-                        "name": { "type": "string", "description": "Element accessible name" },
-                        "id": { "type": "string", "description": "Element identifier" },
-                        "text": { "type": "string", "description": "Element text content" }
-                    },
-                    "required": ["app"]
+                    "description": "Canonical target object: selector fields or a nested coordinate",
+                    "allOf": [canonical_target_schema()]
                 },
                 "clear_first": {
                     "type": "boolean",
@@ -234,7 +306,7 @@ fn action_type() -> ToolDefinition {
                     "description": "Clear existing text before typing"
                 }
             },
-            "required": ["text", "target"]
+            "required": ["text"]
         }),
     }
 }
@@ -282,21 +354,15 @@ fn action_scroll() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "target": {
-                    "description": "Selector object to scroll"
-                },
-                "coordinate": {
-                    "type": "object",
-                    "properties": {
-                        "x": { "type": "number" },
-                        "y": { "type": "number" }
-                    }
+                    "description": "Canonical target object: selector fields or a nested coordinate",
+                    "allOf": [canonical_target_schema()]
                 },
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down", "left", "right"]
                 },
                 "amount": {
-                    "type": "number",
+                    "type": "integer",
                     "default": 3
                 }
             },
@@ -313,16 +379,11 @@ fn action_hover() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "target": {
-                    "description": "Selector object to hover"
-                },
-                "coordinate": {
-                    "type": "object",
-                    "properties": {
-                        "x": { "type": "number" },
-                        "y": { "type": "number" }
-                    }
+                    "description": "Canonical target object: selector fields or a nested coordinate",
+                    "allOf": [canonical_target_schema()]
                 }
-            }
+            },
+            "required": ["target"]
         }),
     }
 }
@@ -335,10 +396,12 @@ fn action_drag() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "from": {
-                    "description": "Source selector or coordinate"
+                    "description": "Source selector or coordinate",
+                    "allOf": [canonical_target_schema()]
                 },
                 "to": {
-                    "description": "Destination selector or coordinate"
+                    "description": "Destination selector or coordinate",
+                    "allOf": [canonical_target_schema()]
                 }
             },
             "required": ["from", "to"]
@@ -375,6 +438,7 @@ fn app_launch() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "app": {
+                    "allOf": [app_selector_schema()],
                     "description": "App name or bundle identifier"
                 },
                 "args": {
@@ -484,6 +548,7 @@ fn workflow_recipe_delete() -> ToolDefinition {
     }
 }
 
+#[cfg(test)]
 pub fn parse_selector_from_args(args: &serde_json::Value) -> Selector {
     let mut sel = Selector::new();
 
@@ -528,68 +593,133 @@ pub fn parse_selector_from_args(args: &serde_json::Value) -> Selector {
     sel
 }
 
-pub fn parse_action_target(args: &serde_json::Value) -> Option<ActionTarget> {
-    if let Some(coord) = args.get("coordinate") {
-        if let (Some(x), Some(y)) = (
-            coord.get("x").and_then(|v| v.as_f64()),
-            coord.get("y").and_then(|v| v.as_f64()),
-        ) {
-            return Some(ActionTarget::Coordinate(Coordinate { x, y }));
-        }
+pub fn parse_selector_from_args_strict(args: &serde_json::Value) -> Result<Selector, String> {
+    serde_json::from_value::<Selector>(args.clone()).map_err(|e| format!("Invalid selector: {}", e))
+}
+
+pub fn parse_action_target(args: &serde_json::Value) -> Result<ActionTarget, String> {
+    let has_top_level_coordinate = args.get("coordinate").is_some();
+    let has_target = args.get("target").is_some();
+    let has_top_level_selector = selector_field_keys_present(args);
+
+    let form_count = usize::from(has_top_level_coordinate)
+        + usize::from(has_target)
+        + usize::from(has_top_level_selector);
+
+    if form_count == 0 {
+        return Err("Must provide target or coordinate".to_string());
+    }
+
+    if form_count > 1 {
+        return Err(
+            "Must provide exactly one target form: target, coordinate, or selector fields"
+                .to_string(),
+        );
+    }
+
+    if has_top_level_coordinate {
+        return parse_coordinate(args.get("coordinate")).map(ActionTarget::Coordinate);
     }
 
     if let Some(target) = args.get("target") {
-        if let Some(coord) = target.get("coordinate") {
-            if let (Some(x), Some(y)) = (
-                coord.get("x").and_then(|v| v.as_f64()),
-                coord.get("y").and_then(|v| v.as_f64()),
-            ) {
-                return Some(ActionTarget::Coordinate(Coordinate { x, y }));
+        if target.get("coordinate").is_some() {
+            if selector_field_keys_present(target) {
+                return Err(
+                    "Target must be either a coordinate or a selector, not both".to_string()
+                );
             }
+
+            return parse_coordinate(target.get("coordinate")).map(ActionTarget::Coordinate);
         }
 
-        if target.is_object() {
-            let selector = parse_selector_from_args(target);
-            if selector.app.is_some()
-                || selector.window.is_some()
-                || selector.element.role.is_some()
-                || selector.element.name.is_some()
-                || selector.element.text.is_some()
-                || selector.element.id.is_some()
-                || selector.element.state.is_some()
-            {
-                return Some(ActionTarget::Selector(selector));
-            }
-        }
+        let selector = parse_selector_from_args_strict(target)?;
+        return if has_selector_values(&selector) {
+            Ok(ActionTarget::Selector(selector))
+        } else {
+            Err("Target selector must include at least one selector field".to_string())
+        };
     }
 
-    if args.get("app").is_some()
-        || args.get("window").is_some()
-        || args.get("role").is_some()
-        || args.get("name").is_some()
-        || args.get("id").is_some()
-        || args.get("state").is_some()
-    {
-        let selector = parse_selector_from_args(args);
-        return Some(ActionTarget::Selector(selector));
+    let selector = parse_selector_from_args_strict(args)?;
+    if has_selector_values(&selector) {
+        Ok(ActionTarget::Selector(selector))
+    } else {
+        Err("Selector must include at least one selector field".to_string())
     }
-
-    None
 }
 
-pub fn validate_selector(selector: &Selector) -> Result<(), String> {
+pub fn parse_optional_action_target(
+    args: &serde_json::Value,
+) -> Result<Option<ActionTarget>, String> {
+    let has_any_target_form = args.get("target").is_some()
+        || args.get("coordinate").is_some()
+        || selector_field_keys_present(args);
+
+    if has_any_target_form {
+        parse_action_target(args).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_coordinate(value: Option<&serde_json::Value>) -> Result<Coordinate, String> {
+    let coord = value.ok_or("Coordinate is required")?;
+    let x = coord
+        .get("x")
+        .and_then(|v| v.as_f64())
+        .ok_or("Coordinate must include numeric x")?;
+    let y = coord
+        .get("y")
+        .and_then(|v| v.as_f64())
+        .ok_or("Coordinate must include numeric y")?;
+
+    Ok(Coordinate { x, y })
+}
+
+pub fn selector_field_keys_present(value: &serde_json::Value) -> bool {
+    value.get("app").is_some()
+        || value.get("window").is_some()
+        || value.get("role").is_some()
+        || value.get("name").is_some()
+        || value.get("text").is_some()
+        || value.get("id").is_some()
+        || value.get("state").is_some()
+}
+
+fn has_selector_values(selector: &Selector) -> bool {
+    selector.app.is_some()
+        || selector.window.is_some()
+        || selector.element.role.is_some()
+        || selector.element.name.is_some()
+        || selector.element.text.is_some()
+        || selector.element.id.is_some()
+        || selector.element.state.is_some()
+}
+
+pub fn validate_query_selector(selector: &Selector) -> Result<(), String> {
+    if !has_selector_values(selector) {
+        return Err("Selector must include at least one selector field".to_string());
+    }
+
+    Ok(())
+}
+
+pub fn validate_action_selector(selector: &Selector) -> Result<(), String> {
     if selector.app.is_none() {
         return Err("Selector must include 'app' field to specify which application".to_string());
     }
-    
+
     if selector.element.role.is_none()
         && selector.element.name.is_none()
         && selector.element.id.is_none()
         && selector.element.text.is_none()
     {
-        return Err("Selector must include at least one element identifier (role, name, id, or text)".to_string());
+        return Err(
+            "Selector must include at least one element identifier (role, name, id, or text)"
+                .to_string(),
+        );
     }
-    
+
     Ok(())
 }
 
@@ -598,6 +728,15 @@ pub fn parse_mouse_button(s: &str) -> MouseButton {
         "right" => MouseButton::Right,
         "middle" => MouseButton::Middle,
         _ => MouseButton::Left,
+    }
+}
+
+pub fn parse_mouse_button_strict(s: &str) -> Result<MouseButton, String> {
+    match s {
+        "left" => Ok(MouseButton::Left),
+        "right" => Ok(MouseButton::Right),
+        "middle" => Ok(MouseButton::Middle),
+        _ => Err(format!("Unknown mouse button: {}", s)),
     }
 }
 
@@ -611,7 +750,24 @@ pub fn parse_scroll_direction(s: &str) -> ScrollDirection {
     }
 }
 
+pub fn parse_scroll_direction_strict(s: &str) -> Result<ScrollDirection, String> {
+    match s {
+        "up" => Ok(ScrollDirection::Up),
+        "down" => Ok(ScrollDirection::Down),
+        "left" => Ok(ScrollDirection::Left),
+        "right" => Ok(ScrollDirection::Right),
+        _ => Err(format!("Unknown scroll direction: {}", s)),
+    }
+}
+
 pub fn parse_step_target(value: &serde_json::Value) -> Option<StepTarget> {
+    if let (Some(x), Some(y)) = (
+        value.get("x").and_then(|v| v.as_f64()),
+        value.get("y").and_then(|v| v.as_f64()),
+    ) {
+        return Some(StepTarget::Coordinate(Coordinate { x, y }));
+    }
+
     if let Some(coord) = value.get("coordinate") {
         if let (Some(x), Some(y)) = (
             coord.get("x").and_then(|v| v.as_f64()),
@@ -662,6 +818,79 @@ mod tests {
         assert!(names.contains(&"sootie_run"));
         assert!(names.contains(&"sootie_recipe_save"));
         assert!(names.contains(&"sootie_recipe_delete"));
+    }
+
+    #[test]
+    fn test_action_tools_publish_canonical_target_schema() {
+        let click = all_tools()
+            .into_iter()
+            .find(|tool| tool.name == "sootie_click")
+            .unwrap();
+
+        let required = click.input_schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|value| value == "target"));
+        assert!(click.input_schema["properties"].get("coordinate").is_none());
+    }
+
+    #[test]
+    fn test_selector_and_numeric_schemas_are_typed() {
+        let tools = all_tools();
+        let find = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_find")
+            .unwrap();
+        let wait = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_wait")
+            .unwrap();
+        let find_apps = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_find_apps")
+            .unwrap();
+        let scroll = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_scroll")
+            .unwrap();
+
+        assert!(find.input_schema["properties"]["app"]["oneOf"].is_array());
+        assert!(find.input_schema["properties"]["window"]["oneOf"].is_array());
+        assert_eq!(
+            wait.input_schema["properties"]["timeout"]["type"],
+            "integer"
+        );
+        assert_eq!(
+            find_apps.input_schema["properties"]["limit"]["type"],
+            "integer"
+        );
+        assert_eq!(
+            scroll.input_schema["properties"]["amount"]["type"],
+            "integer"
+        );
+    }
+
+    #[test]
+    fn test_action_target_schema_requires_selector_keys_or_coordinate() {
+        let click = all_tools()
+            .into_iter()
+            .find(|tool| tool.name == "sootie_click")
+            .unwrap();
+
+        let target_schema = &click.input_schema["properties"]["target"]["allOf"][0];
+        assert!(target_schema["oneOf"].is_array());
+        assert_eq!(target_schema["oneOf"][0]["required"][0], "app");
+        assert!(target_schema["oneOf"][0]["anyOf"].is_array());
+        assert_eq!(target_schema["oneOf"][1]["required"][0], "coordinate");
+    }
+
+    #[test]
+    fn test_drag_schema_uses_canonical_target_shape() {
+        let drag = all_tools()
+            .into_iter()
+            .find(|tool| tool.name == "sootie_drag")
+            .unwrap();
+
+        assert!(drag.input_schema["properties"]["from"]["allOf"].is_array());
+        assert!(drag.input_schema["properties"]["to"]["allOf"].is_array());
     }
 
     #[test]

@@ -131,7 +131,10 @@ impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
         }
     }
 
-    async fn try_cdp(&self, selector: &Selector) -> Result<(Coordinate, Option<Backend>), ActionError> {
+    async fn try_cdp(
+        &self,
+        selector: &Selector,
+    ) -> Result<(Coordinate, Option<Backend>), ActionError> {
         debug!("Attempting CDP resolution for selector");
 
         match try_find_via_cdp(selector).await {
@@ -139,7 +142,10 @@ impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
                 if let Some(element) = result.elements.first() {
                     let center = element.bounds.center();
                     return Ok((
-                        Coordinate { x: center.0, y: center.1 },
+                        Coordinate {
+                            x: center.0,
+                            y: center.1,
+                        },
                         Some(Backend::Cdp),
                     ));
                 }
@@ -156,7 +162,10 @@ impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
         Err(ActionError::TargetNotFound("CDP failed".to_string()))
     }
 
-    async fn try_at_tree(&self, selector: &Selector) -> Result<(Coordinate, Option<Backend>), ActionError> {
+    async fn try_at_tree(
+        &self,
+        selector: &Selector,
+    ) -> Result<(Coordinate, Option<Backend>), ActionError> {
         debug!("Attempting AT tree resolution for selector");
 
         match self.perception.find(selector).await {
@@ -164,7 +173,10 @@ impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
                 if let Some(element) = result.elements.first() {
                     let center = element.bounds.center();
                     return Ok((
-                        Coordinate { x: center.0, y: center.1 },
+                        Coordinate {
+                            x: center.0,
+                            y: center.1,
+                        },
                         Some(Backend::AtTree),
                     ));
                 }
@@ -181,7 +193,10 @@ impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
         Err(ActionError::TargetNotFound("AT tree failed".to_string()))
     }
 
-    async fn try_vision(&self, selector: &Selector) -> Result<(Coordinate, Option<Backend>), ActionError> {
+    async fn try_vision(
+        &self,
+        selector: &Selector,
+    ) -> Result<(Coordinate, Option<Backend>), ActionError> {
         let Some(vision) = self.vision else {
             debug!("Vision backend not available");
             return Err(ActionError::NotImplemented(

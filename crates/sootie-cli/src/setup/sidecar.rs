@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use crate::setup::python_env::{sootie_venv_python};
+use crate::setup::python_env::sootie_venv_python;
 
 /// Find bundled vision-sidecar directory
 pub fn find_bundled_sidecar_dir() -> Result<PathBuf> {
@@ -23,8 +23,7 @@ pub fn find_bundled_sidecar_dir() -> Result<PathBuf> {
     }
 
     // Development path: current_exe parent resolution
-    let exe = std::env::current_exe()
-        .context("Failed to get current executable path")?;
+    let exe = std::env::current_exe().context("Failed to get current executable path")?;
 
     // Typical: .build/release/sootie -> .build/release -> .build -> project_root
     let project_root = exe
@@ -60,8 +59,7 @@ pub fn install_sidecar_files() -> Result<()> {
     let dest_dir = sidecar_install_dir();
 
     if !dest_dir.exists() {
-        fs::create_dir_all(&dest_dir)
-            .context("Failed to create sidecar directory")?;
+        fs::create_dir_all(&dest_dir).context("Failed to create sidecar directory")?;
     }
 
     // Copy server.py
@@ -70,15 +68,21 @@ pub fn install_sidecar_files() -> Result<()> {
 
     // Copy requirements.txt
     if src_dir.join("requirements.txt").exists() {
-        fs::copy(src_dir.join("requirements.txt"), dest_dir.join("requirements.txt"))
-            .context("Failed to copy requirements.txt")?;
+        fs::copy(
+            src_dir.join("requirements.txt"),
+            dest_dir.join("requirements.txt"),
+        )
+        .context("Failed to copy requirements.txt")?;
     }
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(dest_dir.join("server.py"), fs::Permissions::from_mode(0o755))
-            .context("Failed to set server.py permissions")?;
+        fs::set_permissions(
+            dest_dir.join("server.py"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .context("Failed to set server.py permissions")?;
     }
 
     println!("✓ Sidecar files installed to {}", dest_dir.display());

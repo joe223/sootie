@@ -1,8 +1,8 @@
-pub mod perception;
 pub mod action;
+pub mod perception;
 
-use crate::perception::PerceptionProvider;
 use crate::action::ActionProvider;
+use crate::perception::PerceptionProvider;
 
-pub use perception::WindowsPerceptionProvider;
 pub use action::WindowsActionProvider;
+pub use perception::WindowsPerceptionProvider;

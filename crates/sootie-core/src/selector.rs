@@ -653,7 +653,10 @@ mod tests {
 
     #[test]
     fn test_coordinate_negative() {
-        let coord = Coordinate { x: -100.0, y: -200.0 };
+        let coord = Coordinate {
+            x: -100.0,
+            y: -200.0,
+        };
         let json = serde_json::to_string(&coord).unwrap();
         let deserialized: Coordinate = serde_json::from_str(&json).unwrap();
         assert_eq!(coord, deserialized);
@@ -887,8 +890,17 @@ mod tests {
                     name: "OK".to_string(),
                     text: None,
                     id: None,
-                    state: ElementState { visible: true, focused: None, enabled: None },
-                    bounds: Bounds { x: 0.0, y: 0.0, width: 10.0, height: 10.0 },
+                    state: ElementState {
+                        visible: true,
+                        focused: None,
+                        enabled: None,
+                    },
+                    bounds: Bounds {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 10.0,
+                        height: 10.0,
+                    },
                     index: 0,
                 },
                 Element {
@@ -896,8 +908,17 @@ mod tests {
                     name: "OK".to_string(),
                     text: None,
                     id: None,
-                    state: ElementState { visible: true, focused: None, enabled: None },
-                    bounds: Bounds { x: 0.0, y: 20.0, width: 10.0, height: 10.0 },
+                    state: ElementState {
+                        visible: true,
+                        focused: None,
+                        enabled: None,
+                    },
+                    bounds: Bounds {
+                        x: 0.0,
+                        y: 20.0,
+                        width: 10.0,
+                        height: 10.0,
+                    },
                     index: 1,
                 },
             ],
@@ -931,8 +952,17 @@ mod tests {
                 name: "Submit".to_string(),
                 text: None,
                 id: None,
-                state: ElementState { visible: true, focused: None, enabled: None },
-                bounds: Bounds { x: 0.0, y: 0.0, width: 10.0, height: 10.0 },
+                state: ElementState {
+                    visible: true,
+                    focused: None,
+                    enabled: None,
+                },
+                bounds: Bounds {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                },
                 index: 0,
             },
             children: vec![],
@@ -953,21 +983,37 @@ mod tests {
                 name: "Form".to_string(),
                 text: None,
                 id: None,
-                state: ElementState { visible: true, focused: None, enabled: None },
-                bounds: Bounds { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+                state: ElementState {
+                    visible: true,
+                    focused: None,
+                    enabled: None,
+                },
+                bounds: Bounds {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                },
                 index: 0,
             },
-            children: vec![
-                Element {
-                    role: "textfield".to_string(),
-                    name: "Email".to_string(),
-                    text: None,
-                    id: None,
-                    state: ElementState { visible: true, focused: None, enabled: None },
-                    bounds: Bounds { x: 10.0, y: 10.0, width: 80.0, height: 20.0 },
-                    index: 0,
+            children: vec![Element {
+                role: "textfield".to_string(),
+                name: "Email".to_string(),
+                text: None,
+                id: None,
+                state: ElementState {
+                    visible: true,
+                    focused: None,
+                    enabled: None,
                 },
-            ],
+                bounds: Bounds {
+                    x: 10.0,
+                    y: 10.0,
+                    width: 80.0,
+                    height: 20.0,
+                },
+                index: 0,
+            }],
             backend: "cdp".to_string(),
             actions: vec!["click".to_string()],
             raw_metadata: None,
@@ -989,7 +1035,10 @@ mod tests {
         }"#;
         let sel: Selector = serde_json::from_str(json).unwrap();
         assert_eq!(sel.app.as_ref().unwrap().name, Some("Chrome".to_string()));
-        assert_eq!(sel.window.as_ref().unwrap().title, Some("Gmail".to_string()));
+        assert_eq!(
+            sel.window.as_ref().unwrap().title,
+            Some("Gmail".to_string())
+        );
         assert_eq!(sel.window.as_ref().unwrap().focused, Some(true));
         assert_eq!(sel.element.role, Some("button".to_string()));
         assert_eq!(sel.element.name, Some("Compose".to_string()));

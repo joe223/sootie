@@ -50,12 +50,15 @@ fn get_display_info() -> Vec<(u32, crate::selector::Bounds)> {
         .output();
 
     // Fallback: use hardcoded primary display
-    vec![(1, crate::selector::Bounds {
-        x: 0.0,
-        y: 0.0,
-        width: 1920.0,
-        height: 1080.0,
-    })]
+    vec![(
+        1,
+        crate::selector::Bounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        },
+    )]
 }
 
 pub fn get_running_apps() -> crate::perception::Context {

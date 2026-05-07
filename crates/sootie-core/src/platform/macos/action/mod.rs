@@ -1,22 +1,22 @@
 mod click;
-mod type_text;
-mod press;
-mod hotkey;
-mod scroll;
-mod hover;
 mod drag;
 mod focus;
-mod launch;
-mod window;
-mod utils;
+mod hotkey;
+mod hover;
 mod keyboard;
+mod launch;
 mod mouse;
+mod press;
+mod scroll;
+mod type_text;
+mod utils;
+mod window;
 
 use async_trait::async_trait;
 
 use crate::action::{
-    ActionError, ActionProvider, ActionResult, ClickAction, DragAction, FocusAction,
-    HotkeyAction, HoverAction, LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction,
+    ActionError, ActionProvider, ActionResult, ClickAction, DragAction, FocusAction, HotkeyAction,
+    HoverAction, LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction,
 };
 
 use super::perception::MacPerceptionProvider;
@@ -105,7 +105,9 @@ mod tests {
     #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_press() {
         let provider = MacActionProvider::new();
-        let action = PressAction { key: "Return".to_string() };
+        let action = PressAction {
+            key: "Return".to_string(),
+        };
         let result = provider.press(&action).await;
         assert!(result.is_ok() || result.is_err());
     }
@@ -114,7 +116,9 @@ mod tests {
     #[ignore = "requires accessibility permissions"]
     async fn test_mac_action_provider_hotkey() {
         let provider = MacActionProvider::new();
-        let action = HotkeyAction { keys: vec!["Cmd".to_string(), "C".to_string()] };
+        let action = HotkeyAction {
+            keys: vec!["Cmd".to_string(), "C".to_string()],
+        };
         let result = provider.hotkey(&action).await;
         assert!(result.is_ok() || result.is_err());
     }
@@ -160,7 +164,8 @@ mod tests {
     async fn test_mac_action_provider_focus() {
         let provider = MacActionProvider::new();
         let action = FocusAction {
-            selector: crate::selector::Selector::new().with_app(crate::selector::AppSelector::from_name("Finder")),
+            selector: crate::selector::Selector::new()
+                .with_app(crate::selector::AppSelector::from_name("Finder")),
         };
         let result = provider.focus(&action).await;
         assert!(result.is_ok() || result.is_err());

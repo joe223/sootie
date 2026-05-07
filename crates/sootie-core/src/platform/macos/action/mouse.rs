@@ -31,13 +31,8 @@ pub fn simulate_click(x: f64, y: f64, button: &str, count: u32) -> Result<(), St
             _ => CGEventType::LeftMouseDown,
         };
 
-        let down_event = CGEvent::new_mouse_event(
-            source.clone(),
-            down_type,
-            point,
-            mouse_button,
-        )
-        .map_err(|_| "Failed to create mouse down event".to_string())?;
+        let down_event = CGEvent::new_mouse_event(source.clone(), down_type, point, mouse_button)
+            .map_err(|_| "Failed to create mouse down event".to_string())?;
 
         if i > 0 {
             down_event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, (i + 1) as i64);
@@ -45,13 +40,8 @@ pub fn simulate_click(x: f64, y: f64, button: &str, count: u32) -> Result<(), St
 
         down_event.post(CGEventTapLocation::HID);
 
-        let up_event = CGEvent::new_mouse_event(
-            source.clone(),
-            event_type,
-            point,
-            mouse_button,
-        )
-        .map_err(|_| "Failed to create mouse up event".to_string())?;
+        let up_event = CGEvent::new_mouse_event(source.clone(), event_type, point, mouse_button)
+            .map_err(|_| "Failed to create mouse up event".to_string())?;
 
         if i > 0 {
             up_event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, (i + 1) as i64);
@@ -100,8 +90,8 @@ pub fn simulate_scroll(_x: f64, _y: f64, direction: &str, amount: u32) -> Result
         _ => (0, 0),
     };
 
-    let event = CGEvent::new(source.clone())
-        .map_err(|_| "Failed to create scroll event".to_string())?;
+    let event =
+        CGEvent::new(source.clone()).map_err(|_| "Failed to create scroll event".to_string())?;
 
     event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, delta_y as i64);
     event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2, delta_x as i64);

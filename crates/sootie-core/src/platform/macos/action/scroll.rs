@@ -25,9 +25,8 @@ pub async fn perform_scroll<P: PerceptionProvider>(
         None => (0.0, 0.0),
     };
 
-    simulate_scroll(x, y, direction, amount)
-        .map_err(|e| ActionError::ActionFailed(e))?;
-    
+    simulate_scroll(x, y, direction, amount).map_err(|e| ActionError::ActionFailed(e))?;
+
     Ok(ActionResult::success(None, "cgevent"))
 }
 

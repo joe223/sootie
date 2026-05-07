@@ -9,17 +9,16 @@ pub async fn perform_hover<P: PerceptionProvider>(
     perception: &P,
 ) -> Result<ActionResult, ActionError> {
     let coord = resolve_target(&action.target, perception).await?;
-    
-    simulate_mouse_move(coord.x, coord.y)
-        .map_err(|e| ActionError::ActionFailed(e))?;
-    
+
+    simulate_mouse_move(coord.x, coord.y).map_err(|e| ActionError::ActionFailed(e))?;
+
     Ok(ActionResult::success(None, "cgevent"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{HoverAction, ActionTarget};
+    use crate::action::{ActionTarget, HoverAction};
     use crate::perception::StubPerceptionProvider;
     use crate::selector::Coordinate;
 

@@ -1,4 +1,4 @@
-use sootie_tests::{TestEnv, FixturesLoader};
+use sootie_tests::{FixturesLoader, TestEnv};
 
 #[tokio::test]
 async fn test_form_submission_basic() {

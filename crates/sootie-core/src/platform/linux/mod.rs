@@ -1,8 +1,8 @@
-pub mod perception;
 pub mod action;
+pub mod perception;
 
-use crate::perception::PerceptionProvider;
 use crate::action::ActionProvider;
+use crate::perception::PerceptionProvider;
 
-pub use perception::LinuxPerceptionProvider;
 pub use action::LinuxActionProvider;
+pub use perception::LinuxPerceptionProvider;

@@ -16,16 +16,15 @@ pub async fn perform_click<P: PerceptionProvider>(
     let count = action.count.unwrap_or(1);
 
     let coord = resolve_target(&action.target, perception).await?;
-    
-    simulate_click(coord.x, coord.y, button, count)
-        .map_err(|e| ActionError::ActionFailed(e))?;
-    
+
+    simulate_click(coord.x, coord.y, button, count).map_err(|e| ActionError::ActionFailed(e))?;
+
     Ok(ActionResult::success(None, "cgevent"))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{ClickAction, ActionTarget, MouseButton};
+    use crate::action::{ActionTarget, ClickAction, MouseButton};
     use crate::perception::StubPerceptionProvider;
     use crate::selector::Coordinate;
 

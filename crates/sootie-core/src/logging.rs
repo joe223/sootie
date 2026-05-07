@@ -281,10 +281,19 @@ pub fn create_duration_ms(start: std::time::Instant) -> u64 {
 
 /// Default sensitive field names (lowercase for matching)
 const DEFAULT_SENSITIVE_FIELDS: &[&str] = &[
-    "password", "pwd", "pass",
-    "api_key", "apikey", "key", "token", "secret",
-    "credential", "auth", "private",
-    "authorization", "bearer",
+    "password",
+    "pwd",
+    "pass",
+    "api_key",
+    "apikey",
+    "key",
+    "token",
+    "secret",
+    "credential",
+    "auth",
+    "private",
+    "authorization",
+    "bearer",
 ];
 
 /// Sensitive field patterns from environment variable
@@ -297,7 +306,10 @@ fn get_sensitive_fields_from_env() -> Vec<String> {
 
 /// Combined list of sensitive field patterns
 fn get_sensitive_fields() -> Vec<String> {
-    let defaults: Vec<String> = DEFAULT_SENSITIVE_FIELDS.iter().map(|s| s.to_string()).collect();
+    let defaults: Vec<String> = DEFAULT_SENSITIVE_FIELDS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let env_override = get_sensitive_fields_from_env();
 
     if env_override.is_empty() {
@@ -310,7 +322,9 @@ fn get_sensitive_fields() -> Vec<String> {
 /// Check if field name is sensitive (case-insensitive)
 fn is_sensitive_field(field_name: &str) -> bool {
     let field_lower = field_name.to_lowercase();
-    get_sensitive_fields().iter().any(|s| field_lower.contains(&s.to_lowercase()))
+    get_sensitive_fields()
+        .iter()
+        .any(|s| field_lower.contains(&s.to_lowercase()))
 }
 
 /// Sanitize email: "user@domain.com" → "u***@domain.com"
@@ -351,7 +365,8 @@ fn sanitize_string_value(value: &str) -> String {
         return ssn_redacted;
     }
 
-    let email_pattern = regex::Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
+    let email_pattern =
+        regex::Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
     if email_pattern.is_match(value) {
         return sanitize_email(value);
     }
@@ -368,11 +383,14 @@ pub fn sanitize_json_value(
         serde_json::Value::String(s) => {
             if let Some(name) = field_name {
                 if is_sensitive_field(name) {
-                    return serde_json::Value::String(format!("[REDACTED:{}]", name.to_lowercase()));
+                    return serde_json::Value::String(format!(
+                        "[REDACTED:{}]",
+                        name.to_lowercase()
+                    ));
                 }
             }
             serde_json::Value::String(sanitize_string_value(&s))
-        },
+        }
         serde_json::Value::Array(items) => serde_json::Value::Array(
             items
                 .into_iter()
@@ -424,7 +442,7 @@ mod tests {
         assert_eq!(config, deserialized);
     }
 
-#[test]
+    #[test]
     fn test_tool_call_log_serialize() {
         let log = ToolCallLog {
             tool_name: "sootie_click".to_string(),
@@ -442,7 +460,7 @@ mod tests {
         assert_eq!(log.success, deserialized.success);
         assert_eq!(log.duration_ms, deserialized.duration_ms);
     }
-    
+
     #[test]
     fn test_perception_log_serialize() {
         let log = PerceptionLog {
@@ -458,7 +476,7 @@ mod tests {
         assert_eq!(log.operation, deserialized.operation);
         assert_eq!(log.success, deserialized.success);
     }
-    
+
     #[test]
     fn test_action_log_serialize() {
         let log = ActionLog {
@@ -476,7 +494,7 @@ mod tests {
         assert_eq!(log.action_type, deserialized.action_type);
         assert_eq!(log.coordinate, deserialized.coordinate);
     }
-    
+
     #[test]
     fn test_cascade_log_serialize() {
         let log = CascadeLog {
@@ -492,7 +510,7 @@ mod tests {
         assert_eq!(log.step, deserialized.step);
         assert_eq!(log.fallback_triggered, deserialized.fallback_triggered);
     }
-    
+
     #[test]
     fn test_recipe_log_serialize() {
         let log = RecipeLog {
@@ -509,32 +527,41 @@ mod tests {
         assert_eq!(log.recipe_name, deserialized.recipe_name);
         assert_eq!(log.step_count, deserialized.step_count);
     }
-    
+
     #[test]
     fn test_log_level_serialize() {
-        assert_eq!(serde_json::to_string(&LogLevel::Debug).unwrap(), "\"debug\"");
+        assert_eq!(
+            serde_json::to_string(&LogLevel::Debug).unwrap(),
+            "\"debug\""
+        );
         assert_eq!(serde_json::to_string(&LogLevel::Info).unwrap(), "\"info\"");
         assert_eq!(serde_json::to_string(&LogLevel::Warn).unwrap(), "\"warn\"");
-        assert_eq!(serde_json::to_string(&LogLevel::Error).unwrap(), "\"error\"");
-        assert_eq!(serde_json::to_string(&LogLevel::Trace).unwrap(), "\"trace\"");
+        assert_eq!(
+            serde_json::to_string(&LogLevel::Error).unwrap(),
+            "\"error\""
+        );
+        assert_eq!(
+            serde_json::to_string(&LogLevel::Trace).unwrap(),
+            "\"trace\""
+        );
     }
-    
+
     #[test]
     fn test_log_level_deserialize() {
         let debug: LogLevel = serde_json::from_str("\"debug\"").unwrap();
         assert_eq!(debug, LogLevel::Debug);
-        
+
         let info: LogLevel = serde_json::from_str("\"info\"").unwrap();
         assert_eq!(info, LogLevel::Info);
     }
-    
-#[test]
+
+    #[test]
     fn test_sootie_logger_creation() {
         let config = LogConfig::default();
         let logger = SootieLogger::new(config);
         assert!(logger.config.log_tool_calls);
     }
-    
+
     #[test]
     fn test_sootie_logger_disabled_logs() {
         let config = LogConfig {
@@ -548,7 +575,7 @@ mod tests {
             sanitize_logs: true,
         };
         let logger = SootieLogger::new(config);
-        
+
         let tool_log = ToolCallLog {
             tool_name: "test".to_string(),
             request_id: None,
@@ -558,10 +585,10 @@ mod tests {
             duration_ms: 0,
             backend_used: None,
         };
-        
+
         logger.log_tool_call(&tool_log);
     }
-    
+
     #[test]
     fn test_tool_call_log_error_path() {
         let log = ToolCallLog {
@@ -578,7 +605,7 @@ mod tests {
         assert!(json.contains("Permission denied"));
         assert!(json.contains("false"));
     }
-    
+
     #[test]
     fn test_perception_log_error_path() {
         let log = PerceptionLog {
@@ -592,7 +619,7 @@ mod tests {
         let json = serde_json::to_string(&log).unwrap();
         assert!(json.contains("false"));
     }
-    
+
     #[test]
     fn test_action_log_error_path() {
         let log = ActionLog {
@@ -608,7 +635,7 @@ mod tests {
         let json = serde_json::to_string(&log).unwrap();
         assert!(json.contains("Failed to click"));
     }
-    
+
     #[test]
     fn test_cascade_log_fallback_path() {
         let log = CascadeLog {
@@ -623,7 +650,7 @@ mod tests {
         assert!(json.contains("true"));
         assert!(json.contains("vision"));
     }
-    
+
     #[test]
     fn test_recipe_log_error_path() {
         let log = RecipeLog {
@@ -638,7 +665,7 @@ mod tests {
         let json = serde_json::to_string(&log).unwrap();
         assert!(json.contains("Missing parameter"));
     }
-    
+
     #[test]
     fn test_create_duration_ms() {
         let start = std::time::Instant::now();
@@ -646,15 +673,21 @@ mod tests {
         let ms = create_duration_ms(start);
         assert!(ms >= 10);
     }
-    
+
     #[test]
     fn test_log_level_serialize_all() {
         assert_eq!(serde_json::to_string(&LogLevel::Info).unwrap(), "\"info\"");
-        assert_eq!(serde_json::to_string(&LogLevel::Debug).unwrap(), "\"debug\"");
+        assert_eq!(
+            serde_json::to_string(&LogLevel::Debug).unwrap(),
+            "\"debug\""
+        );
         assert_eq!(serde_json::to_string(&LogLevel::Warn).unwrap(), "\"warn\"");
-        assert_eq!(serde_json::to_string(&LogLevel::Error).unwrap(), "\"error\"");
+        assert_eq!(
+            serde_json::to_string(&LogLevel::Error).unwrap(),
+            "\"error\""
+        );
     }
-    
+
     #[test]
     fn test_sootie_logger_log_session() {
         let config = LogConfig::default();
@@ -902,7 +935,10 @@ mod tests {
             let output = sanitize_json_value(input, None);
             assert_eq!(output["user"]["name"], "Alice");
             assert_eq!(output["user"]["email"], "u***@example.com");
-            assert_eq!(output["user"]["credentials"]["api_key"], "[REDACTED:api_key]");
+            assert_eq!(
+                output["user"]["credentials"]["api_key"],
+                "[REDACTED:api_key]"
+            );
         }
 
         #[test]
@@ -993,8 +1029,14 @@ mod tests {
                 }
             });
             let output = sanitize_json_value(input, None);
-            assert_eq!(output["level1"]["level2"]["level3"]["secret_token"], "[REDACTED:secret_token]");
-            assert_eq!(output["level1"]["level2"]["level3"]["public_data"], "visible");
+            assert_eq!(
+                output["level1"]["level2"]["level3"]["secret_token"],
+                "[REDACTED:secret_token]"
+            );
+            assert_eq!(
+                output["level1"]["level2"]["level3"]["public_data"],
+                "visible"
+            );
         }
 
         #[test]

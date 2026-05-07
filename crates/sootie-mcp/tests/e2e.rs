@@ -1,11 +1,10 @@
 use sootie_core::action::{
-    ActionError, ActionResult, ClickAction, DragAction, FocusAction, HotkeyAction,
+    ActionError, ActionProvider, ActionResult, ClickAction, DragAction, FocusAction, HotkeyAction,
     HoverAction, LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction,
-    ActionProvider,
 };
 use sootie_core::perception::{
-    AppContext, Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider, ScreenshotData,
-    WaitCondition, WaitResult,
+    AppContext, Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider,
+    ScreenshotData, WaitCondition, WaitResult,
 };
 use sootie_core::selector::*;
 use sootie_mcp::server::SootieServer;
@@ -55,6 +54,7 @@ impl MockPerceptionProvider {
                                 width: 1440.0,
                                 height: 875.0,
                             },
+                            display_id: Some(1),
                         },
                         Window {
                             id: "win_1043".to_string(),
@@ -67,6 +67,7 @@ impl MockPerceptionProvider {
                                 width: 1200.0,
                                 height: 800.0,
                             },
+                            display_id: Some(1),
                         },
                     ],
                 },
@@ -87,6 +88,7 @@ impl MockPerceptionProvider {
                             width: 800.0,
                             height: 600.0,
                         },
+                        display_id: Some(1),
                     }],
                 },
             ],
@@ -111,6 +113,7 @@ impl MockPerceptionProvider {
                     width: 1440.0,
                     height: 875.0,
                 },
+                display_id: Some(1),
             }),
             elements: vec![Element {
                 role: "button".to_string(),
@@ -151,6 +154,7 @@ impl MockPerceptionProvider {
                     width: 1440.0,
                     height: 875.0,
                 },
+                display_id: Some(1),
             }),
             elements: vec![Element {
                 role: "textfield".to_string(),
@@ -183,8 +187,17 @@ impl MockPerceptionProvider {
                     name: "OK".to_string(),
                     text: None,
                     id: None,
-                    state: ElementState { visible: true, focused: None, enabled: Some(true) },
-                    bounds: Bounds { x: 100.0, y: 200.0, width: 80.0, height: 30.0 },
+                    state: ElementState {
+                        visible: true,
+                        focused: None,
+                        enabled: Some(true),
+                    },
+                    bounds: Bounds {
+                        x: 100.0,
+                        y: 200.0,
+                        width: 80.0,
+                        height: 30.0,
+                    },
                     index: 0,
                 },
                 Element {
@@ -192,8 +205,17 @@ impl MockPerceptionProvider {
                     name: "OK".to_string(),
                     text: None,
                     id: None,
-                    state: ElementState { visible: true, focused: None, enabled: Some(true) },
-                    bounds: Bounds { x: 100.0, y: 300.0, width: 80.0, height: 30.0 },
+                    state: ElementState {
+                        visible: true,
+                        focused: None,
+                        enabled: Some(true),
+                    },
+                    bounds: Bounds {
+                        x: 100.0,
+                        y: 300.0,
+                        width: 80.0,
+                        height: 30.0,
+                    },
                     index: 1,
                 },
                 Element {
@@ -201,8 +223,17 @@ impl MockPerceptionProvider {
                     name: "OK".to_string(),
                     text: None,
                     id: None,
-                    state: ElementState { visible: true, focused: None, enabled: Some(true) },
-                    bounds: Bounds { x: 100.0, y: 400.0, width: 80.0, height: 30.0 },
+                    state: ElementState {
+                        visible: true,
+                        focused: None,
+                        enabled: Some(true),
+                    },
+                    bounds: Bounds {
+                        x: 100.0,
+                        y: 400.0,
+                        width: 80.0,
+                        height: 30.0,
+                    },
                     index: 2,
                 },
             ],
@@ -257,10 +288,10 @@ impl PerceptionProvider for MockPerceptionProvider {
         selector: &Selector,
         condition: &WaitCondition,
     ) -> Result<WaitResult, PerceptionError> {
-        self.call_log.lock().await.push(format!(
-            "wait:timeout={}",
-            condition.timeout_ms
-        ));
+        self.call_log
+            .lock()
+            .await
+            .push(format!("wait:timeout={}", condition.timeout_ms));
         let result = self.find(selector).await?;
         Ok(WaitResult {
             matched: true,
@@ -273,6 +304,7 @@ impl PerceptionProvider for MockPerceptionProvider {
         &self,
         _target: Option<&Selector>,
         _region: Option<&Bounds>,
+        _display_id: Option<u32>,
     ) -> Result<ScreenshotData, PerceptionError> {
         self.call_log.lock().await.push("screenshot".to_string());
         Ok(ScreenshotData {
@@ -293,7 +325,10 @@ impl PerceptionProvider for MockPerceptionProvider {
         _limit: Option<u32>,
     ) -> Result<FindAppsResult, PerceptionError> {
         self.call_log.lock().await.push("find_apps".to_string());
-        Ok(FindAppsResult { apps: vec![], total: 0 })
+        Ok(FindAppsResult {
+            apps: vec![],
+            total: 0,
+        })
     }
 }
 
@@ -333,12 +368,18 @@ impl ActionProvider for MockActionProvider {
     }
 
     async fn press(&self, action: &PressAction) -> Result<ActionResult, ActionError> {
-        self.call_log.lock().await.push(format!("press:key={}", action.key));
+        self.call_log
+            .lock()
+            .await
+            .push(format!("press:key={}", action.key));
         Ok(ActionResult::success(None, "mock"))
     }
 
     async fn hotkey(&self, action: &HotkeyAction) -> Result<ActionResult, ActionError> {
-        self.call_log.lock().await.push(format!("hotkey:keys={:?}", action.keys));
+        self.call_log
+            .lock()
+            .await
+            .push(format!("hotkey:keys={:?}", action.keys));
         Ok(ActionResult::success(None, "mock"))
     }
 
@@ -366,18 +407,18 @@ impl ActionProvider for MockActionProvider {
     }
 
     async fn window_op(&self, action: &WindowAction) -> Result<ActionResult, ActionError> {
-        self.call_log.lock().await.push(format!(
-            "window_op:{:?}",
-            action.operation
-        ));
+        self.call_log
+            .lock()
+            .await
+            .push(format!("window_op:{:?}", action.operation));
         Ok(ActionResult::success(None, "mock"))
     }
 
     async fn launch(&self, action: &LaunchAction) -> Result<ActionResult, ActionError> {
-        self.call_log.lock().await.push(format!(
-            "launch:app={:?}",
-            action.app.name
-        ));
+        self.call_log
+            .lock()
+            .await
+            .push(format!("launch:app={:?}", action.app.name));
         Ok(ActionResult::success(None, "mock"))
     }
 }
@@ -395,7 +436,11 @@ fn make_request(method: &str, id: i64, params: Option<serde_json::Value>) -> Jso
     }
 }
 
-async fn make_server() -> (SootieServer, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>) {
+async fn make_server() -> (
+    SootieServer,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<String>>>,
+) {
     let perception_log = Arc::new(Mutex::new(Vec::new()));
     let action_log = Arc::new(Mutex::new(Vec::new()));
 
@@ -475,8 +520,10 @@ async fn e2e_context_returns_app_tree() {
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     assert_eq!(result["isError"], serde_json::Value::Null);
+    assert_eq!(result["structuredContent"]["ok"], true);
 
-    let content: Context = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let content: Context =
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
     assert_eq!(content.apps.len(), 2);
     assert_eq!(content.apps[0].app.name, "Google Chrome");
     assert_eq!(content.apps[0].windows.len(), 2);
@@ -574,6 +621,34 @@ async fn e2e_find_not_found() {
 }
 
 #[tokio::test]
+async fn e2e_find_rejects_invalid_app_selector_object() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_find",
+                "arguments": {
+                    "app": { "is_frontmost": "yes" },
+                    "role": "button",
+                    "name": "Compose"
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
 async fn e2e_click_with_target() {
     let (server, _p_log, a_log) = make_server().await;
 
@@ -607,6 +682,42 @@ async fn e2e_click_with_target() {
 }
 
 #[tokio::test]
+async fn e2e_click_with_canonical_nested_target() {
+    let (server, _, a_log) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_click",
+                "arguments": {
+                    "target": {
+                        "app": "Chrome",
+                        "window": "Gmail",
+                        "role": "button",
+                        "name": "Compose"
+                    },
+                    "button": "left",
+                    "count": 1
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["structuredContent"]["ok"], true);
+    assert_eq!(
+        result["structuredContent"]["warnings"],
+        serde_json::json!([])
+    );
+
+    let a_logs = a_log.lock().await;
+    assert!(a_logs.iter().any(|l| l.starts_with("click:")));
+}
+
+#[tokio::test]
 async fn e2e_click_with_coordinate() {
     let (server, _, a_log) = make_server().await;
 
@@ -625,8 +736,79 @@ async fn e2e_click_with_coordinate() {
         .await;
 
     assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(
+        result["structuredContent"]["warnings"][0]["code"],
+        "legacy_argument_shape"
+    );
     let a_logs = a_log.lock().await;
-    assert!(a_logs.iter().any(|l| l.contains("Right")), "No Right log in: {:?}", *a_logs);
+    assert!(
+        a_logs.iter().any(|l| l.contains("Right")),
+        "No Right log in: {:?}",
+        *a_logs
+    );
+}
+
+#[tokio::test]
+async fn e2e_click_rejects_mixed_target_forms() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_click",
+                "arguments": {
+                    "target": {
+                        "app": "Chrome",
+                        "role": "button",
+                        "name": "Compose"
+                    },
+                    "coordinate": { "x": 500.0, "y": 300.0 }
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
+async fn e2e_click_rejects_invalid_button() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_click",
+                "arguments": {
+                    "target": {
+                        "app": "Chrome",
+                        "role": "button",
+                        "name": "Compose"
+                    },
+                    "button": "sideways"
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
 }
 
 #[tokio::test]
@@ -652,6 +834,10 @@ async fn e2e_type_into_field() {
 
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
+    assert_eq!(
+        result["structuredContent"]["warnings"][0]["code"],
+        "legacy_argument_shape"
+    );
     let action_result: ActionResult =
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert!(action_result.success);
@@ -703,6 +889,30 @@ async fn e2e_hotkey() {
 }
 
 #[tokio::test]
+async fn e2e_hotkey_rejects_non_string_keys() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_hotkey",
+                "arguments": { "keys": ["Cmd", 1, "S"] }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
 async fn e2e_scroll() {
     let (server, _, a_log) = make_server().await;
 
@@ -724,6 +934,66 @@ async fn e2e_scroll() {
     let a_logs = a_log.lock().await;
     assert!(a_logs.iter().any(|l| l.contains("Down")));
     assert!(a_logs.iter().any(|l| l.contains("5")));
+}
+
+#[tokio::test]
+async fn e2e_scroll_rejects_invalid_direction() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_scroll",
+                "arguments": {
+                    "direction": "diagonal",
+                    "target": {
+                        "app": "Chrome",
+                        "role": "list",
+                        "name": "Inbox"
+                    }
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
+async fn e2e_scroll_rejects_malformed_target() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_scroll",
+                "arguments": {
+                    "direction": "down",
+                    "target": {
+                        "coordinate": { "x": 10 }
+                    }
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
 }
 
 #[tokio::test]
@@ -792,6 +1062,32 @@ async fn e2e_focus() {
 }
 
 #[tokio::test]
+async fn e2e_focus_rejects_invalid_app_selector_object() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_focus",
+                "arguments": {
+                    "app": { "is_frontmost": "yes" }
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
 async fn e2e_window_operations() {
     let (server, _, a_log) = make_server().await;
 
@@ -818,7 +1114,11 @@ async fn e2e_window_operations() {
 
         assert!(resp.error.is_none(), "Failed for {}", op);
         let a_logs = a_log.lock().await;
-        assert!(a_logs.iter().any(|l| l.contains(expected)), "No log for {}", op);
+        assert!(
+            a_logs.iter().any(|l| l.contains(expected)),
+            "No log for {}",
+            op
+        );
     }
 }
 
@@ -863,8 +1163,44 @@ async fn e2e_window_move_and_resize() {
     assert!(resp.error.is_none());
 
     let a_logs = a_log.lock().await;
-    assert!(a_logs.iter().any(|l| l.contains("Move")), "No Move log found in: {:?}", *a_logs);
-    assert!(a_logs.iter().any(|l| l.contains("Resize")), "No Resize log found in: {:?}", *a_logs);
+    assert!(
+        a_logs.iter().any(|l| l.contains("Move")),
+        "No Move log found in: {:?}",
+        *a_logs
+    );
+    assert!(
+        a_logs.iter().any(|l| l.contains("Resize")),
+        "No Resize log found in: {:?}",
+        *a_logs
+    );
+}
+
+#[tokio::test]
+async fn e2e_window_move_requires_complete_coordinates() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_window",
+                "arguments": {
+                    "app": "Chrome",
+                    "operation": "move",
+                    "x": 100
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
 }
 
 #[tokio::test]
@@ -900,7 +1236,10 @@ async fn e2e_recipe_lifecycle() {
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     assert_eq!(result["isError"], serde_json::Value::Null);
-    assert!(result["content"][0]["text"].as_str().unwrap().contains("saved"));
+    assert!(result["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("saved"));
 
     // 2. List recipes
     let resp = server
@@ -915,7 +1254,10 @@ async fn e2e_recipe_lifecycle() {
         .await;
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    assert!(result["content"][0]["text"].as_str().unwrap().contains("e2e-test-recipe"));
+    assert!(result["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("e2e-test-recipe"));
 
     // 3. Run recipe
     let resp = server
@@ -957,7 +1299,10 @@ async fn e2e_recipe_lifecycle() {
         .await;
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    assert!(result["content"][0]["text"].as_str().unwrap().contains("deleted"));
+    assert!(result["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("deleted"));
 
     // 5. Verify deletion
     let resp = server
@@ -1023,7 +1368,10 @@ async fn e2e_recipe_run_missing_required_param() {
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     assert_eq!(result["isError"], true);
-    assert!(result["content"][0]["text"].as_str().unwrap().contains("required"));
+    assert!(result["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("required"));
 }
 
 #[tokio::test]
@@ -1104,6 +1452,32 @@ async fn e2e_screenshot() {
 }
 
 #[tokio::test]
+async fn e2e_screenshot_rejects_partial_region() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_screenshot",
+                "arguments": {
+                    "region": { "x": 0, "y": 0, "width": 100 }
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
 async fn e2e_inspect_element() {
     let (server, p_log, _) = make_server().await;
 
@@ -1163,6 +1537,61 @@ async fn e2e_wait_for_element() {
 
     let logs = p_log.lock().await;
     assert!(logs.iter().any(|l| l.contains("wait:timeout=3000")));
+}
+
+#[tokio::test]
+async fn e2e_wait_rejects_invalid_timeout_type() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_wait",
+                "arguments": {
+                    "role": "button",
+                    "name": "Compose",
+                    "timeout": "3000"
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
+async fn e2e_launch_rejects_invalid_args_type() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_launch",
+                "arguments": {
+                    "app": "Chrome",
+                    "args": "--incognito"
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
 }
 
 #[tokio::test]

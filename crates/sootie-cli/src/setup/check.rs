@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::config::{config_file_path, resolve_vision_model_path};
-use super::style::{GREEN, RED, YELLOW, CYAN, BOLD, RESET};
+use super::style::{BOLD, CYAN, GREEN, RED, RESET, YELLOW};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckStatus {
@@ -53,7 +53,7 @@ impl Default for CheckContext {
 
 pub fn check_accessibility() -> CheckResult {
     let platform = std::env::consts::OS;
-    
+
     match platform {
         "macos" => check_macos_accessibility(),
         "linux" => check_linux_at_spi(),
@@ -70,9 +70,9 @@ pub fn check_accessibility() -> CheckResult {
 #[cfg(target_os = "macos")]
 fn check_macos_accessibility() -> CheckResult {
     use sootie_core::platform::macos::ax_fns::is_process_trusted;
-    
+
     let trusted = is_process_trusted();
-    
+
     if trusted {
         CheckResult {
             name: "Accessibility permissions",
@@ -84,7 +84,8 @@ fn check_macos_accessibility() -> CheckResult {
         CheckResult {
             name: "Accessibility permissions",
             status: CheckStatus::Fail,
-            message: "Not granted. Go to: System Settings > Privacy & Security > Accessibility".to_string(),
+            message: "Not granted. Go to: System Settings > Privacy & Security > Accessibility"
+                .to_string(),
             fixable: false,
         }
     }
@@ -103,7 +104,7 @@ fn check_macos_accessibility() -> CheckResult {
 fn check_linux_at_spi() -> CheckResult {
     let at_spi_bus = std::env::var("AT_SPI_BUS_ADDRESS").ok();
     let at_spi_lib = PathBuf::from("/usr/lib/at-spi2");
-    
+
     if at_spi_bus.is_some() || at_spi_lib.exists() {
         CheckResult {
             name: "Accessibility permissions",
@@ -131,10 +132,18 @@ fn check_windows_uia() -> CheckResult {
 }
 
 pub async fn check_cdp(ctx: &CheckContext) -> CheckResult {
-    let url = format!("http://{}:{}{}", ctx.cdp_host, ctx.cdp_port, "/json/version");
-    
+    let url = format!(
+        "http://{}:{}{}",
+        ctx.cdp_host, ctx.cdp_port, "/json/version"
+    );
+
     let client = reqwest::Client::new();
-    match client.get(&url).timeout(std::time::Duration::from_secs(2)).send().await {
+    match client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+    {
         Ok(resp) if resp.status().is_success() => CheckResult {
             name: "Chrome CDP",
             status: CheckStatus::Pass,
@@ -150,8 +159,10 @@ pub async fn check_cdp(ctx: &CheckContext) -> CheckResult {
         Err(_) => CheckResult {
             name: "Chrome CDP",
             status: CheckStatus::Fail,
-            message: format!("Not detected on port {}. Start Chrome with --remote-debugging-port={}", 
-                ctx.cdp_port, ctx.cdp_port),
+            message: format!(
+                "Not detected on port {}. Start Chrome with --remote-debugging-port={}",
+                ctx.cdp_port, ctx.cdp_port
+            ),
             fixable: false,
         },
     }
@@ -159,19 +170,20 @@ pub async fn check_cdp(ctx: &CheckContext) -> CheckResult {
 
 pub fn check_vision_model() -> CheckResult {
     let model_path = resolve_vision_model_path();
-    
+
     match model_path {
         Some(path) => {
-            let has_safetensors = path.join("model.safetensors").exists() 
+            let has_safetensors = path.join("model.safetensors").exists()
                 || path.join("model-00001-of-00001.safetensors").exists();
             let has_config = path.join("config.json").exists();
-            let has_tokenizer = path.join("tokenizer.json").exists() 
-                || path.join("tokenizer_config.json").exists();
-            
+            let has_tokenizer =
+                path.join("tokenizer.json").exists() || path.join("tokenizer_config.json").exists();
+
             if has_safetensors && has_config && has_tokenizer {
-                let (python_ok, python_msg) = super::python_env::check_python_deps(std::env::consts::OS)
-                    .unwrap_or((false, "Python check failed".to_string()));
-                
+                let (python_ok, python_msg) =
+                    super::python_env::check_python_deps(std::env::consts::OS)
+                        .unwrap_or((false, "Python check failed".to_string()));
+
                 if python_ok {
                     CheckResult {
                         name: "Vision model + sidecar",
@@ -203,7 +215,7 @@ pub fn check_vision_model() -> CheckResult {
                     fixable: true,
                 }
             }
-        },
+        }
         None => CheckResult {
             name: "Vision model + sidecar",
             status: CheckStatus::Warn,
@@ -215,7 +227,7 @@ pub fn check_vision_model() -> CheckResult {
 
 pub fn check_config_file() -> CheckResult {
     let path = config_file_path();
-    
+
     if path.exists() {
         let content = std::fs::read_to_string(&path);
         match content {
@@ -253,10 +265,10 @@ pub fn check_environment_vars() -> CheckResult {
         ("SOOTIE_FALLBACK_PRIORITY", "cdp,at_tree,vision"),
         ("SOOTIE_SENSITIVE_FIELDS", "(none)"),
     ];
-    
+
     let mut set_count = 0;
     let mut messages: Vec<String> = Vec::new();
-    
+
     for (name, default) in vars {
         let value = std::env::var(name).unwrap_or_else(|_| default.to_string());
         if std::env::var(name).is_ok() {
@@ -264,7 +276,7 @@ pub fn check_environment_vars() -> CheckResult {
         }
         messages.push(format!("{}={}", name, value));
     }
-    
+
     if set_count == 0 {
         CheckResult {
             name: "Environment variables",
@@ -284,44 +296,52 @@ pub fn check_environment_vars() -> CheckResult {
 
 pub async fn run_all_checks(ctx: &CheckContext) -> Vec<CheckResult> {
     let mut results = Vec::new();
-    
+
     println!("{}{}Sootie Setup{}", BOLD, CYAN, RESET);
     println!("{}{}============{}", BOLD, CYAN, RESET);
     println!();
-    
+
     // Check 1: Accessibility
     let r1 = check_accessibility();
     print_check_result(1, &r1);
     results.push(r1);
-    
+
     // Check 2: CDP
     let r2 = check_cdp(ctx).await;
     print_check_result(2, &r2);
     results.push(r2);
-    
+
     // Check 3: Vision model
-    println!("{}{}[3/5]{} {:<30} Checking Python dependencies...", BOLD, CYAN, RESET, "Vision model + sidecar");
+    println!(
+        "{}{}[3/5]{} {:<30} Checking Python dependencies...",
+        BOLD, CYAN, RESET, "Vision model + sidecar"
+    );
     let r3 = check_vision_model();
-    println!("{}{}[3/5]{} {:<30} {} {}", BOLD, CYAN, RESET, r3.name, r3.status, r3.message);
+    println!(
+        "{}{}[3/5]{} {:<30} {} {}",
+        BOLD, CYAN, RESET, r3.name, r3.status, r3.message
+    );
     results.push(r3);
-    
+
     // Check 4: Config file
     let r4 = check_config_file();
     print_check_result(4, &r4);
     results.push(r4);
-    
+
     // Check 5: Environment vars
     let r5 = check_environment_vars();
     print_check_result(5, &r5);
     results.push(r5);
-    
+
     println!();
     results
 }
 
 fn print_check_result(num: usize, result: &CheckResult) {
-    println!("{}{}[{}/5]{} {:<30} {} {}",
-        BOLD, CYAN, num, RESET, result.name, result.status, result.message);
+    println!(
+        "{}{}[{}/5]{} {:<30} {} {}",
+        BOLD, CYAN, num, RESET, result.name, result.status, result.message
+    );
 }
 
 pub fn print_report(results: &[CheckResult]) {
@@ -330,36 +350,61 @@ pub fn print_report(results: &[CheckResult]) {
 }
 
 pub fn count_issues(results: &[CheckResult]) -> (usize, usize) {
-    let fails = results.iter().filter(|r| r.status == CheckStatus::Fail).count();
-    let warns = results.iter().filter(|r| r.status == CheckStatus::Warn).count();
+    let fails = results
+        .iter()
+        .filter(|r| r.status == CheckStatus::Fail)
+        .count();
+    let warns = results
+        .iter()
+        .filter(|r| r.status == CheckStatus::Warn)
+        .count();
     (fails, warns)
 }
 
 pub fn has_fixable_issues(results: &[CheckResult]) -> bool {
-    results.iter().any(|r| r.fixable && r.status != CheckStatus::Pass)
+    results
+        .iter()
+        .any(|r| r.fixable && r.status != CheckStatus::Pass)
 }
 
 pub fn layer_status_report(results: &[CheckResult]) -> String {
     let cdp = results.iter().find(|r| r.name == "Chrome CDP");
-    let acc = results.iter().find(|r| r.name == "Accessibility permissions");
+    let acc = results
+        .iter()
+        .find(|r| r.name == "Accessibility permissions");
     let vision = results.iter().find(|r| r.name == "Vision model + sidecar");
-    
+
     let cdp_status = match cdp.map(|r| r.status) {
         Some(CheckStatus::Pass) => format!("{}✓{} Layer 1 (CDP): Available", GREEN, RESET),
-        _ => format!("{}✗{} Layer 1 (CDP): Start Chrome with --remote-debugging-port", RED, RESET),
+        _ => format!(
+            "{}✗{} Layer 1 (CDP): Start Chrome with --remote-debugging-port",
+            RED, RESET
+        ),
     };
-    
+
     let acc_status = match acc.map(|r| r.status) {
-        Some(CheckStatus::Pass) => format!("{}✓{} Layer 2 (AT Tree): Available (Accessibility API granted)", GREEN, RESET),
-        _ => format!("{}✗{} Layer 2 (AT Tree): Grant Accessibility permission", RED, RESET),
+        Some(CheckStatus::Pass) => format!(
+            "{}✓{} Layer 2 (AT Tree): Available (Accessibility API granted)",
+            GREEN, RESET
+        ),
+        _ => format!(
+            "{}✗{} Layer 2 (AT Tree): Grant Accessibility permission",
+            RED, RESET
+        ),
     };
-    
+
     let vision_status = match vision.map(|r| r.status) {
-        Some(CheckStatus::Pass) => format!("{}✓{} Layer 3 (Vision): ShowUI-2B via Python sidecar", GREEN, RESET),
-        Some(CheckStatus::Warn) => format!("{}⚠{} Layer 3 (Vision): Optional — run `sootie setup` to configure", YELLOW, RESET),
+        Some(CheckStatus::Pass) => format!(
+            "{}✓{} Layer 3 (Vision): ShowUI-2B via Python sidecar",
+            GREEN, RESET
+        ),
+        Some(CheckStatus::Warn) => format!(
+            "{}⚠{} Layer 3 (Vision): Optional — run `sootie setup` to configure",
+            YELLOW, RESET
+        ),
         _ => format!("{}✗{} Layer 3 (Vision): Configure model", RED, RESET),
     };
-    
+
     format!("{}\n{}\n{}", cdp_status, acc_status, vision_status)
 }
 
@@ -383,16 +428,21 @@ mod tests {
     #[test]
     fn test_check_vision_model_missing() {
         let result = check_vision_model();
-        assert!(result.status == CheckStatus::Warn 
-            || result.status == CheckStatus::Fail 
-            || result.status == CheckStatus::Pass);
+        assert!(
+            result.status == CheckStatus::Warn
+                || result.status == CheckStatus::Fail
+                || result.status == CheckStatus::Pass
+        );
     }
 
     #[test]
     fn test_count_issues_empty() {
-        let results: Vec<CheckResult> = vec![
-            CheckResult { name: "test", status: CheckStatus::Pass, message: "".into(), fixable: false },
-        ];
+        let results: Vec<CheckResult> = vec![CheckResult {
+            name: "test",
+            status: CheckStatus::Pass,
+            message: "".into(),
+            fixable: false,
+        }];
         let (fails, warns) = count_issues(&results);
         assert_eq!(fails, 0);
         assert_eq!(warns, 0);
@@ -401,8 +451,18 @@ mod tests {
     #[test]
     fn test_count_issues_with_fail() {
         let results: Vec<CheckResult> = vec![
-            CheckResult { name: "test", status: CheckStatus::Fail, message: "".into(), fixable: false },
-            CheckResult { name: "test2", status: CheckStatus::Warn, message: "".into(), fixable: false },
+            CheckResult {
+                name: "test",
+                status: CheckStatus::Fail,
+                message: "".into(),
+                fixable: false,
+            },
+            CheckResult {
+                name: "test2",
+                status: CheckStatus::Warn,
+                message: "".into(),
+                fixable: false,
+            },
         ];
         let (fails, warns) = count_issues(&results);
         assert_eq!(fails, 1);
@@ -411,17 +471,23 @@ mod tests {
 
     #[test]
     fn test_has_fixable_issues_true() {
-        let results: Vec<CheckResult> = vec![
-            CheckResult { name: "test", status: CheckStatus::Fail, message: "".into(), fixable: true },
-        ];
+        let results: Vec<CheckResult> = vec![CheckResult {
+            name: "test",
+            status: CheckStatus::Fail,
+            message: "".into(),
+            fixable: true,
+        }];
         assert!(has_fixable_issues(&results));
     }
 
     #[test]
     fn test_has_fixable_issues_false() {
-        let results: Vec<CheckResult> = vec![
-            CheckResult { name: "test", status: CheckStatus::Pass, message: "".into(), fixable: true },
-        ];
+        let results: Vec<CheckResult> = vec![CheckResult {
+            name: "test",
+            status: CheckStatus::Pass,
+            message: "".into(),
+            fixable: true,
+        }];
         assert!(!has_fixable_issues(&results));
     }
 }

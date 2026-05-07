@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::selector::{App, Bounds, Element, ResolvedTarget, Selector, Window};
 pub use crate::selector::DeepInspection;
+use crate::selector::{App, Bounds, Element, ResolvedTarget, Selector, Window};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Context {
@@ -110,15 +110,11 @@ impl PerceptionProvider for StubPerceptionProvider {
     }
 
     async fn find(&self, _selector: &Selector) -> Result<ResolvedTarget, PerceptionError> {
-        Err(PerceptionError::NotImplemented(
-            "stub provider".to_string(),
-        ))
+        Err(PerceptionError::NotImplemented("stub provider".to_string()))
     }
 
     async fn inspect(&self, _selector: &Selector) -> Result<DeepInspection, PerceptionError> {
-        Err(PerceptionError::NotImplemented(
-            "stub provider".to_string(),
-        ))
+        Err(PerceptionError::NotImplemented("stub provider".to_string()))
     }
 
     async fn wait(
@@ -126,9 +122,7 @@ impl PerceptionProvider for StubPerceptionProvider {
         _selector: &Selector,
         _condition: &WaitCondition,
     ) -> Result<WaitResult, PerceptionError> {
-        Err(PerceptionError::NotImplemented(
-            "stub provider".to_string(),
-        ))
+        Err(PerceptionError::NotImplemented("stub provider".to_string()))
     }
 
     async fn screenshot(
@@ -137,9 +131,7 @@ impl PerceptionProvider for StubPerceptionProvider {
         _region: Option<&Bounds>,
         _display_id: Option<u32>,
     ) -> Result<ScreenshotData, PerceptionError> {
-        Err(PerceptionError::NotImplemented(
-            "stub provider".to_string(),
-        ))
+        Err(PerceptionError::NotImplemented("stub provider".to_string()))
     }
 
     async fn find_apps(
@@ -147,9 +139,7 @@ impl PerceptionProvider for StubPerceptionProvider {
         _pattern: &str,
         _limit: Option<u32>,
     ) -> Result<FindAppsResult, PerceptionError> {
-        Err(PerceptionError::NotImplemented(
-            "stub provider".to_string(),
-        ))
+        Err(PerceptionError::NotImplemented("stub provider".to_string()))
     }
 }
 

@@ -10,19 +10,77 @@ use sootie_core::action::{
     ActionProvider, ActionTarget, ClickAction, DragAction, FocusAction, HotkeyAction, HoverAction,
     LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction, WindowOperation,
 };
-use sootie_core::logging::{create_duration_ms, LogConfig, SootieLogger, ToolCallLog, sanitize_tool_call_args};
+use sootie_core::logging::{
+    create_duration_ms, sanitize_tool_call_args, LogConfig, SootieLogger, ToolCallLog,
+};
 use sootie_core::perception::{PerceptionProvider, WaitCondition};
 use sootie_core::recipe::{Recipe, RecipeEngine, StepTarget};
 use sootie_core::selector::AppSelector;
 
 use crate::tools::{
-    all_tools, parse_action_target, parse_mouse_button, parse_scroll_direction,
-    parse_selector_from_args, parse_step_target, validate_selector,
+    all_tools, parse_action_target, parse_mouse_button, parse_mouse_button_strict,
+    parse_optional_action_target, parse_scroll_direction, parse_scroll_direction_strict,
+    parse_selector_from_args_strict, parse_step_target, selector_field_keys_present,
+    validate_action_selector, validate_query_selector,
 };
 use crate::types::{
-    CallToolResult, InitializeResult, JsonRpcRequest, JsonRpcResponse, ListToolsResult,
-    ServerCapabilities, ServerInfo, ToolContent, ToolsCapability,
+    CallToolRequest, CallToolResult, InitializeResult, JsonRpcRequest, JsonRpcResponse,
+    ListToolsResult, ServerCapabilities, ServerInfo, ToolContent, ToolsCapability,
 };
+
+#[derive(Debug)]
+struct ToolInvocationError {
+    code: &'static str,
+    message: String,
+    details: Option<serde_json::Value>,
+}
+
+impl ToolInvocationError {
+    fn invalid_arguments(message: impl Into<String>) -> Self {
+        Self {
+            code: "invalid_arguments",
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    fn execution(message: impl Into<String>) -> Self {
+        Self {
+            code: "execution_failed",
+            message: message.into(),
+            details: None,
+        }
+    }
+}
+
+fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, ToolInvocationError> {
+    serde_json::to_value(value).map_err(|e| ToolInvocationError::execution(e.to_string()))
+}
+
+fn present_tool_data(value: &serde_json::Value) -> Result<String, ToolInvocationError> {
+    match value {
+        serde_json::Value::String(text) => Ok(text.clone()),
+        _ => serde_json::to_string_pretty(value)
+            .map_err(|e| ToolInvocationError::execution(e.to_string())),
+    }
+}
+
+fn tool_compatibility_warnings(name: &str, args: &serde_json::Value) -> Vec<serde_json::Value> {
+    let uses_legacy_top_level_target = args.get("target").is_none()
+        && (args.get("coordinate").is_some() || selector_field_keys_present(args));
+
+    match name {
+        "sootie_click" | "sootie_type" | "sootie_hover" | "sootie_scroll"
+            if uses_legacy_top_level_target =>
+        {
+            vec![serde_json::json!({
+                "code": "legacy_argument_shape",
+                "message": "Top-level selector and coordinate fields are deprecated; use the canonical target object."
+            })]
+        }
+        _ => vec![],
+    }
+}
 
 pub struct SootieServer {
     perception: Arc<Box<dyn PerceptionProvider>>,
@@ -138,15 +196,10 @@ impl SootieServer {
     ) -> Result<serde_json::Value, (i64, String)> {
         let start = Instant::now();
 
-        let name = params
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or((-32602, "Missing tool name".to_string()))?;
-
-        let args = params
-            .get("arguments")
-            .cloned()
-            .unwrap_or(serde_json::json!({}));
+        let request: CallToolRequest = serde_json::from_value(params.clone())
+            .map_err(|e| (-32602, format!("Invalid tools/call params: {}", e)))?;
+        let name = request.name.as_str();
+        let args = request.arguments.unwrap_or(serde_json::json!({}));
 
         let request_id = params.get("id").cloned();
         info!(tool = %name, args = %args, "Tool call started");
@@ -183,6 +236,8 @@ impl SootieServer {
         match result {
             Ok(value) => {
                 let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
+                let content_text = present_tool_data(&value).map_err(|e| (-32603, e.message))?;
+                let warnings = tool_compatibility_warnings(name, &args);
 
                 self.logger.log_tool_call(&ToolCallLog {
                     tool_name: name.to_string(),
@@ -195,12 +250,17 @@ impl SootieServer {
                 });
 
                 let call_result = CallToolResult {
-                    content: vec![ToolContent::text(&value)],
+                    content: vec![ToolContent::text(&content_text)],
                     is_error: None,
+                    structured_content: Some(serde_json::json!({
+                        "ok": true,
+                        "data": value,
+                        "warnings": warnings
+                    })),
                 };
                 serde_json::to_value(call_result).map_err(|e| (-32603, e.to_string()))
             }
-            Err(msg) => {
+            Err(err) => {
                 let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
 
                 self.logger.log_tool_call(&ToolCallLog {
@@ -208,55 +268,80 @@ impl SootieServer {
                     request_id,
                     arguments: sanitized_args,
                     success: false,
-                    error_message: Some(msg.clone()),
+                    error_message: Some(err.message.clone()),
                     duration_ms,
                     backend_used: None,
                 });
 
                 let call_result = CallToolResult {
-                    content: vec![ToolContent::text(&msg)],
+                    content: vec![ToolContent::text(&err.message)],
                     is_error: Some(true),
+                    structured_content: Some(serde_json::json!({
+                        "ok": false,
+                        "error": {
+                            "code": err.code,
+                            "message": err.message,
+                            "details": err.details,
+                        },
+                        "warnings": []
+                    })),
                 };
                 serde_json::to_value(call_result).map_err(|e| (-32603, e.to_string()))
             }
         }
     }
 
-    async fn tool_context(&self) -> Result<String, String> {
-        let ctx = self
-            .perception
-            .get_context()
-            .await
-            .map_err(|e| format!("Failed to get context: {}", e))?;
-        serde_json::to_string_pretty(&ctx).map_err(|e| e.to_string())
+    async fn tool_context(&self) -> Result<serde_json::Value, ToolInvocationError> {
+        let ctx =
+            self.perception.get_context().await.map_err(|e| {
+                ToolInvocationError::execution(format!("Failed to get context: {}", e))
+            })?;
+        to_json_value(ctx)
     }
 
-    async fn tool_find(&self, args: &serde_json::Value) -> Result<String, String> {
-        let selector = parse_selector_from_args(args);
-        validate_selector(&selector)?;
+    async fn tool_find(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let selector = parse_selector_from_args_strict(args)
+            .map_err(ToolInvocationError::invalid_arguments)?;
+        validate_query_selector(&selector).map_err(ToolInvocationError::invalid_arguments)?;
         let result = self
             .perception
             .find(&selector)
             .await
-            .map_err(|e| format!("Find failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Find failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_inspect(&self, args: &serde_json::Value) -> Result<String, String> {
-        let selector = parse_selector_from_args(args);
-        validate_selector(&selector)?;
+    async fn tool_inspect(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let selector = parse_selector_from_args_strict(args)
+            .map_err(ToolInvocationError::invalid_arguments)?;
+        validate_query_selector(&selector).map_err(ToolInvocationError::invalid_arguments)?;
         let result = self
             .perception
             .inspect(&selector)
             .await
-            .map_err(|e| format!("Inspect failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Inspect failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_wait(&self, args: &serde_json::Value) -> Result<String, String> {
-        let selector = parse_selector_from_args(args);
-        validate_selector(&selector)?;
-        let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(5000);
+    async fn tool_wait(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let selector = parse_selector_from_args_strict(args)
+            .map_err(ToolInvocationError::invalid_arguments)?;
+        validate_query_selector(&selector).map_err(ToolInvocationError::invalid_arguments)?;
+        let timeout = match args.get("timeout") {
+            Some(value) => value.as_u64().ok_or_else(|| {
+                ToolInvocationError::invalid_arguments("Timeout must be a non-negative integer")
+            })?,
+            None => 5000,
+        };
 
         let state = args
             .get("state")
@@ -274,45 +359,75 @@ impl SootieServer {
             .perception
             .wait(&selector, &condition)
             .await
-            .map_err(|e| format!("Wait failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Wait failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_screenshot(&self, args: &serde_json::Value) -> Result<String, String> {
+    async fn tool_screenshot(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
         let selector = if args.get("app").is_some() || args.get("window").is_some() {
-            Some(parse_selector_from_args(args))
+            Some(
+                parse_selector_from_args_strict(args)
+                    .map_err(ToolInvocationError::invalid_arguments)?,
+            )
         } else {
             None
         };
 
-        let region = args.get("region").and_then(|r| {
-            let x = r.get("x")?.as_f64()?;
-            let y = r.get("y")?.as_f64()?;
-            let width = r.get("width")?.as_f64()?;
-            let height = r.get("height")?.as_f64()?;
-            Some(sootie_core::selector::Bounds {
-                x,
-                y,
-                width,
-                height,
-            })
-        });
+        let region = args
+            .get("region")
+            .map(|r| {
+                let x = r.get("x").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments("Screenshot region requires numeric x")
+                })?;
+                let y = r.get("y").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments("Screenshot region requires numeric y")
+                })?;
+                let width = r.get("width").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments(
+                        "Screenshot region requires numeric width",
+                    )
+                })?;
+                let height = r.get("height").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments(
+                        "Screenshot region requires numeric height",
+                    )
+                })?;
 
-        let display_id = args.get("display_id").and_then(|d| d.as_u64()).map(|d| d as u32);
+                Ok(sootie_core::selector::Bounds {
+                    x,
+                    y,
+                    width,
+                    height,
+                })
+            })
+            .transpose()?;
+
+        let display_id = args
+            .get("display_id")
+            .and_then(|d| d.as_u64())
+            .map(|d| d as u32);
 
         let result = self
             .perception
             .screenshot(selector.as_ref(), region.as_ref(), display_id)
             .await
-            .map_err(|e| format!("Screenshot failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Screenshot failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_find_apps(&self, args: &serde_json::Value) -> Result<String, String> {
+    async fn tool_find_apps(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
         let pattern = args
             .get("pattern")
             .and_then(|v| v.as_str())
-            .ok_or("Missing required field: pattern")?;
+            .ok_or_else(|| {
+                ToolInvocationError::invalid_arguments("Missing required field: pattern")
+            })?;
 
         let limit = args.get("limit").and_then(|v| v.as_u64()).map(|v| v as u32);
 
@@ -320,21 +435,26 @@ impl SootieServer {
             .perception
             .find_apps(pattern, limit)
             .await
-            .map_err(|e| format!("Find apps failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Find apps failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_click(&self, args: &serde_json::Value) -> Result<String, String> {
-        let target = parse_action_target(args).ok_or("Must provide target or coordinate")?;
-        
+    async fn tool_click(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let target = parse_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
+
         if let ActionTarget::Selector(selector) = &target {
-            validate_selector(selector)?;
+            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
         }
 
         let button = args
             .get("button")
             .and_then(|v| v.as_str())
-            .map(parse_mouse_button);
+            .map(parse_mouse_button_strict)
+            .transpose()
+            .map_err(ToolInvocationError::invalid_arguments)?;
 
         let count = args.get("count").and_then(|v| v.as_u64()).map(|v| v as u32);
 
@@ -348,45 +468,51 @@ impl SootieServer {
             .action
             .click(&action)
             .await
-            .map_err(|e| format!("Click failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Click failed: {}", e)))?;
+        to_json_value(result)
     }
 
-async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
-    let text = args
-        .get("text")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required field: text")?
-        .to_string();
+    async fn tool_type(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let text = args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: text"))?
+            .to_string();
 
-    let target = parse_action_target(args)
-        .ok_or("Missing required field: target (or coordinate). Use sootie_find to locate elements first")?;
-    
-    if let ActionTarget::Selector(selector) = &target {
-        validate_selector(selector)?;
+        let target =
+            parse_optional_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
+
+        if let Some(ActionTarget::Selector(selector)) = &target {
+            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
+        }
+
+        let clear_first = args.get("clear_first").and_then(|v| v.as_bool());
+
+        let action = TypeAction {
+            target,
+            text,
+            clear_first,
+        };
+
+        let result = self
+            .action
+            .r#type(&action)
+            .await
+            .map_err(|e| ToolInvocationError::execution(format!("Type failed: {}", e)))?;
+        to_json_value(result)
     }
-    
-    let clear_first = args.get("clear_first").and_then(|v| v.as_bool());
 
-    let action = TypeAction {
-        target: Some(target),
-        text,
-        clear_first,
-    };
-
-    let result = self
-        .action
-        .r#type(&action)
-        .await
-        .map_err(|e| format!("Type failed: {}", e))?;
-    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
-}
-
-    async fn tool_press(&self, args: &serde_json::Value) -> Result<String, String> {
+    async fn tool_press(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
         let key = args
             .get("key")
             .and_then(|v| v.as_str())
-            .ok_or("Missing required field: key")?
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: key"))?
             .to_string();
 
         let action = PressAction { key };
@@ -394,36 +520,57 @@ async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
             .action
             .press(&action)
             .await
-            .map_err(|e| format!("Press failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Press failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_hotkey(&self, args: &serde_json::Value) -> Result<String, String> {
+    async fn tool_hotkey(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
         let keys = args
             .get("keys")
-            .and_then(|v| v.as_array())
-            .ok_or("Missing required field: keys")?
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
+            .cloned()
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: keys"))
+            .and_then(|value| {
+                serde_json::from_value::<Vec<String>>(value).map_err(|e| {
+                    ToolInvocationError::invalid_arguments(format!("Invalid keys: {}", e))
+                })
+            })?;
+
+        if keys.is_empty() {
+            return Err(ToolInvocationError::invalid_arguments(
+                "Hotkey requires at least one key",
+            ));
+        }
 
         let action = HotkeyAction { keys };
         let result = self
             .action
             .hotkey(&action)
             .await
-            .map_err(|e| format!("Hotkey failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Hotkey failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_scroll(&self, args: &serde_json::Value) -> Result<String, String> {
+    async fn tool_scroll(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
         let direction = args
             .get("direction")
             .and_then(|v| v.as_str())
-            .ok_or("Missing required field: direction")?
+            .ok_or_else(|| {
+                ToolInvocationError::invalid_arguments("Missing required field: direction")
+            })?
             .to_string();
 
-        let target = parse_action_target(args);
+        let target =
+            parse_optional_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
+
+        if let Some(ActionTarget::Selector(selector)) = &target {
+            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
+        }
         let amount = args
             .get("amount")
             .and_then(|v| v.as_u64())
@@ -431,7 +578,8 @@ async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
 
         let action = ScrollAction {
             target,
-            direction: parse_scroll_direction(&direction),
+            direction: parse_scroll_direction_strict(&direction)
+                .map_err(ToolInvocationError::invalid_arguments)?,
             amount,
         };
 
@@ -439,15 +587,18 @@ async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
             .action
             .scroll(&action)
             .await
-            .map_err(|e| format!("Scroll failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Scroll failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_hover(&self, args: &serde_json::Value) -> Result<String, String> {
-        let target = parse_action_target(args).ok_or("Must provide target or coordinate")?;
-        
+    async fn tool_hover(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let target = parse_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
+
         if let ActionTarget::Selector(selector) = &target {
-            validate_selector(selector)?;
+            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
         }
 
         let action = HoverAction { target };
@@ -455,34 +606,41 @@ async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
             .action
             .hover(&action)
             .await
-            .map_err(|e| format!("Hover failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Hover failed: {}", e)))?;
+        to_json_value(result)
     }
 
-    async fn tool_drag(&self, args: &serde_json::Value) -> Result<String, String> {
-        let from_val = args.get("from").ok_or("Missing required field: from")?;
-        let to_val = args.get("to").ok_or("Missing required field: to")?;
+    async fn tool_drag(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let from_val = args.get("from").ok_or_else(|| {
+            ToolInvocationError::invalid_arguments("Missing required field: from")
+        })?;
+        let to_val = args
+            .get("to")
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: to"))?;
 
         let from = parse_step_target(from_val)
             .map(|st| match st {
                 StepTarget::Coordinate(c) => sootie_core::action::ActionTarget::Coordinate(c),
                 StepTarget::Selector(s) => sootie_core::action::ActionTarget::Selector(s),
             })
-            .ok_or("Invalid 'from' target")?;
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Invalid 'from' target"))?;
 
         let to = parse_step_target(to_val)
             .map(|st| match st {
                 StepTarget::Coordinate(c) => sootie_core::action::ActionTarget::Coordinate(c),
                 StepTarget::Selector(s) => sootie_core::action::ActionTarget::Selector(s),
             })
-            .ok_or("Invalid 'to' target")?;
-        
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Invalid 'to' target"))?;
+
         if let ActionTarget::Selector(selector) = &from {
-            validate_selector(selector)?;
+            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
         }
-        
+
         if let ActionTarget::Selector(selector) = &to {
-            validate_selector(selector)?;
+            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
         }
 
         let action = DragAction { from, to };
@@ -490,39 +648,53 @@ async fn tool_type(&self, args: &serde_json::Value) -> Result<String, String> {
             .action
             .drag(&action)
             .await
-            .map_err(|e| format!("Drag failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Drag failed: {}", e)))?;
+        to_json_value(result)
     }
 
-async fn tool_focus(&self, args: &serde_json::Value) -> Result<String, String> {
-    if args.get("app").is_none() {
-        return Err("Missing required field: app. Must specify which application to focus".to_string());
-    }
-    
-    let selector = parse_selector_from_args(args);
-    let action = FocusAction { selector };
-    let result = self
-        .action
-        .focus(&action)
-        .await
-        .map_err(|e| format!("Focus failed: {}", e))?;
-    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
-}
+    async fn tool_focus(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        if args.get("app").is_none() {
+            return Err(ToolInvocationError::invalid_arguments(
+                "Missing required field: app. Must specify which application to focus",
+            ));
+        }
 
-    async fn tool_launch(&self, args: &serde_json::Value) -> Result<String, String> {
-        let app = args.get("app").ok_or("Missing required field: app")?;
+        let selector = parse_selector_from_args_strict(args)
+            .map_err(ToolInvocationError::invalid_arguments)?;
+        let action = FocusAction { selector };
+        let result = self
+            .action
+            .focus(&action)
+            .await
+            .map_err(|e| ToolInvocationError::execution(format!("Focus failed: {}", e)))?;
+        to_json_value(result)
+    }
+
+    async fn tool_launch(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let app = args
+            .get("app")
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: app"))?;
 
         let app_selector = if let Some(s) = app.as_str() {
             AppSelector::from_name(s)
         } else {
-            serde_json::from_value::<AppSelector>(app.clone())
-                .map_err(|e| format!("Invalid app selector: {}", e))?
+            serde_json::from_value::<AppSelector>(app.clone()).map_err(|e| {
+                ToolInvocationError::invalid_arguments(format!("Invalid app selector: {}", e))
+            })?
         };
 
-        let args_list: Vec<String> = args
-            .get("args")
-            .and_then(|a| serde_json::from_value::<Vec<String>>(a.clone()).ok())
-            .unwrap_or_default();
+        let args_list: Vec<String> = match args.get("args") {
+            Some(value) => serde_json::from_value::<Vec<String>>(value.clone()).map_err(|e| {
+                ToolInvocationError::invalid_arguments(format!("Invalid launch args: {}", e))
+            })?,
+            None => Vec::new(),
+        };
 
         let action = LaunchAction {
             app: app_selector,
@@ -533,78 +705,103 @@ async fn tool_focus(&self, args: &serde_json::Value) -> Result<String, String> {
             .action
             .launch(&action)
             .await
-            .map_err(|e| format!("Launch failed: {}", e))?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+            .map_err(|e| ToolInvocationError::execution(format!("Launch failed: {}", e)))?;
+        to_json_value(result)
     }
 
-async fn tool_window(&self, args: &serde_json::Value) -> Result<String, String> {
-    if args.get("app").is_none() {
-        return Err("Missing required field: app. Must specify which application's window to operate on".to_string());
+    async fn tool_window(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        if args.get("app").is_none() {
+            return Err(ToolInvocationError::invalid_arguments(
+            "Missing required field: app. Must specify which application's window to operate on",
+        ));
+        }
+
+        let selector = parse_selector_from_args_strict(args)
+            .map_err(ToolInvocationError::invalid_arguments)?;
+        let op_str = args
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ToolInvocationError::invalid_arguments("Missing required field: operation")
+            })?;
+
+        let operation = match op_str {
+            "minimize" => WindowOperation::Minimize,
+            "maximize" => WindowOperation::Maximize,
+            "close" => WindowOperation::Close,
+            "move" => {
+                let x = args.get("x").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments("Window move requires numeric x")
+                })?;
+                let y = args.get("y").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments("Window move requires numeric y")
+                })?;
+                WindowOperation::Move { x, y }
+            }
+            "resize" => {
+                let width = args.get("width").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments("Window resize requires numeric width")
+                })?;
+                let height = args.get("height").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments("Window resize requires numeric height")
+                })?;
+                WindowOperation::Resize { width, height }
+            }
+            _ => {
+                return Err(ToolInvocationError::invalid_arguments(format!(
+                    "Unknown window operation: {}",
+                    op_str
+                )))
+            }
+        };
+
+        let action = WindowAction {
+            selector,
+            operation,
+        };
+        let result = self.action.window_op(&action).await.map_err(|e| {
+            ToolInvocationError::execution(format!("Window operation failed: {}", e))
+        })?;
+        to_json_value(result)
     }
-    
-    let selector = parse_selector_from_args(args);
-    let op_str = args
-        .get("operation")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required field: operation")?;
 
-    let operation = match op_str {
-        "minimize" => WindowOperation::Minimize,
-        "maximize" => WindowOperation::Maximize,
-        "close" => WindowOperation::Close,
-        "move" => {
-            let x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            WindowOperation::Move { x, y }
-        }
-        "resize" => {
-            let width = args.get("width").and_then(|v| v.as_f64()).unwrap_or(800.0);
-            let height = args.get("height").and_then(|v| v.as_f64()).unwrap_or(600.0);
-            WindowOperation::Resize { width, height }
-        }
-        _ => return Err(format!("Unknown window operation: {}", op_str)),
-    };
-
-    let action = WindowAction {
-        selector,
-        operation,
-    };
-    let result = self
-        .action
-        .window_op(&action)
-        .await
-        .map_err(|e| format!("Window operation failed: {}", e))?;
-    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
-}
-
-    async fn tool_recipes(&self) -> Result<String, String> {
+    async fn tool_recipes(&self) -> Result<serde_json::Value, ToolInvocationError> {
         let engine = self.recipe_engine.lock().await;
         let recipes: Vec<&Recipe> = engine.list();
         let names: Vec<&str> = recipes.iter().map(|r| r.name.as_str()).collect();
-        serde_json::to_string_pretty(&names).map_err(|e| e.to_string())
+        to_json_value(names)
     }
 
-    async fn tool_run(&self, args: &serde_json::Value) -> Result<String, String> {
-        let name = args
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing required field: name")?;
+    async fn tool_run(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolInvocationError::invalid_arguments("Missing required field: name")
+        })?;
 
-        let params: HashMap<String, serde_json::Value> = args
-            .get("params")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
+        let params: HashMap<String, serde_json::Value> = match args.get("params") {
+            Some(value) => serde_json::from_value(value.clone()).map_err(|e| {
+                ToolInvocationError::invalid_arguments(format!("Invalid params: {}", e))
+            })?,
+            None => HashMap::new(),
+        };
 
         let (recipe, substituted_steps) = {
             let engine = self.recipe_engine.lock().await;
             let recipe = engine
                 .get(name)
-                .ok_or_else(|| format!("Recipe not found: {}", name))?
+                .ok_or_else(|| {
+                    ToolInvocationError::execution(format!("Recipe not found: {}", name))
+                })?
                 .clone();
 
-            let resolved_params = engine
-                .resolve_params(&recipe, &params)
-                .map_err(|e| format!("Parameter error: {}", e))?;
+            let resolved_params = engine.resolve_params(&recipe, &params).map_err(|e| {
+                ToolInvocationError::invalid_arguments(format!("Parameter error: {}", e))
+            })?;
 
             let steps = recipe
                 .steps
@@ -617,10 +814,9 @@ async fn tool_window(&self, args: &serde_json::Value) -> Result<String, String> 
 
         let mut results = Vec::with_capacity(substituted_steps.len());
         for (index, step) in substituted_steps.iter().enumerate() {
-            let result = self
-                .execute_recipe_step(index, step)
-                .await
-                .map_err(|e| format!("Recipe execution failed: {}", e))?;
+            let result = self.execute_recipe_step(index, step).await.map_err(|e| {
+                ToolInvocationError::execution(format!("Recipe execution failed: {}", e))
+            })?;
             results.push(result);
         }
 
@@ -628,44 +824,49 @@ async fn tool_window(&self, args: &serde_json::Value) -> Result<String, String> 
             "recipe": recipe.name,
             "status": "completed",
             "results": results,
-        })
-        .to_string())
+        }))
     }
 
-    async fn tool_recipe_save(&self, args: &serde_json::Value) -> Result<String, String> {
-        let recipe_val = args.get("recipe").ok_or("Missing required field: recipe")?;
+    async fn tool_recipe_save(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let recipe_val = args.get("recipe").ok_or_else(|| {
+            ToolInvocationError::invalid_arguments("Missing required field: recipe")
+        })?;
 
-        let recipe: Recipe = serde_json::from_value(recipe_val.clone())
-            .map_err(|e| format!("Invalid recipe: {}", e))?;
+        let recipe: Recipe = serde_json::from_value(recipe_val.clone()).map_err(|e| {
+            ToolInvocationError::invalid_arguments(format!("Invalid recipe: {}", e))
+        })?;
 
         let mut engine = self.recipe_engine.lock().await;
         engine
             .load(recipe.clone())
-            .map_err(|e| format!("Failed to save recipe: {}", e))?;
+            .map_err(|e| ToolInvocationError::execution(format!("Failed to save recipe: {}", e)))?;
 
         Ok(serde_json::json!({
             "status": "saved",
             "name": recipe.name
-        })
-        .to_string())
+        }))
     }
 
-    async fn tool_recipe_delete(&self, args: &serde_json::Value) -> Result<String, String> {
-        let name = args
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing required field: name")?;
+    async fn tool_recipe_delete(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolInvocationError::invalid_arguments("Missing required field: name")
+        })?;
 
         let mut engine = self.recipe_engine.lock().await;
-        engine
-            .delete(name)
-            .map_err(|e| format!("Failed to delete recipe: {}", e))?;
+        engine.delete(name).map_err(|e| {
+            ToolInvocationError::execution(format!("Failed to delete recipe: {}", e))
+        })?;
 
         Ok(serde_json::json!({
             "status": "deleted",
             "name": name
-        })
-        .to_string())
+        }))
     }
 
     async fn execute_recipe_step(
@@ -1035,6 +1236,7 @@ mod tests {
             &self,
             _target: Option<&Selector>,
             _region: Option<&Bounds>,
+            _display_id: Option<u32>,
         ) -> Result<ScreenshotData, PerceptionError> {
             Ok(ScreenshotData {
                 format: sootie_core::perception::ScreenshotFormat::Png,

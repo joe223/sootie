@@ -147,7 +147,12 @@ impl VisionProvider for SidecarVisionProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| VisionError::NetworkError(format!("Sidecar unreachable on {}: {}", self.base_url, e)))?;
+            .map_err(|e| {
+                VisionError::NetworkError(format!(
+                    "Sidecar unreachable on {}: {}",
+                    self.base_url, e
+                ))
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
@@ -158,10 +163,9 @@ impl VisionProvider for SidecarVisionProvider {
             )));
         }
 
-        let result: SidecarResponse = resp
-            .json()
-            .await
-            .map_err(|e| VisionError::InferenceFailed(format!("Failed to parse sidecar response: {}", e)))?;
+        let result: SidecarResponse = resp.json().await.map_err(|e| {
+            VisionError::InferenceFailed(format!("Failed to parse sidecar response: {}", e))
+        })?;
 
         if let Some(err) = result.error {
             return Err(VisionError::InferenceFailed(err));
