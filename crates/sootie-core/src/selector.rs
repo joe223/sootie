@@ -203,6 +203,8 @@ pub struct Window {
     pub index: u32,
     pub focused: bool,
     pub bounds: Bounds,
+    #[serde(default)]
+    pub display_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

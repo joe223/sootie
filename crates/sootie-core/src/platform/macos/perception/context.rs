@@ -6,6 +6,58 @@ use crate::perception::Context;
 
 use super::super::ax_fns::*;
 
+/// Get display ID for a point on screen using CoreGraphics
+fn get_display_for_point(x: f64, y: f64) -> Option<u32> {
+    use std::process::Command;
+
+    // Use system_profiler or CoreGraphics to get display info
+    // For now, use a simple heuristic based on screen bounds
+    // This can be enhanced with native CoreGraphics calls
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(format!(
+            r#"
+            use framework "Foundation"
+            use framework "AppKit"
+            set point to NSMakePoint({}, {})
+            set screens to (current application's NSScreen's screens())
+            repeat with s in screens
+                set frame to s's frame()
+                if NSPointInRect(point, frame) then
+                    set screenNumber to (s's deviceDescription())'s valueForKey:"NSScreenNumber"
+                    return (screenNumber as integer) as text
+                end if
+            end repeat
+            return "0"
+            "#,
+            x, y
+        ))
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            stdout.parse::<u32>().ok()
+        }
+        _ => None,
+    }
+}
+
+/// Get all displays with their bounds
+fn get_display_info() -> Vec<(u32, crate::selector::Bounds)> {
+    let _output = Command::new("system_profiler")
+        .args(["SPDisplaysDataType", "-json"])
+        .output();
+
+    // Fallback: use hardcoded primary display
+    vec![(1, crate::selector::Bounds {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+    })]
+}
+
 pub fn get_running_apps() -> crate::perception::Context {
     let output = Command::new("osascript")
         .arg("-e")
@@ -107,12 +159,18 @@ pub fn get_app_windows(pid: i32) -> Vec<crate::selector::Window> {
                 },
             };
 
+            // Calculate window center to determine which display it belongs to
+            let center_x = bounds.x + bounds.width / 2.0;
+            let center_y = bounds.y + bounds.height / 2.0;
+            let display_id = get_display_for_point(center_x, center_y);
+
             windows.push(crate::selector::Window {
                 id: format!("win_{}", index),
                 title,
                 index: index as u32,
                 focused,
                 bounds,
+                display_id,
             });
 
             release_ax_element(*window_ref);

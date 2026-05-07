@@ -44,6 +44,12 @@ pub struct VisionConfig {
     pub sidecar_port: u16,
     #[serde(default)]
     pub use_gpu: bool,
+    #[serde(default = "default_auto_start")]
+    pub auto_start: bool,
+}
+
+fn default_auto_start() -> bool {
+    false
 }
 
 fn default_model_name() -> String {
@@ -116,6 +122,7 @@ fn default_vision_config() -> VisionConfig {
         model_name: default_model_name(),
         sidecar_port: default_sidecar_port(),
         use_gpu: false,
+        auto_start: default_auto_start(),
     }
 }
 

@@ -100,6 +100,7 @@ impl PerceptionProvider for WindowsPerceptionProvider {
         &self,
         _target: Option<&Selector>,
         region: Option<&crate::selector::Bounds>,
+        _display_id: Option<u32>,
     ) -> Result<ScreenshotData, PerceptionError> {
         debug!("Taking screenshot");
         use image::codecs::png::PngEncoder;

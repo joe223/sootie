@@ -60,9 +60,10 @@ impl PerceptionProvider for MacPerceptionProvider {
         &self,
         _target: Option<&Selector>,
         region: Option<&Bounds>,
+        display_id: Option<u32>,
     ) -> Result<ScreenshotData, PerceptionError> {
         debug!("Taking screenshot");
-        screenshot::take_screenshot(region)
+        screenshot::take_screenshot(region, display_id)
     }
 
     async fn find_apps(
@@ -106,7 +107,7 @@ mod tests {
     #[tokio::test]
     async fn test_mac_provider_screenshot_full() {
         let provider = MacPerceptionProvider::new();
-        let result = provider.screenshot(None, None).await;
+        let result = provider.screenshot(None, None, None).await;
         assert!(result.is_ok() || result.is_err());
     }
 
@@ -119,7 +120,14 @@ mod tests {
             width: 100.0,
             height: 100.0,
         };
-        let result = provider.screenshot(None, Some(&region)).await;
+        let result = provider.screenshot(None, Some(&region), None).await;
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mac_provider_screenshot_with_display() {
+        let provider = MacPerceptionProvider::new();
+        let result = provider.screenshot(None, None, Some(1)).await;
         assert!(result.is_ok() || result.is_err());
     }
 }

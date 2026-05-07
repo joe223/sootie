@@ -101,9 +101,10 @@ impl PerceptionProvider for LinuxPerceptionProvider {
         &self,
         _target: Option<&Selector>,
         region: Option<&Bounds>,
+        display_id: Option<u32>,
     ) -> Result<ScreenshotData, PerceptionError> {
         debug!("Taking screenshot");
-        screenshot::take_screenshot(region)
+        screenshot::take_screenshot(region, display_id)
     }
 
     async fn find_apps(

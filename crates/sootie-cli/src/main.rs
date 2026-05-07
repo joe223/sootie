@@ -192,10 +192,10 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
         "Sootie MCP server starting"
     );
 
-    let _sidecar = if !config.vision.model_path.is_empty() {
+    let _sidecar = if !config.vision.model_path.is_empty() || config.vision.auto_start {
         match setup::launch_sidecar(config.vision.sidecar_port, None).await {
             Ok(guard) => {
-                info!(port = %config.vision.sidecar_port, "Python sidecar launched");
+                info!(port = %config.vision.sidecar_port, auto_start = %config.vision.auto_start, "Python sidecar launched");
                 Some(guard)
             }
             Err(e) => {
@@ -213,6 +213,18 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
     info!("Platform providers initialized");
 
     let server = SootieServer::new(perception, action);
+
+    // Print startup message to stderr (stdout is used for MCP)
+    eprintln!("✓ Sootie MCP server started successfully");
+    eprintln!("  Protocol: JSON-RPC 2.0 over stdio");
+    eprintln!("  Logs: {}", log_path.display());
+    eprintln!("  Ready to accept requests on stdin");
+    if _sidecar.is_some() {
+        eprintln!("  Vision: Sidecar running on port {}", config.vision.sidecar_port);
+    } else {
+        eprintln!("  Vision: Disabled (run 'sootie setup' to enable)");
+    }
+    eprintln!();
 
     info!("MCP server ready, waiting for requests on stdin");
 

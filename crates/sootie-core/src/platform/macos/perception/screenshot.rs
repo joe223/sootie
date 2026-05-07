@@ -3,9 +3,17 @@ use std::process::Command;
 use crate::perception::{PerceptionError, ScreenshotData, ScreenshotFormat};
 use crate::selector::Bounds;
 
-pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, PerceptionError> {
+pub fn take_screenshot(
+    region: Option<&Bounds>,
+    display_id: Option<u32>,
+) -> Result<ScreenshotData, PerceptionError> {
     let mut cmd = Command::new("screencapture");
     cmd.arg("-x").arg("-t").arg("png");
+
+    // Add display selection if specified (macOS display IDs start from 1)
+    if let Some(did) = display_id {
+        cmd.arg("-D").arg(did.to_string());
+    }
 
     if let Some(b) = region {
         cmd.arg("-R")
@@ -48,7 +56,7 @@ mod tests {
 
     #[test]
     fn test_take_screenshot_full_screen() {
-        let result = take_screenshot(None);
+        let result = take_screenshot(None, None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
             assert_eq!(data.format, ScreenshotFormat::Png);
@@ -64,11 +72,21 @@ mod tests {
             width: 100.0,
             height: 100.0,
         };
-        let result = take_screenshot(Some(&region));
+        let result = take_screenshot(Some(&region), None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
             assert_eq!(data.format, ScreenshotFormat::Png);
             assert!(data.data.is_empty() || !data.data.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_take_screenshot_with_display_id() {
+        let result = take_screenshot(None, Some(1));
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(data) = result {
+            assert_eq!(data.format, ScreenshotFormat::Png);
+            assert!(!data.data.is_empty());
         }
     }
 
@@ -80,7 +98,7 @@ mod tests {
             width: 1920.0,
             height: 1080.0,
         };
-        let result = take_screenshot(Some(&region));
+        let result = take_screenshot(Some(&region), None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
             assert_eq!(data.format, ScreenshotFormat::Png);
@@ -93,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_take_screenshot_bounds_none() {
-        let result = take_screenshot(None);
+        let result = take_screenshot(None, None);
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
             assert_eq!(data.format, ScreenshotFormat::Png);
@@ -109,7 +127,7 @@ mod tests {
             width: 200.0,
             height: 150.0,
         };
-        let result = take_screenshot(Some(&region));
+        let result = take_screenshot(Some(&region), Some(2));
         assert!(result.is_ok() || result.is_err());
         if let Ok(data) = result {
             assert_eq!(data.format, ScreenshotFormat::Png);

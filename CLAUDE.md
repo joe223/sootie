@@ -2,6 +2,33 @@
 
 **Mission**: Convert user intent into complete, verified software changes with minimal back-and-forth.
 
+## Documentation Guidelines
+
+**CRITICAL RULE:** All project documentation MUST be placed inside the `/docs/` directory. NEVER scatter new `.md` files in the root directory (except for `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, and `LICENSE`).
+
+When creating or updating documentation, strictly follow this categorization scheme within `/docs/`:
+
+1. **`/docs/architecture/` (System Design & Internal Workings)**
+   - Used for: Deep dives into how Sootie works under the hood.
+   - Examples: `action-cascade.md`, `vision-sidecar-protocol.md`, `at-tree-normalization.md`.
+
+2. **`/docs/api/` (External Interfaces & Schemas)**
+   - Used for: Detailed specifications of what Sootie exposes to MCP clients.
+   - Examples: `selector-scheme.md`, `mcp-tools-reference.md`, `recipe-schema.md`.
+
+3. **`/docs/guides/` (Tutorials & How-tos)**
+   - Used for: Step-by-step instructions for users or agent-builders.
+   - Examples: `writing-your-first-recipe.md`, `using-with-cursor.md`.
+
+4. **`/docs/development/` (Contributor Guidelines)**
+   - Used for: Instructions for developers building Sootie itself.
+   - Examples: `local-setup.md`, `adding-new-platform-support.md`.
+
+### Markdown Standards
+- Use clear, hierarchical headings (`#`, `##`, `###`).
+- Include Mermaid diagrams (using clean, black-and-white `classDef` styles) for complex architectures.
+- Keep the tone concise, technical, and declarative.
+- Always use `bash`, `json`, or `rust` code blocks with language tags.
 
 ## Default Execution Strategy
 

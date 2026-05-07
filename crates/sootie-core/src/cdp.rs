@@ -841,6 +841,7 @@ pub async fn try_find_via_cdp(selector: &Selector) -> Result<Option<ResolvedTarg
                 width: 0.0,
                 height: 0.0,
             },
+            display_id: None,
         }),
         elements: elements
             .into_iter()

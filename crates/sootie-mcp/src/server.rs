@@ -295,9 +295,11 @@ impl SootieServer {
             })
         });
 
+        let display_id = args.get("display_id").and_then(|d| d.as_u64()).map(|d| d as u32);
+
         let result = self
             .perception
-            .screenshot(selector.as_ref(), region.as_ref())
+            .screenshot(selector.as_ref(), region.as_ref(), display_id)
             .await
             .map_err(|e| format!("Screenshot failed: {}", e))?;
         serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
@@ -857,7 +859,7 @@ impl SootieServer {
                 let selector = step_target_to_selector(step.target.as_ref());
                 let result = self
                     .perception
-                    .screenshot(selector.as_ref(), None)
+                    .screenshot(selector.as_ref(), None, None)
                     .await
                     .map_err(|e| RecipeError::StepFailed {
                         step: index,

@@ -91,6 +91,7 @@ pub trait PerceptionProvider: Send + Sync {
         &self,
         target: Option<&Selector>,
         region: Option<&Bounds>,
+        display_id: Option<u32>,
     ) -> Result<ScreenshotData, PerceptionError>;
 
     async fn find_apps(
@@ -134,6 +135,7 @@ impl PerceptionProvider for StubPerceptionProvider {
         &self,
         _target: Option<&Selector>,
         _region: Option<&Bounds>,
+        _display_id: Option<u32>,
     ) -> Result<ScreenshotData, PerceptionError> {
         Err(PerceptionError::NotImplemented(
             "stub provider".to_string(),

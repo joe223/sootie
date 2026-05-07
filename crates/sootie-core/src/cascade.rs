@@ -193,7 +193,7 @@ impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
 
         let screenshot = self
             .perception
-            .screenshot(Some(selector), selector_region(selector).as_ref())
+            .screenshot(Some(selector), selector_region(selector).as_ref(), None)
             .await
             .map_err(|e| ActionError::ActionFailed(format!("Screenshot failed: {}", e)))?;
 
@@ -336,6 +336,7 @@ mod tests {
             &self,
             _target: Option<&Selector>,
             _region: Option<&Bounds>,
+            _display_id: Option<u32>,
         ) -> Result<ScreenshotData, PerceptionError> {
             Ok(ScreenshotData {
                 format: crate::perception::ScreenshotFormat::Png,

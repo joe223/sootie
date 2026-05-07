@@ -140,6 +140,10 @@ fn perception_screenshot() -> ToolDefinition {
                         "width": { "type": "number" },
                         "height": { "type": "number" }
                     }
+                },
+                "display_id": {
+                    "type": "number",
+                    "description": "Display ID (macOS: 1=main, 2=secondary, etc)"
                 }
             }
         }),
