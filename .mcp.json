@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "sootie": {
+      "command": "/Users/bytedance/git/sootie/target/release/sootie",
+      "args": ["serve"]
+    }
+  }
+}

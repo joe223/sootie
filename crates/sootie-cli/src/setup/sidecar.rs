@@ -290,8 +290,10 @@ impl SidecarGuard {
 impl Drop for SidecarGuard {
     fn drop(&mut self) {
         if let Some(ref mut child) = self.child {
-            let _ = child.kill();
-            let _ = child.wait();
+            // Don't kill sidecar - let it run with idle timeout
+            // Sidecar will auto-exit after idle_timeout seconds
+            // Just detach from the process
+            let _ = child.wait(); // Wait for graceful shutdown
         }
     }
 }
