@@ -4,7 +4,9 @@ use tracing::{debug, warn};
 use crate::action::{ActionError, ActionTarget};
 use crate::cdp::try_find_via_cdp;
 use crate::perception::{PerceptionError, PerceptionProvider};
-use crate::selector::{Bounds, Coordinate, Selector};
+use crate::selector::{
+    Bounds, Coordinate, FindTargetResult, MatchStatus, ResolvedElement, Selector, Target,
+};
 use crate::vision::{RuntimeVisionProvider, VisionProvider, VisionRequest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,13 +59,13 @@ fn resolve_fallback_priority() -> Vec<Backend> {
     default_fallback_priority()
 }
 
-pub struct Cascade<'a, P: PerceptionProvider, V: VisionProvider> {
+pub struct Cascade<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> {
     perception: &'a P,
     vision: Option<&'a V>,
     priority: Vec<Backend>,
 }
 
-impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
+impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a, P, V> {
     pub fn new(perception: &'a P, vision: Option<&'a V>) -> Self {
         Self {
             perception,
@@ -233,6 +235,257 @@ impl<'a, P: PerceptionProvider, V: VisionProvider> Cascade<'a, P, V> {
             .map_err(|e| ActionError::ActionFailed(format!("Vision failed: {}", e)))?;
 
         Ok((result.coordinate, Some(Backend::Vision)))
+    }
+
+    pub async fn find_target(&self, target: &Target) -> FindTargetResult {
+        if let Err(_validation_error) = target.validate() {
+            return FindTargetResult {
+                status: MatchStatus::None,
+                backend: "".to_string(),
+                backend_attempts: None,
+                app: None,
+                window: None,
+                elements: vec![],
+                confidence: None,
+            };
+        }
+
+        let selector: Selector = target.into();
+        let mut backend_attempts = vec![];
+
+        for backend in &self.priority {
+            backend_attempts.push(backend.to_string());
+
+            let result = self.find_target_backend(&selector, backend).await;
+
+            match result {
+                Ok(find_result) if !find_result.elements.is_empty() => {
+                    debug!(
+                        "Found {} elements via {}",
+                        find_result.elements.len(),
+                        backend
+                    );
+                    return find_result;
+                }
+                Ok(_) => {
+                    debug!("{} backend returned no matches, trying next", backend);
+                    continue;
+                }
+                Err(e) => {
+                    warn!("{} backend error: {}, trying next", backend, e);
+                    continue;
+                }
+            }
+        }
+
+        FindTargetResult {
+            status: MatchStatus::None,
+            backend: "".to_string(),
+            backend_attempts: Some(backend_attempts),
+            app: None,
+            window: None,
+            elements: vec![],
+            confidence: None,
+        }
+    }
+
+    async fn find_target_backend(
+        &self,
+        selector: &Selector,
+        backend: &Backend,
+    ) -> Result<FindTargetResult, ActionError> {
+        match backend {
+            Backend::Cdp => self.find_target_cdp(selector).await,
+            Backend::AtTree => self.find_target_at_tree(selector).await,
+            Backend::Vision => self.find_target_vision(selector).await,
+        }
+    }
+
+    async fn find_target_cdp(&self, selector: &Selector) -> Result<FindTargetResult, ActionError> {
+        debug!("Attempting CDP find_target for selector");
+
+        match try_find_via_cdp(selector).await {
+            Ok(Some(result)) if !result.elements.is_empty() => {
+                let elements: Vec<ResolvedElement> = result
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(|(i, elem)| ResolvedElement {
+                        role: elem.role.clone(),
+                        name: Some(elem.name.clone()),
+                        text: elem.text.clone(),
+                        id: elem.id.clone(),
+                        state: elem.state.clone(),
+                        bounds: elem.bounds.clone(),
+                        coordinate: Coordinate {
+                            x: elem.bounds.x + elem.bounds.width / 2.0,
+                            y: elem.bounds.y + elem.bounds.height / 2.0,
+                        },
+                        index: Some(i as u32),
+                        confidence: None,
+                    })
+                    .collect();
+
+                let status = if elements.len() == 1 {
+                    MatchStatus::Unique
+                } else {
+                    MatchStatus::Multiple
+                };
+
+                return Ok(FindTargetResult {
+                    status,
+                    backend: Backend::Cdp.to_string(),
+                    backend_attempts: None,
+                    app: result.app,
+                    window: result.window,
+                    elements,
+                    confidence: None,
+                });
+            }
+            Ok(Some(_)) => {
+                debug!("CDP returned no matches");
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!("CDP find_target error: {}", error);
+            }
+        }
+
+        Err(ActionError::TargetNotFound("CDP failed".to_string()))
+    }
+
+    async fn find_target_at_tree(
+        &self,
+        selector: &Selector,
+    ) -> Result<FindTargetResult, ActionError> {
+        debug!("Attempting AT tree find_target for selector");
+
+        match self.perception.find(selector).await {
+            Ok(result) if !result.elements.is_empty() => {
+                let elements: Vec<ResolvedElement> = result
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(|(i, elem)| ResolvedElement {
+                        role: elem.role.clone(),
+                        name: Some(elem.name.clone()),
+                        text: elem.text.clone(),
+                        id: elem.id.clone(),
+                        state: elem.state.clone(),
+                        bounds: elem.bounds.clone(),
+                        coordinate: Coordinate {
+                            x: elem.bounds.x + elem.bounds.width / 2.0,
+                            y: elem.bounds.y + elem.bounds.height / 2.0,
+                        },
+                        index: Some(i as u32),
+                        confidence: None,
+                    })
+                    .collect();
+
+                let status = if elements.len() == 1 {
+                    MatchStatus::Unique
+                } else {
+                    MatchStatus::Multiple
+                };
+
+                return Ok(FindTargetResult {
+                    status,
+                    backend: Backend::AtTree.to_string(),
+                    backend_attempts: None,
+                    app: result.app,
+                    window: result.window,
+                    elements,
+                    confidence: None,
+                });
+            }
+            Ok(_) => {
+                debug!("AT tree returned no matches");
+            }
+            Err(PerceptionError::TargetNotFound(_)) => {}
+            Err(e) => {
+                warn!("AT tree find_target error: {}", e);
+            }
+        }
+
+        Err(ActionError::TargetNotFound("AT tree failed".to_string()))
+    }
+
+    async fn find_target_vision(
+        &self,
+        selector: &Selector,
+    ) -> Result<FindTargetResult, ActionError> {
+        let Some(vision) = self.vision else {
+            debug!("Vision backend not available for find_target");
+            return Err(ActionError::NotImplemented(
+                "vision backend requires vision provider".to_string(),
+            ));
+        };
+
+        debug!("Attempting vision find_target for selector");
+
+        let screenshot = self
+            .perception
+            .screenshot(Some(selector), selector_region(selector).as_ref(), None)
+            .await
+            .map_err(|e| ActionError::ActionFailed(format!("Screenshot failed: {}", e)))?;
+
+        let request = VisionRequest {
+            screenshot,
+            target_description: describe_selector(selector),
+            context: selector
+                .app
+                .as_ref()
+                .and_then(|app| app.name.clone())
+                .or_else(|| {
+                    selector
+                        .window
+                        .as_ref()
+                        .and_then(|window| window.title.clone())
+                }),
+        };
+
+        let result = vision
+            .detect(&request)
+            .await
+            .map_err(|e| ActionError::ActionFailed(format!("Vision failed: {}", e)))?;
+
+        let element = ResolvedElement {
+            role: selector
+                .element
+                .role
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            name: selector.element.name.clone(),
+            text: selector.element.text.clone(),
+            id: None,
+            state: crate::selector::ElementState {
+                visible: true,
+                focused: None,
+                enabled: None,
+            },
+            bounds: Bounds {
+                x: result.coordinate.x - 50.0,
+                y: result.coordinate.y - 25.0,
+                width: 100.0,
+                height: 50.0,
+            },
+            coordinate: result.coordinate.clone(),
+            index: Some(0),
+            confidence: Some(result.confidence),
+        };
+
+        Ok(FindTargetResult {
+            status: MatchStatus::Unique,
+            backend: Backend::Vision.to_string(),
+            backend_attempts: None,
+            app: None,
+            window: None,
+            elements: vec![element],
+            confidence: Some(serde_json::json!({
+                "top_match_score": result.confidence,
+                "model": result.model_used
+            })),
+        })
     }
 }
 
@@ -536,5 +789,88 @@ mod tests {
         assert_eq!(result.0.x, 13.0);
         assert_eq!(result.0.y, 14.0);
         assert_eq!(result.1, Some(Backend::Vision));
+    }
+
+    #[tokio::test]
+    async fn test_find_target_normalizes_at_tree_result() {
+        let element = make_element(100.0, 200.0, 50.0, 20.0);
+        let provider = MockPerceptionProvider::with_find_result(make_resolved_target(element));
+        let cascade =
+            Cascade::<_, MockVisionProvider>::with_priority(&provider, None, vec![Backend::AtTree]);
+
+        let target = Target {
+            app: Some(AppSelector::from_name("Chrome")),
+            window: Some(WindowSelector::from_title("Inbox")),
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: Some("Test".to_string()),
+                id: None,
+                text: None,
+            },
+        };
+
+        let result = cascade.find_target(&target).await;
+        assert_eq!(result.status, MatchStatus::Unique);
+        assert_eq!(result.backend, Backend::AtTree.to_string());
+        assert_eq!(result.elements.len(), 1);
+        assert_eq!(result.elements[0].coordinate.x, 125.0);
+        assert_eq!(result.elements[0].coordinate.y, 210.0);
+        assert_eq!(result.elements[0].index, Some(0));
+        assert!(result.backend_attempts.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_find_target_records_backend_attempts_when_no_backend_matches() {
+        let provider = MockPerceptionProvider::empty();
+        let cascade = Cascade::<_, MockVisionProvider>::with_priority(
+            &provider,
+            None,
+            vec![Backend::Vision, Backend::AtTree],
+        );
+
+        let target = Target {
+            app: None,
+            window: None,
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: Some("Missing".to_string()),
+                id: None,
+                text: None,
+            },
+        };
+
+        let result = cascade.find_target(&target).await;
+        assert_eq!(result.status, MatchStatus::None);
+        assert_eq!(result.elements, Vec::<ResolvedElement>::new());
+        assert_eq!(
+            result.backend_attempts,
+            Some(vec![
+                Backend::Vision.to_string(),
+                Backend::AtTree.to_string()
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_target_stops_before_backend_lookup_for_invalid_target() {
+        let provider = MockPerceptionProvider::empty();
+        let cascade =
+            Cascade::<_, MockVisionProvider>::with_priority(&provider, None, vec![Backend::AtTree]);
+
+        let target = Target {
+            app: None,
+            window: None,
+            selector: TargetSelector {
+                role: None,
+                name: None,
+                id: None,
+                text: None,
+            },
+        };
+
+        let result = cascade.find_target(&target).await;
+        assert_eq!(result.status, MatchStatus::None);
+        assert!(result.elements.is_empty());
+        assert!(result.backend_attempts.is_none());
     }
 }

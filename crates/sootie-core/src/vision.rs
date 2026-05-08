@@ -93,6 +93,7 @@ struct SidecarRequest {
 pub struct SidecarVisionProvider {
     base_url: String,
     client: reqwest::Client,
+    auth_token: Option<String>,
 }
 
 impl SidecarVisionProvider {
@@ -103,12 +104,22 @@ impl SidecarVisionProvider {
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+            auth_token: None,
         }
+    }
+
+    pub fn with_auth_token(mut self, token: String) -> Self {
+        self.auth_token = Some(token);
+        self
     }
 
     pub async fn health_check(&self) -> Result<bool, VisionError> {
         let url = format!("{}/health", self.base_url);
-        match self.client.get(&url).send().await {
+        let mut req = self.client.get(&url);
+        if let Some(token) = &self.auth_token {
+            req = req.header("X-Sootie-Auth", token);
+        }
+        match req.send().await {
             Ok(resp) => Ok(resp.status().is_success()),
             Err(_) => Ok(false),
         }
@@ -141,18 +152,13 @@ impl VisionProvider for SidecarVisionProvider {
         };
 
         let url = format!("{}/ground", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                VisionError::NetworkError(format!(
-                    "Sidecar unreachable on {}: {}",
-                    self.base_url, e
-                ))
-            })?;
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(token) = &self.auth_token {
+            req = req.header("X-Sootie-Auth", token);
+        }
+        let resp = req.send().await.map_err(|e| {
+            VisionError::NetworkError(format!("Sidecar unreachable on {}: {}", self.base_url, e))
+        })?;
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
@@ -204,7 +210,14 @@ impl RuntimeVisionProvider {
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(9876);
-                return Self::Sidecar(SidecarVisionProvider::new(port));
+                let auth_token = std::env::var("SOOTIE_SIDECAR_AUTH_TOKEN").ok();
+                let provider = SidecarVisionProvider::new(port);
+                let provider = if let Some(token) = auth_token {
+                    provider.with_auth_token(token)
+                } else {
+                    provider
+                };
+                return Self::Sidecar(provider);
             }
         }
         Self::Stub(StubVisionProvider)

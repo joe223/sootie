@@ -176,6 +176,7 @@ mod tests {
                         width: 1440.0,
                         height: 900.0,
                     },
+                    display_id: Some(1),
                 }],
             }],
         };
@@ -457,7 +458,7 @@ mod tests {
     #[tokio::test]
     async fn test_stub_screenshot_returns_not_implemented() {
         let provider = StubPerceptionProvider;
-        let result = provider.screenshot(None, None).await;
+        let result = provider.screenshot(None, None, None).await;
         assert!(result.is_err());
     }
 
@@ -483,6 +484,7 @@ mod tests {
                         width: 1440.0,
                         height: 900.0,
                     },
+                    display_id: Some(1),
                 },
                 Window {
                     id: "win_2".to_string(),
@@ -495,6 +497,7 @@ mod tests {
                         width: 800.0,
                         height: 600.0,
                     },
+                    display_id: Some(1),
                 },
             ],
         };

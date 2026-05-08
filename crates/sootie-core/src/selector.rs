@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct AppSelector {
     pub name: Option<String>,
     pub bundle_id: Option<String>,
@@ -40,6 +41,7 @@ impl From<String> for AppSelector {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct WindowSelector {
     pub title: Option<String>,
     pub id: Option<String>,
@@ -287,6 +289,134 @@ pub struct DeepInspection {
     pub backend: String,
     pub actions: Vec<String>,
     pub raw_metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TargetSelector {
+    pub role: Option<String>,
+    pub name: Option<String>,
+    pub id: Option<String>,
+    pub text: Option<String>,
+}
+
+impl TargetSelector {
+    pub fn has_any_field(&self) -> bool {
+        self.role.is_some() || self.name.is_some() || self.id.is_some() || self.text.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Target {
+    #[serde(default, deserialize_with = "deserialize_app_field")]
+    pub app: Option<AppSelector>,
+    #[serde(default, deserialize_with = "deserialize_window_field")]
+    pub window: Option<WindowSelector>,
+    pub selector: TargetSelector,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Scope {
+    #[serde(default, deserialize_with = "deserialize_app_field")]
+    pub app: Option<AppSelector>,
+    #[serde(default, deserialize_with = "deserialize_window_field")]
+    pub window: Option<WindowSelector>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TargetValidationError {
+    MissingSelector,
+    EmptySelector,
+    EmptyAppObject,
+    EmptyWindowObject,
+}
+
+impl std::fmt::Display for TargetValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TargetValidationError::MissingSelector => write!(f, "target.selector is required"),
+            TargetValidationError::EmptySelector => write!(f, "target.selector must contain at least one field (role, name, id, or text)"),
+            TargetValidationError::EmptyAppObject => write!(f, "target.app object must contain at least one field (name, bundle_id, or is_frontmost)"),
+            TargetValidationError::EmptyWindowObject => write!(f, "target.window object must contain at least one field (title, id, index, or focused)"),
+        }
+    }
+}
+
+impl Target {
+    pub fn validate(&self) -> Result<(), TargetValidationError> {
+        if !self.selector.has_any_field() {
+            return Err(TargetValidationError::EmptySelector);
+        }
+
+        if let Some(app) = &self.app {
+            if app.name.is_none() && app.bundle_id.is_none() && app.is_frontmost.is_none() {
+                return Err(TargetValidationError::EmptyAppObject);
+            }
+        }
+
+        if let Some(window) = &self.window {
+            if window.title.is_none()
+                && window.id.is_none()
+                && window.index.is_none()
+                && window.focused.is_none()
+            {
+                return Err(TargetValidationError::EmptyWindowObject);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl From<&Target> for Selector {
+    fn from(target: &Target) -> Self {
+        Selector {
+            app: target.app.clone(),
+            window: target.window.clone(),
+            element: ElementSelector {
+                role: target.selector.role.clone(),
+                name: target.selector.name.clone(),
+                id: target.selector.id.clone(),
+                text: target.selector.text.clone(),
+                state: None,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedElement {
+    pub role: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    pub state: ElementState,
+    pub bounds: Bounds,
+    pub coordinate: Coordinate,
+    #[serde(default)]
+    pub index: Option<u32>,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FindTargetResult {
+    pub status: MatchStatus,
+    pub backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_attempts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<App>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<Window>,
+    pub elements: Vec<ResolvedElement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -822,6 +952,7 @@ mod tests {
                 width: 1440.0,
                 height: 875.0,
             },
+            display_id: Some(1),
         };
         let json = serde_json::to_string(&window).unwrap();
         let deserialized: Window = serde_json::from_str(&json).unwrap();
@@ -851,6 +982,7 @@ mod tests {
                     width: 1440.0,
                     height: 875.0,
                 },
+                display_id: Some(1),
             }),
             elements: vec![Element {
                 role: "button".to_string(),
@@ -1077,5 +1209,351 @@ mod tests {
         assert_eq!(target.total_matches, 1);
         assert_eq!(target.elements.len(), 1);
         assert_eq!(target.elements[0].role, "button");
+    }
+
+    #[test]
+    fn test_target_selector_has_any_field() {
+        let selector = TargetSelector {
+            role: Some("button".to_string()),
+            name: None,
+            id: None,
+            text: None,
+        };
+        assert!(selector.has_any_field());
+
+        let empty_selector = TargetSelector {
+            role: None,
+            name: None,
+            id: None,
+            text: None,
+        };
+        assert!(!empty_selector.has_any_field());
+    }
+
+    #[test]
+    fn test_target_validation_empty_selector() {
+        let target = Target {
+            app: None,
+            window: None,
+            selector: TargetSelector {
+                role: None,
+                name: None,
+                id: None,
+                text: None,
+            },
+        };
+        let result = target.validate();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), TargetValidationError::EmptySelector);
+    }
+
+    #[test]
+    fn test_target_validation_empty_app_object() {
+        let target = Target {
+            app: Some(AppSelector {
+                name: None,
+                bundle_id: None,
+                is_frontmost: None,
+            }),
+            window: None,
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: None,
+                id: None,
+                text: None,
+            },
+        };
+        let result = target.validate();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), TargetValidationError::EmptyAppObject);
+    }
+
+    #[test]
+    fn test_target_validation_empty_window_object() {
+        let target = Target {
+            app: None,
+            window: Some(WindowSelector {
+                title: None,
+                id: None,
+                index: None,
+                focused: None,
+            }),
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: None,
+                id: None,
+                text: None,
+            },
+        };
+        let result = target.validate();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            TargetValidationError::EmptyWindowObject
+        );
+    }
+
+    #[test]
+    fn test_target_validation_success() {
+        let target = Target {
+            app: None,
+            window: None,
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: None,
+                id: None,
+                text: None,
+            },
+        };
+        assert!(target.validate().is_ok());
+    }
+
+    #[test]
+    fn test_target_to_selector_conversion() {
+        let target = Target {
+            app: Some(AppSelector {
+                name: Some("Safari".to_string()),
+                bundle_id: None,
+                is_frontmost: None,
+            }),
+            window: Some(WindowSelector {
+                title: Some("Start Page".to_string()),
+                id: None,
+                index: None,
+                focused: None,
+            }),
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: Some("Submit".to_string()),
+                id: None,
+                text: None,
+            },
+        };
+        let selector: Selector = (&target).into();
+        assert_eq!(selector.app.unwrap().name, Some("Safari".to_string()));
+        assert_eq!(
+            selector.window.unwrap().title,
+            Some("Start Page".to_string())
+        );
+        assert_eq!(selector.element.role, Some("button".to_string()));
+        assert_eq!(selector.element.name, Some("Submit".to_string()));
+        assert!(selector.element.state.is_none());
+    }
+
+    #[test]
+    fn test_target_serialize() {
+        let target = Target {
+            app: Some(AppSelector {
+                name: Some("Safari".to_string()),
+                bundle_id: Some("com.apple.Safari".to_string()),
+                is_frontmost: Some(true),
+            }),
+            window: Some(WindowSelector {
+                title: Some("Start Page".to_string()),
+                id: Some("win_42".to_string()),
+                index: None,
+                focused: Some(true),
+            }),
+            selector: TargetSelector {
+                role: Some("textfield".to_string()),
+                name: Some("Smart Search Field".to_string()),
+                id: Some("WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD".to_string()),
+                text: Some("".to_string()),
+            },
+        };
+        let json = serde_json::to_string(&target).unwrap();
+        assert!(json.contains("app"));
+        assert!(json.contains("window"));
+        assert!(json.contains("selector"));
+        assert!(json.contains("role"));
+        let deserialized: Target = serde_json::from_str(&json).unwrap();
+        assert_eq!(target, deserialized);
+    }
+
+    #[test]
+    fn test_target_deserialize_string_app_and_window() {
+        let json = r#"{
+            "app": "Safari",
+            "window": "Start Page",
+            "selector": { "role": "button" }
+        }"#;
+
+        let target: Target = serde_json::from_str(json).unwrap();
+        assert_eq!(target.app.unwrap().name.as_deref(), Some("Safari"));
+        assert_eq!(target.window.unwrap().title.as_deref(), Some("Start Page"));
+        assert_eq!(target.selector.role.as_deref(), Some("button"));
+    }
+
+    #[test]
+    fn test_scope_serialize() {
+        let scope = Scope {
+            app: Some(AppSelector {
+                name: Some("Safari".to_string()),
+                bundle_id: None,
+                is_frontmost: None,
+            }),
+            window: Some(WindowSelector {
+                title: Some("Start Page".to_string()),
+                id: None,
+                index: None,
+                focused: None,
+            }),
+        };
+        let json = serde_json::to_string(&scope).unwrap();
+        assert!(json.contains("app"));
+        assert!(json.contains("window"));
+        assert!(!json.contains("selector"));
+        let deserialized: Scope = serde_json::from_str(&json).unwrap();
+        assert_eq!(scope, deserialized);
+    }
+
+    #[test]
+    fn test_scope_deserialize_string_app_and_window() {
+        let json = r#"{
+            "app": "Safari",
+            "window": "Start Page"
+        }"#;
+
+        let scope: Scope = serde_json::from_str(json).unwrap();
+        assert_eq!(scope.app.unwrap().name.as_deref(), Some("Safari"));
+        assert_eq!(scope.window.unwrap().title.as_deref(), Some("Start Page"));
+    }
+
+    #[test]
+    fn test_resolved_element_with_coordinate() {
+        let element = ResolvedElement {
+            role: "button".to_string(),
+            name: Some("Submit".to_string()),
+            text: None,
+            id: Some("btn-submit".to_string()),
+            state: ElementState {
+                visible: true,
+                focused: Some(false),
+                enabled: Some(true),
+            },
+            bounds: Bounds {
+                x: 300.0,
+                y: 400.0,
+                width: 100.0,
+                height: 40.0,
+            },
+            coordinate: Coordinate { x: 350.0, y: 420.0 },
+            index: Some(0),
+            confidence: Some(0.92),
+        };
+        let json = serde_json::to_string(&element).unwrap();
+        let deserialized: ResolvedElement = serde_json::from_str(&json).unwrap();
+        assert_eq!(element.coordinate.x, 350.0);
+        assert_eq!(element.coordinate.y, 420.0);
+        assert_eq!(element.confidence, Some(0.92));
+        assert_eq!(element, deserialized);
+    }
+
+    #[test]
+    fn test_find_target_result_with_elements_list() {
+        let result = FindTargetResult {
+            status: MatchStatus::Multiple,
+            backend: "vision".to_string(),
+            backend_attempts: None,
+            app: Some(App {
+                name: "Safari".to_string(),
+                bundle_id: "com.apple.Safari".to_string(),
+                is_frontmost: true,
+            }),
+            window: Some(Window {
+                id: "win_42".to_string(),
+                title: "Start Page".to_string(),
+                index: 0,
+                focused: true,
+                bounds: Bounds {
+                    x: 0.0,
+                    y: 25.0,
+                    width: 1440.0,
+                    height: 875.0,
+                },
+                display_id: Some(1),
+            }),
+            elements: vec![
+                ResolvedElement {
+                    role: "button".to_string(),
+                    name: Some("Submit".to_string()),
+                    text: None,
+                    id: Some("btn-submit".to_string()),
+                    state: ElementState {
+                        visible: true,
+                        focused: Some(false),
+                        enabled: Some(true),
+                    },
+                    bounds: Bounds {
+                        x: 300.0,
+                        y: 400.0,
+                        width: 100.0,
+                        height: 40.0,
+                    },
+                    coordinate: Coordinate { x: 350.0, y: 420.0 },
+                    index: Some(0),
+                    confidence: Some(0.92),
+                },
+                ResolvedElement {
+                    role: "button".to_string(),
+                    name: Some("Cancel".to_string()),
+                    text: None,
+                    id: Some("btn-cancel".to_string()),
+                    state: ElementState {
+                        visible: true,
+                        focused: Some(false),
+                        enabled: Some(true),
+                    },
+                    bounds: Bounds {
+                        x: 420.0,
+                        y: 400.0,
+                        width: 80.0,
+                        height: 40.0,
+                    },
+                    coordinate: Coordinate { x: 460.0, y: 420.0 },
+                    index: Some(1),
+                    confidence: Some(0.78),
+                },
+            ],
+            confidence: Some(serde_json::json!({
+                "top_match_score": 0.92,
+                "model": "sootie-vision-v1"
+            })),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: FindTargetResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.status, MatchStatus::Multiple);
+        assert_eq!(deserialized.elements.len(), 2);
+        assert_eq!(deserialized.elements[0].confidence, Some(0.92));
+        assert_eq!(deserialized.elements[1].confidence, Some(0.78));
+    }
+
+    #[test]
+    fn test_find_target_result_none_with_backend_attempts() {
+        let result = FindTargetResult {
+            status: MatchStatus::None,
+            backend: "vision".to_string(),
+            backend_attempts: Some(vec![
+                "vision".to_string(),
+                "cdp".to_string(),
+                "at_tree".to_string(),
+            ]),
+            app: None,
+            window: None,
+            elements: vec![],
+            confidence: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: FindTargetResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.status, MatchStatus::None);
+        assert_eq!(deserialized.elements.len(), 0);
+        assert_eq!(
+            deserialized.backend_attempts,
+            Some(vec![
+                "vision".to_string(),
+                "cdp".to_string(),
+                "at_tree".to_string()
+            ])
+        );
     }
 }

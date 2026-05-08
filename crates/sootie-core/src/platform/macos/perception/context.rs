@@ -43,24 +43,6 @@ fn get_display_for_point(x: f64, y: f64) -> Option<u32> {
     }
 }
 
-/// Get all displays with their bounds
-fn get_display_info() -> Vec<(u32, crate::selector::Bounds)> {
-    let _output = Command::new("system_profiler")
-        .args(["SPDisplaysDataType", "-json"])
-        .output();
-
-    // Fallback: use hardcoded primary display
-    vec![(
-        1,
-        crate::selector::Bounds {
-            x: 0.0,
-            y: 0.0,
-            width: 1920.0,
-            height: 1080.0,
-        },
-    )]
-}
-
 pub fn get_running_apps() -> crate::perception::Context {
     let output = Command::new("osascript")
         .arg("-e")

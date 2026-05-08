@@ -239,7 +239,51 @@ impl MockPerceptionProvider {
             ],
         };
 
-        Self::new(context, vec![compose_button, to_field, multiple_buttons])
+        let inbox_list = ResolvedTarget {
+            status: MatchStatus::Unique,
+            total_matches: 1,
+            app: Some(App {
+                name: "Google Chrome".to_string(),
+                bundle_id: "com.google.Chrome".to_string(),
+                is_frontmost: true,
+            }),
+            window: Some(Window {
+                id: "win_1042".to_string(),
+                title: "Inbox - user@gmail.com - Gmail".to_string(),
+                index: 0,
+                focused: true,
+                bounds: Bounds {
+                    x: 0.0,
+                    y: 25.0,
+                    width: 1440.0,
+                    height: 875.0,
+                },
+                display_id: Some(1),
+            }),
+            elements: vec![Element {
+                role: "list".to_string(),
+                name: "Inbox".to_string(),
+                text: None,
+                id: Some("inbox_list".to_string()),
+                state: ElementState {
+                    visible: true,
+                    focused: Some(true),
+                    enabled: Some(true),
+                },
+                bounds: Bounds {
+                    x: 40.0,
+                    y: 180.0,
+                    width: 280.0,
+                    height: 620.0,
+                },
+                index: 0,
+            }],
+        };
+
+        Self::new(
+            context,
+            vec![compose_button, to_field, multiple_buttons, inbox_list],
+        )
     }
 }
 
@@ -262,6 +306,8 @@ impl PerceptionProvider for MockPerceptionProvider {
             Ok(self.find_results[1].clone())
         } else if selector.element.name.as_deref() == Some("OK") {
             Ok(self.find_results[2].clone())
+        } else if selector.element.name.as_deref() == Some("Inbox") {
+            Ok(self.find_results[3].clone())
         } else {
             Err(PerceptionError::TargetNotFound(format!(
                 "No element with role={:?}, name={:?}",
@@ -544,10 +590,14 @@ async fn e2e_find_returns_matching_elements() {
             Some(serde_json::json!({
                 "name": "sootie_find",
                 "arguments": {
-                    "app": "Chrome",
-                    "window": "Gmail",
-                    "role": "button",
-                    "name": "Compose"
+                    "target": {
+                        "app": "Chrome",
+                        "window": "Gmail",
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    }
                 }
             })),
         ))
@@ -555,15 +605,17 @@ async fn e2e_find_returns_matching_elements() {
 
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    let target: ResolvedTarget =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let target: FindTargetResult =
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
 
     assert_eq!(target.status, MatchStatus::Unique);
-    assert_eq!(target.total_matches, 1);
-    assert_eq!(target.elements[0].name, "Compose");
+    assert_eq!(target.elements.len(), 1);
+    assert_eq!(target.elements[0].name.as_deref(), Some("Compose"));
     assert_eq!(target.elements[0].role, "button");
     assert!(target.app.is_some());
     assert!(target.window.is_some());
+    assert_eq!(target.elements[0].coordinate.x, 170.0);
+    assert_eq!(target.elements[0].coordinate.y, 103.0);
 
     let logs = p_log.lock().await;
     assert!(logs.iter().any(|l| l.starts_with("find:")));
@@ -580,8 +632,12 @@ async fn e2e_find_multiple_matches() {
             Some(serde_json::json!({
                 "name": "sootie_find",
                 "arguments": {
-                    "role": "button",
-                    "name": "OK"
+                    "target": {
+                        "selector": {
+                            "role": "button",
+                            "name": "OK"
+                        }
+                    }
                 }
             })),
         ))
@@ -589,11 +645,10 @@ async fn e2e_find_multiple_matches() {
 
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    let target: ResolvedTarget =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let target: FindTargetResult =
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
 
     assert_eq!(target.status, MatchStatus::Multiple);
-    assert_eq!(target.total_matches, 3);
     assert_eq!(target.elements.len(), 3);
 }
 
@@ -608,8 +663,12 @@ async fn e2e_find_not_found() {
             Some(serde_json::json!({
                 "name": "sootie_find",
                 "arguments": {
-                    "role": "button",
-                    "name": "NonexistentButton"
+                    "target": {
+                        "selector": {
+                            "role": "button",
+                            "name": "NonexistentButton"
+                        }
+                    }
                 }
             })),
         ))
@@ -618,6 +677,11 @@ async fn e2e_find_not_found() {
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "target_not_found"
+    );
+    assert!(result["structuredContent"]["error"]["details"]["backend_attempts"].is_array());
 }
 
 #[tokio::test]
@@ -631,9 +695,44 @@ async fn e2e_find_rejects_invalid_app_selector_object() {
             Some(serde_json::json!({
                 "name": "sootie_find",
                 "arguments": {
-                    "app": { "is_frontmost": "yes" },
-                    "role": "button",
-                    "name": "Compose"
+                    "target": {
+                        "app": { "is_frontmost": "yes" },
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    }
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
+async fn e2e_find_rejects_unknown_selector_field() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_find",
+                "arguments": {
+                    "target": {
+                        "selector": {
+                            "role": "button",
+                            "label": "Compose"
+                        }
+                    }
                 }
             })),
         ))
@@ -659,44 +758,13 @@ async fn e2e_click_with_target() {
             Some(serde_json::json!({
                 "name": "sootie_click",
                 "arguments": {
-                    "app": "Chrome",
-                    "window": "Gmail",
-                    "role": "button",
-                    "name": "Compose",
-                    "button": "left",
-                    "count": 1
-                }
-            })),
-        ))
-        .await;
-
-    assert!(resp.error.is_none());
-    let result = resp.result.unwrap();
-    let action_result: ActionResult =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
-    assert!(action_result.success);
-    assert_eq!(action_result.backend_used, Some("mock".to_string()));
-
-    let a_logs = a_log.lock().await;
-    assert!(a_logs.iter().any(|l| l.starts_with("click:")));
-}
-
-#[tokio::test]
-async fn e2e_click_with_canonical_nested_target() {
-    let (server, _, a_log) = make_server().await;
-
-    let resp = server
-        .handle_request(make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_click",
-                "arguments": {
                     "target": {
                         "app": "Chrome",
                         "window": "Gmail",
-                        "role": "button",
-                        "name": "Compose"
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
                     },
                     "button": "left",
                     "count": 1
@@ -707,19 +775,18 @@ async fn e2e_click_with_canonical_nested_target() {
 
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    assert_eq!(result["structuredContent"]["ok"], true);
-    assert_eq!(
-        result["structuredContent"]["warnings"],
-        serde_json::json!([])
-    );
+    let action_result: ActionResult =
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
+    assert!(action_result.success);
+    assert_eq!(action_result.backend_used, Some("mock".to_string()));
 
     let a_logs = a_log.lock().await;
     assert!(a_logs.iter().any(|l| l.starts_with("click:")));
 }
 
 #[tokio::test]
-async fn e2e_click_with_coordinate() {
-    let (server, _, a_log) = make_server().await;
+async fn e2e_click_with_canonical_nested_target() {
+    let (server, _, _) = make_server().await;
 
     let resp = server
         .handle_request(make_request(
@@ -728,7 +795,38 @@ async fn e2e_click_with_coordinate() {
             Some(serde_json::json!({
                 "name": "sootie_click",
                 "arguments": {
-                    "coordinate": { "x": 500.0, "y": 300.0 },
+                    "app": "Chrome",
+                    "window": "Gmail",
+                    "role": "button",
+                    "name": "Compose"
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
+async fn e2e_click_with_coordinate() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_click",
+                "arguments": {
+                    "target": {
+                        "coordinate": { "x": 500.0, "y": 300.0 }
+                    },
                     "button": "right"
                 }
             })),
@@ -737,15 +835,10 @@ async fn e2e_click_with_coordinate() {
 
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
     assert_eq!(
-        result["structuredContent"]["warnings"][0]["code"],
-        "legacy_argument_shape"
-    );
-    let a_logs = a_log.lock().await;
-    assert!(
-        a_logs.iter().any(|l| l.contains("Right")),
-        "No Right log in: {:?}",
-        *a_logs
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
     );
 }
 
@@ -793,8 +886,10 @@ async fn e2e_click_rejects_invalid_button() {
                 "arguments": {
                     "target": {
                         "app": "Chrome",
-                        "role": "button",
-                        "name": "Compose"
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
                     },
                     "button": "sideways"
                 }
@@ -822,9 +917,13 @@ async fn e2e_type_into_field() {
             Some(serde_json::json!({
                 "name": "sootie_type",
                 "arguments": {
-                    "app": "Chrome",
-                    "role": "textfield",
-                    "name": "To",
+                    "target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "textfield",
+                            "name": "To"
+                        }
+                    },
                     "text": "user@example.com",
                     "clear_first": true
                 }
@@ -834,12 +933,9 @@ async fn e2e_type_into_field() {
 
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    assert_eq!(
-        result["structuredContent"]["warnings"][0]["code"],
-        "legacy_argument_shape"
-    );
+    assert_eq!(result["structuredContent"]["ok"], true);
     let action_result: ActionResult =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
     assert!(action_result.success);
 
     let a_logs = a_log.lock().await;
@@ -923,6 +1019,13 @@ async fn e2e_scroll() {
             Some(serde_json::json!({
                 "name": "sootie_scroll",
                 "arguments": {
+                    "target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "list",
+                            "name": "Inbox"
+                        }
+                    },
                     "direction": "down",
                     "amount": 5
                 }
@@ -950,8 +1053,10 @@ async fn e2e_scroll_rejects_invalid_direction() {
                     "direction": "diagonal",
                     "target": {
                         "app": "Chrome",
-                        "role": "list",
-                        "name": "Inbox"
+                        "selector": {
+                            "role": "list",
+                            "name": "Inbox"
+                        }
                     }
                 }
             })),
@@ -1007,7 +1112,13 @@ async fn e2e_hover() {
             Some(serde_json::json!({
                 "name": "sootie_hover",
                 "arguments": {
-                    "coordinate": { "x": 100.0, "y": 200.0 }
+                    "target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    }
                 }
             })),
         ))
@@ -1029,8 +1140,20 @@ async fn e2e_drag() {
             Some(serde_json::json!({
                 "name": "sootie_drag",
                 "arguments": {
-                    "from": { "x": 100.0, "y": 100.0 },
-                    "to": { "x": 200.0, "y": 200.0 }
+                    "from_target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    },
+                    "to_target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "textfield",
+                            "name": "To"
+                        }
+                    }
                 }
             })),
         ))
@@ -1275,8 +1398,7 @@ async fn e2e_recipe_lifecycle() {
         .await;
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    let run_result: serde_json::Value =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let run_result = result["structuredContent"]["data"].clone();
     assert_eq!(run_result["recipe"], "e2e-test-recipe");
     assert_eq!(run_result["status"], "completed");
     assert_eq!(run_result["results"].as_array().unwrap().len(), 3);
@@ -1452,6 +1574,34 @@ async fn e2e_screenshot() {
 }
 
 #[tokio::test]
+async fn e2e_screenshot_with_scope() {
+    let (server, p_log, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_screenshot",
+                "arguments": {
+                    "scope": {
+                        "app": "Chrome",
+                        "window": "Gmail"
+                    }
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["structuredContent"]["ok"], true);
+
+    let logs = p_log.lock().await;
+    assert!(logs.iter().any(|l| l == "screenshot"));
+}
+
+#[tokio::test]
 async fn e2e_screenshot_rejects_partial_region() {
     let (server, _, _) = make_server().await;
 
@@ -1488,9 +1638,13 @@ async fn e2e_inspect_element() {
             Some(serde_json::json!({
                 "name": "sootie_inspect",
                 "arguments": {
-                    "app": "Chrome",
-                    "role": "button",
-                    "name": "Compose"
+                    "target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    }
                 }
             })),
         ))
@@ -1499,7 +1653,7 @@ async fn e2e_inspect_element() {
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     let inspection: DeepInspection =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
 
     assert_eq!(inspection.element.name, "Compose");
     assert_eq!(inspection.backend, "at_tree");
@@ -1520,8 +1674,12 @@ async fn e2e_wait_for_element() {
             Some(serde_json::json!({
                 "name": "sootie_wait",
                 "arguments": {
-                    "role": "button",
-                    "name": "Compose",
+                    "target": {
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    },
                     "timeout": 3000
                 }
             })),
@@ -1531,7 +1689,7 @@ async fn e2e_wait_for_element() {
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     let wait_result: WaitResult =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
     assert!(wait_result.matched);
     assert!(!wait_result.timed_out);
 
@@ -1550,9 +1708,45 @@ async fn e2e_wait_rejects_invalid_timeout_type() {
             Some(serde_json::json!({
                 "name": "sootie_wait",
                 "arguments": {
-                    "role": "button",
-                    "name": "Compose",
+                    "target": {
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    },
                     "timeout": "3000"
+                }
+            })),
+        ))
+        .await;
+
+    assert!(resp.error.is_none());
+    let result = resp.result.unwrap();
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
+async fn e2e_wait_rejects_invalid_state_type() {
+    let (server, _, _) = make_server().await;
+
+    let resp = server
+        .handle_request(make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_wait",
+                "arguments": {
+                    "target": {
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    },
+                    "state": "visible"
                 }
             })),
         ))
@@ -1702,18 +1896,22 @@ async fn e2e_full_gmail_workflow() {
             Some(serde_json::json!({
                 "name": "sootie_find",
                 "arguments": {
-                    "app": "Chrome",
-                    "window": "Gmail",
-                    "role": "button",
-                    "name": "Compose"
+                    "target": {
+                        "app": "Chrome",
+                        "window": "Gmail",
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    }
                 }
             })),
         ))
         .await;
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
-    let target: ResolvedTarget =
-        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let target: FindTargetResult =
+        serde_json::from_value(result["structuredContent"]["data"].clone()).unwrap();
     assert_eq!(target.status, MatchStatus::Unique);
 
     // Step 3: Click Compose
@@ -1724,10 +1922,14 @@ async fn e2e_full_gmail_workflow() {
             Some(serde_json::json!({
                 "name": "sootie_click",
                 "arguments": {
-                    "app": "Chrome",
-                    "window": "Gmail",
-                    "role": "button",
-                    "name": "Compose",
+                    "target": {
+                        "app": "Chrome",
+                        "window": "Gmail",
+                        "selector": {
+                            "role": "button",
+                            "name": "Compose"
+                        }
+                    },
                     "button": "left",
                     "count": 1
                 }
@@ -1744,8 +1946,12 @@ async fn e2e_full_gmail_workflow() {
             Some(serde_json::json!({
                 "name": "sootie_find",
                 "arguments": {
-                    "role": "textfield",
-                    "name": "To"
+                    "target": {
+                        "selector": {
+                            "role": "textfield",
+                            "name": "To"
+                        }
+                    }
                 }
             })),
         ))
@@ -1760,9 +1966,13 @@ async fn e2e_full_gmail_workflow() {
             Some(serde_json::json!({
                 "name": "sootie_type",
                 "arguments": {
-                    "app": "Chrome",
-                    "role": "textfield",
-                    "name": "To",
+                    "target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "textfield",
+                            "name": "To"
+                        }
+                    },
                     "text": "colleague@company.com",
                     "clear_first": true
                 }
@@ -1821,9 +2031,13 @@ async fn e2e_sensitive_data_sanitized_in_logs() {
             Some(serde_json::json!({
                 "name": "sootie_type",
                 "arguments": {
-                    "app": "Chrome",
-                    "role": "textfield",
-                    "name": "Password",
+                    "target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "textfield",
+                            "name": "Password"
+                        }
+                    },
                     "text": "user@example.com",
                     "credentials": {
                         "password": "my_secret_pass",
@@ -1852,9 +2066,13 @@ async fn e2e_non_sensitive_data_preserved_in_logs() {
             Some(serde_json::json!({
                 "name": "sootie_type",
                 "arguments": {
-                    "app": "Chrome",
-                    "role": "textfield",
-                    "name": "Username",
+                    "target": {
+                        "app": "Chrome",
+                        "selector": {
+                            "role": "textfield",
+                            "name": "Username"
+                        }
+                    },
                     "text": "john_doe",
                     "clear_first": false
                 }

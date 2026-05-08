@@ -127,9 +127,31 @@ fn generate_auth_token() -> Result<String> {
 }
 
 /// Read last N lines from stderr
-fn read_stderr_lines(stderr: Option<Stdio>, n: usize) -> String {
+fn read_stderr_lines(_stderr: Option<Stdio>, _n: usize) -> String {
     // This is simplified - actual implementation would capture stderr
     "Check sidecar logs for details".to_string()
+}
+
+/// Get auth token from running sidecar process
+fn get_running_sidecar_auth_token(port: u16) -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("ps")
+        .args(["aux"])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains("server.py") && line.contains(&format!("--port {}", port)) {
+            if let Some(idx) = line.find("--auth-token") {
+                let remainder = &line[idx + "--auth-token ".len()..];
+                let token = remainder.split_whitespace().next()?;
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Launch sidecar with crash recovery
@@ -137,6 +159,11 @@ pub async fn launch_sidecar(port: u16, auth_token: Option<&str>) -> Result<Sidec
     // Check if already running
     if is_sidecar_running(port).await {
         println!("Sidecar already running on port {}", port);
+        // Try to get auth token from running process
+        let running_token = get_running_sidecar_auth_token(port);
+        if let Some(token) = running_token {
+            return Ok(SidecarGuard::empty().with_auth_token(token));
+        }
         return Ok(SidecarGuard::empty());
     }
 
@@ -188,7 +215,7 @@ pub async fn launch_sidecar(port: u16, auth_token: Option<&str>) -> Result<Sidec
 
         if healthy {
             println!("✓ Sidecar started successfully");
-            return Ok(SidecarGuard::new_with_token(child, token));
+            return Ok(SidecarGuard::new(child).with_auth_token(token));
         }
 
         // Kill failed child
@@ -232,33 +259,31 @@ async fn wait_for_sidecar_health(port: u16, timeout_secs: u64) -> bool {
 /// Sidecar process guard with auth token
 pub struct SidecarGuard {
     child: Option<Child>,
-    auth_token: String,
+    auth_token: Option<String>,
 }
 
 impl SidecarGuard {
     pub fn new(child: Child) -> Self {
         Self {
             child: Some(child),
-            auth_token: String::new(),
+            auth_token: None,
         }
     }
 
-    pub fn new_with_token(child: Child, token: String) -> Self {
-        Self {
-            child: Some(child),
-            auth_token: token,
-        }
+    pub fn with_auth_token(mut self, token: String) -> Self {
+        self.auth_token = Some(token);
+        self
     }
 
     pub fn empty() -> Self {
         Self {
             child: None,
-            auth_token: String::new(),
+            auth_token: None,
         }
     }
 
-    pub fn auth_token(&self) -> &str {
-        &self.auth_token
+    pub fn auth_token(&self) -> Option<&str> {
+        self.auth_token.as_deref()
     }
 }
 

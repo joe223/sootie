@@ -10,18 +10,18 @@ use sootie_core::action::{
     ActionProvider, ActionTarget, ClickAction, DragAction, FocusAction, HotkeyAction, HoverAction,
     LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction, WindowOperation,
 };
+use sootie_core::cascade::Cascade;
 use sootie_core::logging::{
     create_duration_ms, sanitize_tool_call_args, LogConfig, SootieLogger, ToolCallLog,
 };
 use sootie_core::perception::{PerceptionProvider, WaitCondition};
 use sootie_core::recipe::{Recipe, RecipeEngine, StepTarget};
-use sootie_core::selector::AppSelector;
+use sootie_core::selector::{AppSelector, FindTargetResult, MatchStatus, Scope, Selector, Target};
+use sootie_core::vision::RuntimeVisionProvider;
 
 use crate::tools::{
-    all_tools, parse_action_target, parse_mouse_button, parse_mouse_button_strict,
-    parse_optional_action_target, parse_scroll_direction, parse_scroll_direction_strict,
-    parse_selector_from_args_strict, parse_step_target, selector_field_keys_present,
-    validate_action_selector, validate_query_selector,
+    all_tools, parse_mouse_button, parse_mouse_button_strict, parse_scroll_direction,
+    parse_scroll_direction_strict,
 };
 use crate::types::{
     CallToolRequest, CallToolResult, InitializeResult, JsonRpcRequest, JsonRpcResponse,
@@ -51,6 +51,25 @@ impl ToolInvocationError {
             details: None,
         }
     }
+
+    fn execution_with_details(message: impl Into<String>, details: serde_json::Value) -> Self {
+        Self {
+            code: "execution_failed",
+            message: message.into(),
+            details: Some(details),
+        }
+    }
+
+    fn target_not_found(message: impl Into<String>, backend_attempts: Vec<String>) -> Self {
+        Self {
+            code: "target_not_found",
+            message: message.into(),
+            details: Some(serde_json::json!({
+                "backend_attempts": backend_attempts,
+                "backend": null
+            })),
+        }
+    }
 }
 
 fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, ToolInvocationError> {
@@ -65,21 +84,42 @@ fn present_tool_data(value: &serde_json::Value) -> Result<String, ToolInvocation
     }
 }
 
-fn tool_compatibility_warnings(name: &str, args: &serde_json::Value) -> Vec<serde_json::Value> {
-    let uses_legacy_top_level_target = args.get("target").is_none()
-        && (args.get("coordinate").is_some() || selector_field_keys_present(args));
+fn parse_target(args: &serde_json::Value) -> Result<Target, ToolInvocationError> {
+    let target_value = args
+        .get("target")
+        .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: target"))?;
 
-    match name {
-        "sootie_click" | "sootie_type" | "sootie_hover" | "sootie_scroll"
-            if uses_legacy_top_level_target =>
-        {
-            vec![serde_json::json!({
-                "code": "legacy_argument_shape",
-                "message": "Top-level selector and coordinate fields are deprecated; use the canonical target object."
-            })]
-        }
-        _ => vec![],
+    serde_json::from_value(target_value.clone())
+        .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid target: {}", e)))
+}
+
+fn parse_named_target(
+    args: &serde_json::Value,
+    field: &str,
+) -> Result<Target, ToolInvocationError> {
+    let target_value = args.get(field).ok_or_else(|| {
+        ToolInvocationError::invalid_arguments(format!("Missing required field: {}", field))
+    })?;
+
+    serde_json::from_value(target_value.clone())
+        .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid {}: {}", field, e)))
+}
+
+fn parse_scope(args: &serde_json::Value) -> Result<Option<Scope>, ToolInvocationError> {
+    let scope_value = args.get("scope");
+
+    if let Some(scope) = scope_value {
+        serde_json::from_value(scope.clone())
+            .map(Some)
+            .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid scope: {}", e)))
+    } else {
+        Ok(None)
     }
+}
+
+fn parse_selector_args(args: &serde_json::Value) -> Result<Selector, ToolInvocationError> {
+    serde_json::from_value(args.clone())
+        .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid selector: {}", e)))
 }
 
 pub struct SootieServer {
@@ -126,6 +166,55 @@ impl SootieServer {
             recipe_engine: Arc::new(Mutex::new(recipe_engine)),
             logger: SootieLogger::new(LogConfig::default()),
         }
+    }
+
+    async fn run_find_target(
+        &self,
+        target: &Target,
+    ) -> Result<FindTargetResult, ToolInvocationError> {
+        target
+            .validate()
+            .map_err(|e| ToolInvocationError::invalid_arguments(e.to_string()))?;
+
+        let vision = RuntimeVisionProvider::from_env();
+        let cascade = Cascade::new(self.perception.as_ref().as_ref(), Some(&vision));
+        Ok(cascade.find_target(target).await)
+    }
+
+    async fn find_target_or_error(
+        &self,
+        target: &Target,
+        message: &str,
+    ) -> Result<FindTargetResult, ToolInvocationError> {
+        let result = self.run_find_target(target).await?;
+        if result.status == MatchStatus::None || result.elements.is_empty() {
+            return Err(ToolInvocationError::target_not_found(
+                message,
+                result.backend_attempts.clone().unwrap_or_default(),
+            ));
+        }
+
+        Ok(result)
+    }
+
+    fn selector_for_resolved_element(target: &Target, result: &FindTargetResult) -> Selector {
+        let mut selector: Selector = target.into();
+
+        if let Some(element) = result.elements.first() {
+            selector.element.role = Some(element.role.clone());
+            selector.element.name = element.name.clone();
+            selector.element.text = element.text.clone();
+            selector.element.id = element.id.clone();
+        }
+
+        selector
+    }
+
+    fn execution_details(result: &FindTargetResult) -> serde_json::Value {
+        serde_json::json!({
+            "backend": result.backend,
+            "element_index": 0
+        })
     }
 
     pub async fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
@@ -237,7 +326,6 @@ impl SootieServer {
             Ok(value) => {
                 let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
                 let content_text = present_tool_data(&value).map_err(|e| (-32603, e.message))?;
-                let warnings = tool_compatibility_warnings(name, &args);
 
                 self.logger.log_tool_call(&ToolCallLog {
                     tool_name: name.to_string(),
@@ -255,7 +343,7 @@ impl SootieServer {
                     structured_content: Some(serde_json::json!({
                         "ok": true,
                         "data": value,
-                        "warnings": warnings
+                        "warnings": []
                     })),
                 };
                 serde_json::to_value(call_result).map_err(|e| (-32603, e.to_string()))
@@ -303,14 +391,10 @@ impl SootieServer {
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let selector = parse_selector_from_args_strict(args)
-            .map_err(ToolInvocationError::invalid_arguments)?;
-        validate_query_selector(&selector).map_err(ToolInvocationError::invalid_arguments)?;
+        let target = parse_target(args)?;
         let result = self
-            .perception
-            .find(&selector)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Find failed: {}", e)))?;
+            .find_target_or_error(&target, "No element matched the requested target")
+            .await?;
         to_json_value(result)
     }
 
@@ -318,9 +402,11 @@ impl SootieServer {
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let selector = parse_selector_from_args_strict(args)
-            .map_err(ToolInvocationError::invalid_arguments)?;
-        validate_query_selector(&selector).map_err(ToolInvocationError::invalid_arguments)?;
+        let target = parse_target(args)?;
+        let find_result = self
+            .find_target_or_error(&target, "No element matched the requested target")
+            .await?;
+        let selector = Self::selector_for_resolved_element(&target, &find_result);
         let result = self
             .perception
             .inspect(&selector)
@@ -333,9 +419,8 @@ impl SootieServer {
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let selector = parse_selector_from_args_strict(args)
-            .map_err(ToolInvocationError::invalid_arguments)?;
-        validate_query_selector(&selector).map_err(ToolInvocationError::invalid_arguments)?;
+        let target = parse_target(args)?;
+        let selector: Selector = (&target).into();
         let timeout = match args.get("timeout") {
             Some(value) => value.as_u64().ok_or_else(|| {
                 ToolInvocationError::invalid_arguments("Timeout must be a non-negative integer")
@@ -343,21 +428,33 @@ impl SootieServer {
             None => 5000,
         };
 
-        let state = args
-            .get("state")
-            .and_then(|v| {
-                serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone()).ok()
-            })
-            .unwrap_or_default();
+        let state =
+            args.get("state")
+                .map(|value| {
+                    serde_json::from_value::<HashMap<String, serde_json::Value>>(value.clone())
+                        .map_err(|e| {
+                            ToolInvocationError::invalid_arguments(format!(
+                                "Invalid state object: {}",
+                                e
+                            ))
+                        })
+                })
+                .transpose()?
+                .unwrap_or_default();
 
         let condition = WaitCondition {
             state,
             timeout_ms: timeout,
         };
 
+        let resolved_selector = match self.run_find_target(&target).await? {
+            result if result.status == MatchStatus::None || result.elements.is_empty() => selector,
+            result => Self::selector_for_resolved_element(&target, &result),
+        };
+
         let result = self
             .perception
-            .wait(&selector, &condition)
+            .wait(&resolved_selector, &condition)
             .await
             .map_err(|e| ToolInvocationError::execution(format!("Wait failed: {}", e)))?;
         to_json_value(result)
@@ -367,14 +464,19 @@ impl SootieServer {
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let selector = if args.get("app").is_some() || args.get("window").is_some() {
-            Some(
-                parse_selector_from_args_strict(args)
-                    .map_err(ToolInvocationError::invalid_arguments)?,
-            )
-        } else {
-            None
-        };
+        // v2: Use scope schema for app/window scoping
+        let scope = parse_scope(args)?;
+        let selector = scope.map(|s| sootie_core::selector::Selector {
+            app: s.app,
+            window: s.window,
+            element: sootie_core::selector::ElementSelector {
+                role: None,
+                name: None,
+                text: None,
+                id: None,
+                state: None,
+            },
+        });
 
         let region = args
             .get("region")
@@ -443,11 +545,11 @@ impl SootieServer {
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
-
-        if let ActionTarget::Selector(selector) = &target {
-            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
-        }
+        let target = parse_target(args)?;
+        let find_result = self
+            .find_target_or_error(&target, "No element matched the requested target")
+            .await?;
+        let coordinate = find_result.elements[0].coordinate.clone();
 
         let button = args
             .get("button")
@@ -459,16 +561,17 @@ impl SootieServer {
         let count = args.get("count").and_then(|v| v.as_u64()).map(|v| v as u32);
 
         let action = ClickAction {
-            target,
+            target: ActionTarget::Coordinate(coordinate),
             button,
             count,
         };
 
-        let result = self
-            .action
-            .click(&action)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Click failed: {}", e)))?;
+        let result = self.action.click(&action).await.map_err(|e| {
+            ToolInvocationError::execution_with_details(
+                format!("Click failed: {}", e),
+                Self::execution_details(&find_result),
+            )
+        })?;
         to_json_value(result)
     }
 
@@ -482,26 +585,26 @@ impl SootieServer {
             .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: text"))?
             .to_string();
 
-        let target =
-            parse_optional_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
-
-        if let Some(ActionTarget::Selector(selector)) = &target {
-            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
-        }
+        let target = parse_target(args)?;
+        let find_result = self
+            .find_target_or_error(&target, "No element matched the requested target")
+            .await?;
+        let coordinate = find_result.elements[0].coordinate.clone();
 
         let clear_first = args.get("clear_first").and_then(|v| v.as_bool());
 
         let action = TypeAction {
-            target,
+            target: Some(ActionTarget::Coordinate(coordinate)),
             text,
             clear_first,
         };
 
-        let result = self
-            .action
-            .r#type(&action)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Type failed: {}", e)))?;
+        let result = self.action.r#type(&action).await.map_err(|e| {
+            ToolInvocationError::execution_with_details(
+                format!("Type failed: {}", e),
+                Self::execution_details(&find_result),
+            )
+        })?;
         to_json_value(result)
     }
 
@@ -564,30 +667,31 @@ impl SootieServer {
                 ToolInvocationError::invalid_arguments("Missing required field: direction")
             })?
             .to_string();
+        let direction = parse_scroll_direction_strict(&direction)
+            .map_err(ToolInvocationError::invalid_arguments)?;
 
-        let target =
-            parse_optional_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
-
-        if let Some(ActionTarget::Selector(selector)) = &target {
-            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
-        }
+        let target = parse_target(args)?;
+        let find_result = self
+            .find_target_or_error(&target, "No element matched the requested target")
+            .await?;
+        let coordinate = find_result.elements[0].coordinate.clone();
         let amount = args
             .get("amount")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
 
         let action = ScrollAction {
-            target,
-            direction: parse_scroll_direction_strict(&direction)
-                .map_err(ToolInvocationError::invalid_arguments)?,
+            target: Some(ActionTarget::Coordinate(coordinate)),
+            direction,
             amount,
         };
 
-        let result = self
-            .action
-            .scroll(&action)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Scroll failed: {}", e)))?;
+        let result = self.action.scroll(&action).await.map_err(|e| {
+            ToolInvocationError::execution_with_details(
+                format!("Scroll failed: {}", e),
+                Self::execution_details(&find_result),
+            )
+        })?;
         to_json_value(result)
     }
 
@@ -595,18 +699,21 @@ impl SootieServer {
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_action_target(args).map_err(ToolInvocationError::invalid_arguments)?;
+        let target = parse_target(args)?;
+        let find_result = self
+            .find_target_or_error(&target, "No element matched the requested target")
+            .await?;
+        let coordinate = find_result.elements[0].coordinate.clone();
 
-        if let ActionTarget::Selector(selector) = &target {
-            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
-        }
-
-        let action = HoverAction { target };
-        let result = self
-            .action
-            .hover(&action)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Hover failed: {}", e)))?;
+        let action = HoverAction {
+            target: ActionTarget::Coordinate(coordinate),
+        };
+        let result = self.action.hover(&action).await.map_err(|e| {
+            ToolInvocationError::execution_with_details(
+                format!("Hover failed: {}", e),
+                Self::execution_details(&find_result),
+            )
+        })?;
         to_json_value(result)
     }
 
@@ -614,41 +721,30 @@ impl SootieServer {
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let from_val = args.get("from").ok_or_else(|| {
-            ToolInvocationError::invalid_arguments("Missing required field: from")
+        let from_target = parse_named_target(args, "from_target")?;
+        let to_target = parse_named_target(args, "to_target")?;
+        let from_result = self
+            .find_target_or_error(&from_target, "No element matched the from_target")
+            .await?;
+        let to_result = self
+            .find_target_or_error(&to_target, "No element matched the to_target")
+            .await?;
+
+        let action = DragAction {
+            from: ActionTarget::Coordinate(from_result.elements[0].coordinate.clone()),
+            to: ActionTarget::Coordinate(to_result.elements[0].coordinate.clone()),
+        };
+        let result = self.action.drag(&action).await.map_err(|e| {
+            ToolInvocationError::execution_with_details(
+                format!("Drag failed: {}", e),
+                serde_json::json!({
+                    "backend": from_result.backend,
+                    "element_index": 0,
+                    "to_backend": to_result.backend,
+                    "to_element_index": 0
+                }),
+            )
         })?;
-        let to_val = args
-            .get("to")
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: to"))?;
-
-        let from = parse_step_target(from_val)
-            .map(|st| match st {
-                StepTarget::Coordinate(c) => sootie_core::action::ActionTarget::Coordinate(c),
-                StepTarget::Selector(s) => sootie_core::action::ActionTarget::Selector(s),
-            })
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Invalid 'from' target"))?;
-
-        let to = parse_step_target(to_val)
-            .map(|st| match st {
-                StepTarget::Coordinate(c) => sootie_core::action::ActionTarget::Coordinate(c),
-                StepTarget::Selector(s) => sootie_core::action::ActionTarget::Selector(s),
-            })
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Invalid 'to' target"))?;
-
-        if let ActionTarget::Selector(selector) = &from {
-            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
-        }
-
-        if let ActionTarget::Selector(selector) = &to {
-            validate_action_selector(selector).map_err(ToolInvocationError::invalid_arguments)?;
-        }
-
-        let action = DragAction { from, to };
-        let result = self
-            .action
-            .drag(&action)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Drag failed: {}", e)))?;
         to_json_value(result)
     }
 
@@ -662,8 +758,7 @@ impl SootieServer {
             ));
         }
 
-        let selector = parse_selector_from_args_strict(args)
-            .map_err(ToolInvocationError::invalid_arguments)?;
+        let selector = parse_selector_args(args)?;
         let action = FocusAction { selector };
         let result = self
             .action
@@ -719,8 +814,7 @@ impl SootieServer {
         ));
         }
 
-        let selector = parse_selector_from_args_strict(args)
-            .map_err(ToolInvocationError::invalid_arguments)?;
+        let selector = parse_selector_args(args)?;
         let op_str = args
             .get("operation")
             .and_then(|v| v.as_str())

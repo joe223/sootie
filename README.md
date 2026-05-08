@@ -196,28 +196,31 @@ If structural execution is unavailable or fails, Sootie uses the coordinates res
 
 ## Tools
 
-Core interaction tools are backend-agnostic. Sootie uses one normalized UI selector scheme across native apps and web apps, built around fields such as `app`, `window`, `role`, `name`, `text`, and `state`. In browser context, Sootie can still prefer CDP automatically without requiring a separate click/type/find API.
+Core interaction tools are backend-agnostic. Sootie uses one normalized target contract across native apps and web apps. Target-driven tools accept a nested `target` object with optional `app` and `window` scopes plus a required `selector` object.
 
 ### Selector Scheme
 
 Selectors describe the target element, not the backend used to reach it. The scheme defines both flexible inputs for querying and stable outputs for resolved targets.
 
 #### 1. Input (Target Selection)
-Query tools such as `sootie_find`, `sootie_inspect`, and `sootie_wait` accept flexible shorthand
-and partial matching. Mutating tools accept a stricter canonical `target` object and require an
-unambiguous selector when the target is not a coordinate.
+Query tools such as `sootie_find`, `sootie_inspect`, and `sootie_wait` accept the same nested
+`target` shape used by target-driven action tools.
 
 - **App Input**: Can be a string (`"Chrome"`) or a partial object (`{ "name": "Chrome", "is_frontmost": true }`).
 - **Window Input**: Can be a string (`"Gmail"`) or a partial object to resolve ambiguity (`{ "title": "Gmail", "index": 0 }`).
-- **Element Input**: Matches based on provided constraints (`{ "role": "button", "name": "Compose" }`).
+- **Selector Input**: Matches based on provided constraints (`{ "role": "button", "name": "Compose" }`).
 
 *Example Input:*
 ```json
 {
-  "app": "Chrome",
-  "window": { "title": "Gmail", "focused": true },
-  "role": "button",
-  "name": "Compose"
+  "target": {
+    "app": "Chrome",
+    "window": { "title": "Gmail", "focused": true },
+    "selector": {
+      "role": "button",
+      "name": "Compose"
+    }
+  }
 }
 ```
 
@@ -249,11 +252,11 @@ into a canonical action `target` object rather than passing the resolved payload
 
 > **Note on Deep Inspection:** While `sootie_find` returns a list of matching `Element Objects`, using `sootie_inspect` on a single target returns a deep inspection payload including its immediate `children`, the `backend` used, supported `actions`, and the backend-specific `raw_metadata` for advanced recipe authoring.
 
-*Example Output (sootie_find):*
+*Example Output (`sootie_find`):*
 ```json
 {
   "status": "unique",
-  "total_matches": 1,
+  "backend": "at_tree",
   "app": {
     "name": "Google Chrome",
     "bundle_id": "com.google.Chrome",
@@ -273,9 +276,11 @@ into a canonical action `target` object rather than passing the resolved payload
       "id": "dom_compose_btn",
       "state": { "visible": true, "enabled": true },
       "bounds": { "x": 120, "y": 85, "width": 100, "height": 36 },
+      "coordinate": { "x": 170, "y": 103 },
       "index": 0
     }
-  ]
+  ],
+  "confidence": null
 }
 ```
 
@@ -287,37 +292,34 @@ into a canonical action `target` object rather than passing the resolved payload
 | `sootie_find` | Resolve UI targets across desktop apps and web apps with the unified selector scheme |
 | `sootie_inspect` | Return normalized metadata and the full sub-tree for one resolved target, with backend-specific details when available |
 | `sootie_wait` | Pause execution until a target matches a specific state (e.g., `{ "visible": true }`) or a timeout occurs |
-| `sootie_screenshot` | Capture a screen, window, or region screenshot |
+| `sootie_screenshot` | Capture a screen, window, or region screenshot. App/window scoping uses `scope`, not `target`. |
 
 ### Action
 
-Action tools publish one canonical target shape through `tools/list`:
+Action tools publish the same nested v2 target shape through `tools/list`:
 
-- `target` (object): Either a selector object or `{ "coordinate": { "x": 500, "y": 300 } }`
-- Selector targets for mutating tools must include `app` plus at least one element identifier such
-  as `role`, `name`, `text`, or `id`
-
-Legacy top-level selector fields and top-level `coordinate` are still accepted during migration,
-but successful calls return a `structuredContent.warnings` entry with code
-`legacy_argument_shape`.
+- `target.app` (optional): app scope
+- `target.window` (optional): window scope
+- `target.selector` (required): at least one of `role`, `name`, `text`, or `id`
+- `sootie_drag` uses `from_target` and `to_target`
 
 Every `tools/call` response now includes `structuredContent`:
 
-- Success: `{ "ok": true, "data": ..., "warnings": [...] }`
-- Tool-level failure: `{ "ok": false, "error": { "code", "message", "details" }, "warnings": [...] }`
+- Success: `{ "ok": true, "data": ..., "warnings": [] }`
+- Tool-level failure: `{ "ok": false, "error": { "code", "message", "details" }, "warnings": [] }`
 
 JSON-RPC errors remain reserved for invalid MCP envelope/method dispatch.
 
 | Tool | What it does | Additional Parameters |
 |------|-------------|----------------------|
 | `sootie_launch` | Launch a desktop app | None |
-| `sootie_click` | Click a resolved target or coordinates | `button` (left/right/middle), `count` (integer) |
-| `sootie_type` | Type into a resolved target or current cursor | `text` (string), `clear_first` (boolean) |
+| `sootie_click` | Click the top-ranked element resolved from `target` | `button` (left/right/middle), `count` (integer) |
+| `sootie_type` | Type into the top-ranked element resolved from `target` | `text` (string), `clear_first` (boolean) |
 | `sootie_press` | Press a single key | `key` (e.g., "Return", "Tab", "Escape") |
 | `sootie_hotkey` | Press key combinations | `keys` (array of strings, e.g., `["Cmd", "C"]`) |
-| `sootie_scroll` | Scroll up, down, left, or right | `direction` ("up"/"down"/"left"/"right"), `amount` (integer) |
-| `sootie_hover` | Hover over a resolved target or coordinates | None |
-| `sootie_drag` | Drag from one resolved target or point to another | `from` and `to`, each a selector or coordinate target |
+| `sootie_scroll` | Scroll at the top-ranked element resolved from `target` | `direction` ("up"/"down"/"left"/"right"), `amount` (integer) |
+| `sootie_hover` | Hover over the top-ranked element resolved from `target` | None |
+| `sootie_drag` | Drag from `from_target` to `to_target` after resolving both | `from_target`, `to_target` |
 
 ### Window & Focus
 

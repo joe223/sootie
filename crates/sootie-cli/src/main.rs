@@ -200,6 +200,10 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
         match setup::launch_sidecar(config.vision.sidecar_port, None).await {
             Ok(guard) => {
                 info!(port = %config.vision.sidecar_port, auto_start = %config.vision.auto_start, "Python sidecar launched");
+                if let Some(token) = guard.auth_token() {
+                    std::env::set_var("SOOTIE_SIDECAR_AUTH_TOKEN", token);
+                    info!("Sidecar auth token set in environment");
+                }
                 Some(guard)
             }
             Err(e) => {

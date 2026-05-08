@@ -15,11 +15,8 @@ pub use config::{generate_default_config, load_config, resolve_vision_model_path
 pub use model_download::{
     download_showui_model, estimate_model_size, update_config_with_model_path,
 };
-pub use python_env::{
-    check_python_deps, create_venv, find_python, fix_python_deps, install_deps, sootie_venv_path,
-    sootie_venv_python,
-};
-pub use sidecar::{install_sidecar_files, is_sidecar_running, launch_sidecar};
+pub use python_env::{check_python_deps, fix_python_deps};
+pub use sidecar::{install_sidecar_files, launch_sidecar};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SetupMode {

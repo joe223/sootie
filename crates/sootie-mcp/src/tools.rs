@@ -1,7 +1,5 @@
-use sootie_core::action::{ActionTarget, MouseButton, ScrollDirection};
+use sootie_core::action::{MouseButton, ScrollDirection};
 use sootie_core::recipe::StepTarget;
-#[cfg(test)]
-use sootie_core::selector::{AppSelector, WindowSelector, WindowState};
 use sootie_core::selector::{Coordinate, Selector};
 
 use crate::types::ToolDefinition;
@@ -53,25 +51,9 @@ fn perception_find() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": app_selector_schema(),
-                "window": window_selector_schema(),
-                "role": {
-                    "type": "string",
-                    "description": "UI role (button, textfield, link, etc.)"
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Accessible label or computed name"
-                },
-                "text": {
-                    "type": "string",
-                    "description": "Visible text content"
-                },
-                "id": {
-                    "type": "string",
-                    "description": "Backend-specific ID"
-                }
-            }
+                "target": target_schema()
+            },
+            "required": ["target"]
         }),
     }
 }
@@ -84,13 +66,9 @@ fn perception_inspect() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": app_selector_schema(),
-                "window": window_selector_schema(),
-                "role": { "type": "string" },
-                "name": { "type": "string" },
-                "text": { "type": "string" },
-                "id": { "type": "string" }
-            }
+                "target": target_schema()
+            },
+            "required": ["target"]
         }),
     }
 }
@@ -103,20 +81,21 @@ fn perception_wait() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": app_selector_schema(),
-                "window": window_selector_schema(),
-                "role": { "type": "string" },
-                "name": { "type": "string" },
+                "target": target_schema(),
                 "state": {
                     "type": "object",
-                    "description": "State to wait for (e.g. {visible: true})"
+                    "properties": {
+                        "visible": { "type": "boolean" },
+                        "focused": { "type": "boolean" }
+                    }
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in milliseconds",
-                    "default": 5000
+                    "default": 5000,
+                    "description": "Timeout in milliseconds"
                 }
-            }
+            },
+        "required": ["target"]
         }),
     }
 }
@@ -128,8 +107,7 @@ fn perception_screenshot() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "app": app_selector_schema(),
-                "window": window_selector_schema(),
+                "scope": scope_schema(),
                 "region": {
                     "type": "object",
                     "properties": {
@@ -172,27 +150,17 @@ fn perception_find_apps() -> ToolDefinition {
     }
 }
 
-fn coordinate_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "x": { "type": "number" },
-            "y": { "type": "number" }
-        },
-        "required": ["x", "y"]
-    })
-}
-
 fn app_selector_schema() -> serde_json::Value {
     serde_json::json!({
         "oneOf": [
             { "type": "string" },
             {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
-                    "name": { "type": "string" },
-                    "bundle_id": { "type": "string" },
-                    "is_frontmost": { "type": "boolean" }
+                    "name": { "type": "string", "description": "Human app name, e.g. Safari" },
+                    "bundle_id": { "type": "string", "description": "OS package identifier" },
+                    "is_frontmost": { "type": "boolean", "description": "Require app to be frontmost" }
                 }
             }
         ]
@@ -205,70 +173,71 @@ fn window_selector_schema() -> serde_json::Value {
             { "type": "string" },
             {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
-                    "title": { "type": "string" },
-                    "id": { "type": "string" },
-                    "index": { "type": "integer" },
-                    "focused": { "type": "boolean" }
+                    "title": { "type": "string", "description": "Window title substring or exact match policy" },
+                    "id": { "type": "string", "description": "OS/browser window identifier" },
+                    "index": { "type": "integer", "description": "Window stack index" },
+                    "focused": { "type": "boolean", "description": "Require focused window" }
                 }
             }
         ]
     })
 }
 
-fn action_selector_target_schema() -> serde_json::Value {
+fn target_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
+        "additionalProperties": false,
         "properties": {
             "app": app_selector_schema(),
             "window": window_selector_schema(),
-            "role": { "type": "string" },
-            "name": { "type": "string" },
-            "text": { "type": "string" },
-            "id": { "type": "string" },
-            "state": {
+            "selector": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
-                    "visible": { "type": "boolean" },
-                    "focused": { "type": "boolean" }
-                }
+                    "role": { "type": "string", "description": "Normalized element role" },
+                    "name": { "type": "string", "description": "Accessible/computed name" },
+                    "id": { "type": "string", "description": "Backend-specific element identifier" },
+                    "text": { "type": "string", "description": "Visible text content" }
+                },
+                "required": [],
+                "anyOf": [
+                    { "required": ["role"] },
+                    { "required": ["name"] },
+                    { "required": ["id"] },
+                    { "required": ["text"] }
+                ]
             }
         },
-        "required": ["app"],
-        "anyOf": [
-            { "required": ["role"] },
-            { "required": ["name"] },
-            { "required": ["text"] },
-            { "required": ["id"] }
-        ]
+        "required": ["selector"]
     })
 }
 
-fn canonical_target_schema() -> serde_json::Value {
+fn scope_schema() -> serde_json::Value {
     serde_json::json!({
-        "oneOf": [
-            action_selector_target_schema(),
-            {
-                "type": "object",
-                "properties": {
-                    "coordinate": coordinate_schema()
-                },
-                "required": ["coordinate"]
-            }
-        ]
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "app": app_selector_schema(),
+            "window": window_selector_schema()
+        },
+        "required": []
     })
 }
 
 fn action_click() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_click".to_string(),
-        description: "Click a resolved target or coordinates".to_string(),
+        description: "Click a resolved target".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "target": {
-                    "description": "Canonical target object: selector fields or a nested coordinate",
-                    "allOf": [canonical_target_schema()]
+                    "description": "Canonical target object",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
                 },
                 "button": {
                     "type": "string",
@@ -288,7 +257,7 @@ fn action_click() -> ToolDefinition {
 fn action_type() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_type".to_string(),
-        description: "Type text into a UI element. Use sootie_find to locate elements first. Requires target with app and at least one element identifier (role, name, id).".to_string(),
+        description: "Type text into the top-ranked element resolved from target.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -297,8 +266,10 @@ fn action_type() -> ToolDefinition {
                     "description": "Text to type"
                 },
                 "target": {
-                    "description": "Canonical target object: selector fields or a nested coordinate",
-                    "allOf": [canonical_target_schema()]
+                    "description": "Canonical target object",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
                 },
                 "clear_first": {
                     "type": "boolean",
@@ -306,7 +277,7 @@ fn action_type() -> ToolDefinition {
                     "description": "Clear existing text before typing"
                 }
             },
-            "required": ["text"]
+            "required": ["target", "text"]
         }),
     }
 }
@@ -354,8 +325,10 @@ fn action_scroll() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "target": {
-                    "description": "Canonical target object: selector fields or a nested coordinate",
-                    "allOf": [canonical_target_schema()]
+                    "description": "Canonical target object",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
                 },
                 "direction": {
                     "type": "string",
@@ -366,7 +339,7 @@ fn action_scroll() -> ToolDefinition {
                     "default": 3
                 }
             },
-            "required": ["direction"]
+            "required": ["target", "direction"]
         }),
     }
 }
@@ -374,13 +347,15 @@ fn action_scroll() -> ToolDefinition {
 fn action_hover() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_hover".to_string(),
-        description: "Hover over a resolved target or coordinates".to_string(),
+        description: "Hover over the top-ranked element resolved from target".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "target": {
-                    "description": "Canonical target object: selector fields or a nested coordinate",
-                    "allOf": [canonical_target_schema()]
+                    "description": "Canonical target object",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
                 }
             },
             "required": ["target"]
@@ -391,20 +366,24 @@ fn action_hover() -> ToolDefinition {
 fn action_drag() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_drag".to_string(),
-        description: "Drag from one resolved target or point to another".to_string(),
+        description: "Drag between two resolved targets".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "from": {
-                    "description": "Source selector or coordinate",
-                    "allOf": [canonical_target_schema()]
+                "from_target": {
+                    "description": "Source target",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
                 },
-                "to": {
-                    "description": "Destination selector or coordinate",
-                    "allOf": [canonical_target_schema()]
+                "to_target": {
+                    "description": "Destination target",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
                 }
             },
-            "required": ["from", "to"]
+            "required": ["from_target", "to_target"]
         }),
     }
 }
@@ -548,181 +527,6 @@ fn workflow_recipe_delete() -> ToolDefinition {
     }
 }
 
-#[cfg(test)]
-pub fn parse_selector_from_args(args: &serde_json::Value) -> Selector {
-    let mut sel = Selector::new();
-
-    if let Some(app) = args.get("app") {
-        if let Some(s) = app.as_str() {
-            sel.app = Some(AppSelector::from_name(s));
-        } else if let Ok(app_sel) = serde_json::from_value::<AppSelector>(app.clone()) {
-            sel.app = Some(app_sel);
-        }
-    }
-
-    if let Some(window) = args.get("window") {
-        if let Some(s) = window.as_str() {
-            sel.window = Some(WindowSelector::from_title(s));
-        } else if let Ok(win_sel) = serde_json::from_value::<WindowSelector>(window.clone()) {
-            sel.window = Some(win_sel);
-        }
-    }
-
-    if let Some(role) = args.get("role").and_then(|v| v.as_str()) {
-        sel.element.role = Some(role.to_string());
-    }
-
-    if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
-        sel.element.name = Some(name.to_string());
-    }
-
-    if let Some(text) = args.get("text").and_then(|v| v.as_str()) {
-        sel.element.text = Some(text.to_string());
-    }
-
-    if let Some(id) = args.get("id").and_then(|v| v.as_str()) {
-        sel.element.id = Some(id.to_string());
-    }
-
-    if let Some(state) = args.get("state") {
-        if let Ok(state) = serde_json::from_value::<WindowState>(state.clone()) {
-            sel.element.state = Some(state);
-        }
-    }
-
-    sel
-}
-
-pub fn parse_selector_from_args_strict(args: &serde_json::Value) -> Result<Selector, String> {
-    serde_json::from_value::<Selector>(args.clone()).map_err(|e| format!("Invalid selector: {}", e))
-}
-
-pub fn parse_action_target(args: &serde_json::Value) -> Result<ActionTarget, String> {
-    let has_top_level_coordinate = args.get("coordinate").is_some();
-    let has_target = args.get("target").is_some();
-    let has_top_level_selector = selector_field_keys_present(args);
-
-    let form_count = usize::from(has_top_level_coordinate)
-        + usize::from(has_target)
-        + usize::from(has_top_level_selector);
-
-    if form_count == 0 {
-        return Err("Must provide target or coordinate".to_string());
-    }
-
-    if form_count > 1 {
-        return Err(
-            "Must provide exactly one target form: target, coordinate, or selector fields"
-                .to_string(),
-        );
-    }
-
-    if has_top_level_coordinate {
-        return parse_coordinate(args.get("coordinate")).map(ActionTarget::Coordinate);
-    }
-
-    if let Some(target) = args.get("target") {
-        if target.get("coordinate").is_some() {
-            if selector_field_keys_present(target) {
-                return Err(
-                    "Target must be either a coordinate or a selector, not both".to_string()
-                );
-            }
-
-            return parse_coordinate(target.get("coordinate")).map(ActionTarget::Coordinate);
-        }
-
-        let selector = parse_selector_from_args_strict(target)?;
-        return if has_selector_values(&selector) {
-            Ok(ActionTarget::Selector(selector))
-        } else {
-            Err("Target selector must include at least one selector field".to_string())
-        };
-    }
-
-    let selector = parse_selector_from_args_strict(args)?;
-    if has_selector_values(&selector) {
-        Ok(ActionTarget::Selector(selector))
-    } else {
-        Err("Selector must include at least one selector field".to_string())
-    }
-}
-
-pub fn parse_optional_action_target(
-    args: &serde_json::Value,
-) -> Result<Option<ActionTarget>, String> {
-    let has_any_target_form = args.get("target").is_some()
-        || args.get("coordinate").is_some()
-        || selector_field_keys_present(args);
-
-    if has_any_target_form {
-        parse_action_target(args).map(Some)
-    } else {
-        Ok(None)
-    }
-}
-
-fn parse_coordinate(value: Option<&serde_json::Value>) -> Result<Coordinate, String> {
-    let coord = value.ok_or("Coordinate is required")?;
-    let x = coord
-        .get("x")
-        .and_then(|v| v.as_f64())
-        .ok_or("Coordinate must include numeric x")?;
-    let y = coord
-        .get("y")
-        .and_then(|v| v.as_f64())
-        .ok_or("Coordinate must include numeric y")?;
-
-    Ok(Coordinate { x, y })
-}
-
-pub fn selector_field_keys_present(value: &serde_json::Value) -> bool {
-    value.get("app").is_some()
-        || value.get("window").is_some()
-        || value.get("role").is_some()
-        || value.get("name").is_some()
-        || value.get("text").is_some()
-        || value.get("id").is_some()
-        || value.get("state").is_some()
-}
-
-fn has_selector_values(selector: &Selector) -> bool {
-    selector.app.is_some()
-        || selector.window.is_some()
-        || selector.element.role.is_some()
-        || selector.element.name.is_some()
-        || selector.element.text.is_some()
-        || selector.element.id.is_some()
-        || selector.element.state.is_some()
-}
-
-pub fn validate_query_selector(selector: &Selector) -> Result<(), String> {
-    if !has_selector_values(selector) {
-        return Err("Selector must include at least one selector field".to_string());
-    }
-
-    Ok(())
-}
-
-pub fn validate_action_selector(selector: &Selector) -> Result<(), String> {
-    if selector.app.is_none() {
-        return Err("Selector must include 'app' field to specify which application".to_string());
-    }
-
-    if selector.element.role.is_none()
-        && selector.element.name.is_none()
-        && selector.element.id.is_none()
-        && selector.element.text.is_none()
-    {
-        return Err(
-            "Selector must include at least one element identifier (role, name, id, or text)"
-                .to_string(),
-        );
-    }
-
-    Ok(())
-}
-
 pub fn parse_mouse_button(s: &str) -> MouseButton {
     match s {
         "right" => MouseButton::Right,
@@ -829,7 +633,7 @@ mod tests {
 
         let required = click.input_schema["required"].as_array().unwrap();
         assert!(required.iter().any(|value| value == "target"));
-        assert!(click.input_schema["properties"].get("coordinate").is_none());
+        assert!(click.input_schema["properties"]["target"]["properties"]["selector"].is_object());
     }
 
     #[test]
@@ -852,8 +656,10 @@ mod tests {
             .find(|tool| tool.name == "sootie_scroll")
             .unwrap();
 
-        assert!(find.input_schema["properties"]["app"]["oneOf"].is_array());
-        assert!(find.input_schema["properties"]["window"]["oneOf"].is_array());
+        assert!(find.input_schema["properties"]["target"]["properties"]["app"]["oneOf"].is_array());
+        assert!(
+            find.input_schema["properties"]["target"]["properties"]["window"]["oneOf"].is_array()
+        );
         assert_eq!(
             wait.input_schema["properties"]["timeout"]["type"],
             "integer"
@@ -869,127 +675,121 @@ mod tests {
     }
 
     #[test]
-    fn test_action_target_schema_requires_selector_keys_or_coordinate() {
+    fn test_action_target_schema_requires_nested_selector() {
         let click = all_tools()
             .into_iter()
             .find(|tool| tool.name == "sootie_click")
             .unwrap();
 
-        let target_schema = &click.input_schema["properties"]["target"]["allOf"][0];
-        assert!(target_schema["oneOf"].is_array());
-        assert_eq!(target_schema["oneOf"][0]["required"][0], "app");
-        assert!(target_schema["oneOf"][0]["anyOf"].is_array());
-        assert_eq!(target_schema["oneOf"][1]["required"][0], "coordinate");
+        let target_schema = &click.input_schema["properties"]["target"];
+        assert_eq!(target_schema["required"][0], "selector");
+        assert!(target_schema.get("oneOf").is_none());
     }
 
     #[test]
-    fn test_drag_schema_uses_canonical_target_shape() {
+    fn test_drag_schema_uses_from_and_to_target_shapes() {
         let drag = all_tools()
             .into_iter()
             .find(|tool| tool.name == "sootie_drag")
             .unwrap();
 
-        assert!(drag.input_schema["properties"]["from"]["allOf"].is_array());
-        assert!(drag.input_schema["properties"]["to"]["allOf"].is_array());
+        assert!(
+            drag.input_schema["properties"]["from_target"]["properties"]["selector"].is_object()
+        );
+        assert!(drag.input_schema["properties"]["to_target"]["properties"]["selector"].is_object());
+        assert_eq!(drag.input_schema["required"][0], "from_target");
+        assert_eq!(drag.input_schema["required"][1], "to_target");
     }
 
     #[test]
-    fn test_parse_selector_from_args_string_app() {
-        let args = serde_json::json!({
-            "app": "Chrome",
-            "window": "Gmail",
-            "role": "button",
-            "name": "Compose"
-        });
+    fn test_find_and_inspect_schema_wrap_nested_target_at_root() {
+        let tools = all_tools();
+        let find = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_find")
+            .unwrap();
+        let inspect = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_inspect")
+            .unwrap();
 
-        let sel = parse_selector_from_args(&args);
-        assert_eq!(sel.app.unwrap().name, Some("Chrome".to_string()));
-        assert_eq!(sel.window.unwrap().title, Some("Gmail".to_string()));
-        assert_eq!(sel.element.role, Some("button".to_string()));
-        assert_eq!(sel.element.name, Some("Compose".to_string()));
+        for tool in [find, inspect] {
+            assert_eq!(tool.input_schema["required"][0], "target");
+            assert!(
+                tool.input_schema["properties"]["target"]["properties"]["selector"].is_object()
+            );
+        }
     }
 
     #[test]
-    fn test_parse_selector_from_args_struct_app() {
-        let args = serde_json::json!({
+    fn test_screenshot_schema_uses_scope_not_target() {
+        let screenshot = all_tools()
+            .into_iter()
+            .find(|tool| tool.name == "sootie_screenshot")
+            .unwrap();
+
+        assert!(screenshot.input_schema["properties"]["scope"]["properties"]["app"].is_object());
+        assert!(screenshot.input_schema["properties"]
+            .get("target")
+            .is_none());
+    }
+
+    #[test]
+    fn test_scroll_and_type_require_target() {
+        let tools = all_tools();
+        let scroll = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_scroll")
+            .unwrap();
+        let r#type = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_type")
+            .unwrap();
+
+        assert!(scroll.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "target"));
+        assert!(r#type.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "target"));
+        assert!(r#type.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "text"));
+    }
+
+    #[test]
+    fn test_target_schema_round_trips_into_target_type() {
+        let value = serde_json::json!({
             "app": { "name": "Chrome", "is_frontmost": true },
-            "role": "button"
+            "window": { "title": "Inbox", "focused": true },
+            "selector": { "role": "button", "name": "Compose" }
         });
 
-        let sel = parse_selector_from_args(&args);
-        let app = sel.app.unwrap();
-        assert_eq!(app.name, Some("Chrome".to_string()));
-        assert_eq!(app.is_frontmost, Some(true));
+        let target: sootie_core::selector::Target = serde_json::from_value(value).unwrap();
+        assert_eq!(target.app.unwrap().name.as_deref(), Some("Chrome"));
+        assert_eq!(target.window.unwrap().title.as_deref(), Some("Inbox"));
+        assert_eq!(target.selector.role.as_deref(), Some("button"));
     }
 
     #[test]
-    fn test_parse_selector_from_args_state() {
-        let args = serde_json::json!({
-            "name": "Compose",
-            "state": { "visible": true, "focused": false }
+    fn test_scope_schema_round_trips_into_scope_type() {
+        let value = serde_json::json!({
+            "app": { "bundle_id": "com.apple.Safari" },
+            "window": { "id": "win_42" }
         });
 
-        let sel = parse_selector_from_args(&args);
-        let state = sel.element.state.unwrap();
-        assert_eq!(state.visible, Some(true));
-        assert_eq!(state.focused, Some(false));
-    }
-
-    #[test]
-    fn test_parse_action_target_coordinate() {
-        let args = serde_json::json!({
-            "coordinate": { "x": 100.0, "y": 200.0 }
-        });
-
-        let target = parse_action_target(&args).unwrap();
-        match target {
-            ActionTarget::Coordinate(c) => {
-                assert_eq!(c.x, 100.0);
-                assert_eq!(c.y, 200.0);
-            }
-            _ => panic!("expected coordinate"),
-        }
-    }
-
-    #[test]
-    fn test_parse_action_target_selector() {
-        let args = serde_json::json!({
-            "app": "Chrome",
-            "role": "button",
-            "name": "Submit"
-        });
-
-        let target = parse_action_target(&args).unwrap();
-        match target {
-            ActionTarget::Selector(s) => {
-                assert_eq!(s.app.unwrap().name, Some("Chrome".to_string()));
-                assert_eq!(s.element.role, Some("button".to_string()));
-            }
-            _ => panic!("expected selector"),
-        }
-    }
-
-    #[test]
-    fn test_parse_action_target_nested_target_selector() {
-        let args = serde_json::json!({
-            "target": {
-                "app": "Chrome",
-                "window": "Gmail",
-                "role": "button",
-                "name": "Compose"
-            }
-        });
-
-        let target = parse_action_target(&args).unwrap();
-        match target {
-            ActionTarget::Selector(s) => {
-                assert_eq!(s.app.unwrap().name.as_deref(), Some("Chrome"));
-                assert_eq!(s.window.unwrap().title.as_deref(), Some("Gmail"));
-                assert_eq!(s.element.role.as_deref(), Some("button"));
-                assert_eq!(s.element.name.as_deref(), Some("Compose"));
-            }
-            _ => panic!("expected selector"),
-        }
+        let scope: sootie_core::selector::Scope = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            scope.app.unwrap().bundle_id.as_deref(),
+            Some("com.apple.Safari")
+        );
+        assert_eq!(scope.window.unwrap().id.as_deref(), Some("win_42"));
     }
 
     #[test]

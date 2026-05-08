@@ -344,7 +344,7 @@ fn print_check_result(num: usize, result: &CheckResult) {
     );
 }
 
-pub fn print_report(results: &[CheckResult]) {
+pub fn print_report(_results: &[CheckResult]) {
     // Report is already printed during run_all_checks() for real-time progress
     // This function is kept for backwards compatibility but does nothing
 }
