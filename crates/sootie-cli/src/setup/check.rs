@@ -67,6 +67,20 @@ pub fn check_accessibility() -> CheckResult {
     }
 }
 
+pub fn check_screen_recording() -> CheckResult {
+    let platform = std::env::consts::OS;
+
+    match platform {
+        "macos" => check_macos_screen_recording(),
+        _ => CheckResult {
+            name: "Screen Recording permissions",
+            status: CheckStatus::Warn,
+            message: "Not required on this platform".to_string(),
+            fixable: false,
+        },
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn check_macos_accessibility() -> CheckResult {
     use sootie_core::platform::macos::ax_fns::is_process_trusted;
@@ -91,10 +105,44 @@ fn check_macos_accessibility() -> CheckResult {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn check_macos_screen_recording() -> CheckResult {
+    use core_graphics::access::ScreenCaptureAccess;
+
+    let has_permission = ScreenCaptureAccess::default().preflight();
+
+    if has_permission {
+        CheckResult {
+            name: "Screen Recording permissions",
+            status: CheckStatus::Pass,
+            message: "Granted".to_string(),
+            fixable: false,
+        }
+    } else {
+        CheckResult {
+            name: "Screen Recording permissions",
+            status: CheckStatus::Fail,
+            message: "Not granted. Required for vision backend. Go to: System Settings > Privacy & Security > Screen Recording"
+                .to_string(),
+            fixable: false,
+        }
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn check_macos_accessibility() -> CheckResult {
     CheckResult {
         name: "Accessibility permissions",
+        status: CheckStatus::Warn,
+        message: "macOS check not available on this platform".to_string(),
+        fixable: false,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn check_macos_screen_recording() -> CheckResult {
+    CheckResult {
+        name: "Screen Recording permissions",
         status: CheckStatus::Warn,
         message: "macOS check not available on this platform".to_string(),
         fixable: false,
@@ -306,32 +354,37 @@ pub async fn run_all_checks(ctx: &CheckContext) -> Vec<CheckResult> {
     print_check_result(1, &r1);
     results.push(r1);
 
-    // Check 2: CDP
-    let r2 = check_cdp(ctx).await;
+    // Check 2: Screen Recording
+    let r2 = check_screen_recording();
     print_check_result(2, &r2);
     results.push(r2);
 
-    // Check 3: Vision model
-    println!(
-        "{}{}[3/5]{} {:<30} Checking Python dependencies...",
-        BOLD, CYAN, RESET, "Vision model + sidecar"
-    );
-    let r3 = check_vision_model();
-    println!(
-        "{}{}[3/5]{} {:<30} {} {}",
-        BOLD, CYAN, RESET, r3.name, r3.status, r3.message
-    );
+    // Check 3: CDP
+    let r3 = check_cdp(ctx).await;
+    print_check_result(3, &r3);
     results.push(r3);
 
-    // Check 4: Config file
-    let r4 = check_config_file();
-    print_check_result(4, &r4);
+    // Check 4: Vision model
+    println!(
+        "{}{}[4/6]{} {:<30} Checking Python dependencies...",
+        BOLD, CYAN, RESET, "Vision model + sidecar"
+    );
+    let r4 = check_vision_model();
+    println!(
+        "{}{}[4/6]{} {:<30} {} {}",
+        BOLD, CYAN, RESET, r4.name, r4.status, r4.message
+    );
     results.push(r4);
 
-    // Check 5: Environment vars
-    let r5 = check_environment_vars();
+    // Check 5: Config file
+    let r5 = check_config_file();
     print_check_result(5, &r5);
     results.push(r5);
+
+    // Check 6: Environment vars
+    let r6 = check_environment_vars();
+    print_check_result(6, &r6);
+    results.push(r6);
 
     println!();
     results
@@ -339,7 +392,7 @@ pub async fn run_all_checks(ctx: &CheckContext) -> Vec<CheckResult> {
 
 fn print_check_result(num: usize, result: &CheckResult) {
     println!(
-        "{}{}[{}/5]{} {:<30} {} {}",
+        "{}{}[{}/6]{} {:<30} {} {}",
         BOLD, CYAN, num, RESET, result.name, result.status, result.message
     );
 }

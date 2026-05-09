@@ -5,7 +5,8 @@ use crate::selector::Bounds;
 
 pub fn take_screenshot(region: Option<&Bounds>) -> Result<ScreenshotData, PerceptionError> {
     let tmp_dir = std::env::temp_dir();
-    let tmp_path = tmp_dir.join(format!("sootie_screenshot_{}.jpg", std::process::id()));
+    let timestamp = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S");
+    let tmp_path = tmp_dir.join(format!("sootie_screenshot_{}.jpg", timestamp));
 
     let mut cmd = Command::new("import");
     cmd.arg("-window").arg("root");

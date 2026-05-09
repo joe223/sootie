@@ -7,17 +7,15 @@ use crate::types::ToolDefinition;
 pub fn all_tools() -> Vec<ToolDefinition> {
     vec![
         perception_context(),
-        perception_find(),
-        perception_inspect(),
-        perception_wait(),
-        perception_screenshot(),
         perception_find_apps(),
-        action_click(),
+        perception_find_element(),
+        action_tap_by_name(),
+        action_tap_by_position(),
         action_type(),
-        action_press(),
+        action_press_by_name(),
+        action_press_by_position(),
         action_hotkey(),
         action_scroll(),
-        action_hover(),
         action_drag(),
         app_launch(),
         window_focus(),
@@ -41,89 +39,53 @@ fn perception_context() -> ToolDefinition {
         }),
     }
 }
-
-fn perception_find() -> ToolDefinition {
+fn perception_find_element() -> ToolDefinition {
     ToolDefinition {
-        name: "sootie_find".to_string(),
-        description:
-            "Resolve UI targets across desktop apps and web apps with the unified selector scheme"
-                .to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": target_schema()
-            },
-            "required": ["target"]
-        }),
-    }
-}
-
-fn perception_inspect() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_inspect".to_string(),
-        description: "Return normalized metadata and full sub-tree for one resolved target"
+        name: "sootie_find_element".to_string(),
+        description: "Find UI elements from a short element description. Returns element positions and metadata."
             .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": target_schema()
+                "el_description": {
+                    "type": "string",
+                    "description": "Short element description for locating the target element"
+                },
+                "window": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "app": {
+                            "type": "string",
+                            "description": "Optional app name to focus and scope before finding"
+                        },
+                        "windowId": {
+                            "type": "string",
+                            "description": "Optional window identifier to focus and scope before finding"
+                        }
+                    }
+                }
             },
-            "required": ["target"]
+            "required": ["el_description"]
         }),
     }
 }
 
-fn perception_wait() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_wait".to_string(),
-        description: "Pause execution until a target matches a specific state or timeout"
-            .to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": target_schema(),
-                "state": {
-                    "type": "object",
-                    "properties": {
-                        "visible": { "type": "boolean" },
-                        "focused": { "type": "boolean" }
-                    }
-                },
-                "timeout": {
-                    "type": "integer",
-                    "default": 5000,
-                    "description": "Timeout in milliseconds"
-                }
+fn description_window_scope_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "app": {
+                "type": "string",
+                "description": "Optional app name to focus and scope before finding"
             },
-        "required": ["target"]
-        }),
-    }
-}
-
-fn perception_screenshot() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_screenshot".to_string(),
-        description: "Capture a screen, window, or region screenshot. Uses JPEG format for efficient transmission (80-90% smaller than PNG).".to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "scope": scope_schema(),
-                "region": {
-                    "type": "object",
-                    "properties": {
-                        "x": { "type": "number" },
-                        "y": { "type": "number" },
-                        "width": { "type": "number" },
-                        "height": { "type": "number" }
-                    }
-                },
-                "display_id": {
-                    "type": "integer",
-                    "description": "Display ID (macOS: 1=main, 2=secondary, etc)"
-                }
+            "windowId": {
+                "type": "string",
+                "description": "Optional window identifier to focus and scope before finding"
             }
-        }),
-    }
+        }
+    })
 }
 
 fn perception_find_apps() -> ToolDefinition {
@@ -214,30 +176,48 @@ fn target_schema() -> serde_json::Value {
     })
 }
 
-fn scope_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "app": app_selector_schema(),
-            "window": window_selector_schema()
-        },
-        "required": []
-    })
-}
-
-fn action_click() -> ToolDefinition {
+fn action_tap_by_name() -> ToolDefinition {
     ToolDefinition {
-        name: "sootie_click".to_string(),
-        description: "Click a resolved target".to_string(),
+        name: "sootie_tap_by_name".to_string(),
+        description: "Tap an element from a short element description. Internally finds the element and clicks it.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
-                    "description": "Canonical target object",
-                    "type": "object",
-                    "properties": target_schema()["properties"].clone(),
-                    "required": target_schema()["required"].clone()
+                "el_description": {
+                    "type": "string",
+                    "description": "Short element description for locating the target element"
+                },
+                "window": description_window_scope_schema(),
+                "button": {
+                    "type": "string",
+                    "enum": ["left", "right", "middle"],
+                    "default": "left"
+                },
+                "count": {
+                    "type": "integer",
+                    "default": 1
+                }
+            },
+            "required": ["el_description"]
+        }),
+    }
+}
+
+fn action_tap_by_position() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_tap_by_position".to_string(),
+        description: "Tap at an absolute screen coordinate position (from top-left origin)"
+            .to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number",
+                    "description": "X coordinate from screen top-left origin"
+                },
+                "y": {
+                    "type": "number",
+                    "description": "Y coordinate from screen top-left origin"
                 },
                 "button": {
                     "type": "string",
@@ -249,7 +229,7 @@ fn action_click() -> ToolDefinition {
                     "default": 1
                 }
             },
-            "required": ["target"]
+            "required": ["x", "y"]
         }),
     }
 }
@@ -257,7 +237,7 @@ fn action_click() -> ToolDefinition {
 fn action_type() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_type".to_string(),
-        description: "Type text into the top-ranked element resolved from target.".to_string(),
+        description: "Type text into a field. If 'field' is provided, finds that element first; otherwise types into the currently focused element.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -265,36 +245,65 @@ fn action_type() -> ToolDefinition {
                     "type": "string",
                     "description": "Text to type"
                 },
-                "target": {
-                    "description": "Canonical target object",
-                    "type": "object",
-                    "properties": target_schema()["properties"].clone(),
-                    "required": target_schema()["required"].clone()
+                "field": {
+                    "type": "string",
+                    "description": "Optional field name to locate before typing. If omitted, types into the focused element."
                 },
+                "window": description_window_scope_schema(),
                 "clear_first": {
                     "type": "boolean",
                     "default": false,
                     "description": "Clear existing text before typing"
                 }
             },
-            "required": ["target", "text"]
+            "required": ["text"]
         }),
     }
 }
 
-fn action_press() -> ToolDefinition {
+fn action_press_by_name() -> ToolDefinition {
     ToolDefinition {
-        name: "sootie_press".to_string(),
-        description: "Press a single key".to_string(),
+        name: "sootie_press_by_name".to_string(),
+        description: "Press a key on an element from a short element description. Internally finds the element first.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
+                "el_description": {
+                    "type": "string",
+                    "description": "Short element description for locating the target element"
+                },
+                "window": description_window_scope_schema(),
                 "key": {
                     "type": "string",
                     "description": "Key to press (e.g. Return, Tab, Escape)"
                 }
             },
-            "required": ["key"]
+            "required": ["el_description", "key"]
+        }),
+    }
+}
+
+fn action_press_by_position() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_press_by_position".to_string(),
+        description: "Press a key at an absolute screen coordinate position".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number",
+                    "description": "X coordinate from screen top-left origin"
+                },
+                "y": {
+                    "type": "number",
+                    "description": "Y coordinate from screen top-left origin"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Key to press (e.g. Return, Tab, Escape)"
+                }
+            },
+            "required": ["x", "y", "key"]
         }),
     }
 }
@@ -340,25 +349,6 @@ fn action_scroll() -> ToolDefinition {
                 }
             },
             "required": ["target", "direction"]
-        }),
-    }
-}
-
-fn action_hover() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_hover".to_string(),
-        description: "Hover over the top-ranked element resolved from target".to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "description": "Canonical target object",
-                    "type": "object",
-                    "properties": target_schema()["properties"].clone(),
-                    "required": target_schema()["required"].clone()
-                }
-            },
-            "required": ["target"]
         }),
     }
 }
@@ -597,7 +587,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 20);
+        assert_eq!(tools.len(), 18);
     }
 
     #[test]
@@ -605,16 +595,15 @@ mod tests {
         let tools = all_tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"sootie_context"));
-        assert!(names.contains(&"sootie_find"));
-        assert!(names.contains(&"sootie_inspect"));
-        assert!(names.contains(&"sootie_wait"));
-        assert!(names.contains(&"sootie_screenshot"));
-        assert!(names.contains(&"sootie_click"));
+        assert!(names.contains(&"sootie_find_apps"));
+        assert!(names.contains(&"sootie_find_element"));
+        assert!(names.contains(&"sootie_tap_by_name"));
+        assert!(names.contains(&"sootie_tap_by_position"));
+        assert!(names.contains(&"sootie_press_by_name"));
+        assert!(names.contains(&"sootie_press_by_position"));
         assert!(names.contains(&"sootie_type"));
-        assert!(names.contains(&"sootie_press"));
         assert!(names.contains(&"sootie_hotkey"));
         assert!(names.contains(&"sootie_scroll"));
-        assert!(names.contains(&"sootie_hover"));
         assert!(names.contains(&"sootie_drag"));
         assert!(names.contains(&"sootie_focus"));
         assert!(names.contains(&"sootie_window"));
@@ -625,28 +614,29 @@ mod tests {
     }
 
     #[test]
-    fn test_action_tools_publish_canonical_target_schema() {
-        let click = all_tools()
-            .into_iter()
-            .find(|tool| tool.name == "sootie_click")
-            .unwrap();
+    fn test_description_based_tools_require_el_description() {
+        let tools = all_tools();
 
-        let required = click.input_schema["required"].as_array().unwrap();
-        assert!(required.iter().any(|value| value == "target"));
-        assert!(click.input_schema["properties"]["target"]["properties"]["selector"].is_object());
+        for tool_name in [
+            "sootie_find_element",
+            "sootie_tap_by_name",
+            "sootie_press_by_name",
+        ] {
+            let tool = tools.iter().find(|tool| tool.name == tool_name).unwrap();
+            assert!(tool.input_schema["properties"]["el_description"].is_object());
+            assert!(tool.input_schema["properties"]["window"].is_object());
+            assert!(tool.input_schema["properties"].get("name").is_none());
+            assert!(tool.input_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "el_description"));
+        }
     }
 
     #[test]
     fn test_selector_and_numeric_schemas_are_typed() {
         let tools = all_tools();
-        let find = tools
-            .iter()
-            .find(|tool| tool.name == "sootie_find")
-            .unwrap();
-        let wait = tools
-            .iter()
-            .find(|tool| tool.name == "sootie_wait")
-            .unwrap();
         let find_apps = tools
             .iter()
             .find(|tool| tool.name == "sootie_find_apps")
@@ -656,14 +646,7 @@ mod tests {
             .find(|tool| tool.name == "sootie_scroll")
             .unwrap();
 
-        assert!(find.input_schema["properties"]["target"]["properties"]["app"]["oneOf"].is_array());
-        assert!(
-            find.input_schema["properties"]["target"]["properties"]["window"]["oneOf"].is_array()
-        );
-        assert_eq!(
-            wait.input_schema["properties"]["timeout"]["type"],
-            "integer"
-        );
+        assert!(find_apps.input_schema["properties"]["pattern"]["type"] == "string");
         assert_eq!(
             find_apps.input_schema["properties"]["limit"]["type"],
             "integer"
@@ -672,66 +655,6 @@ mod tests {
             scroll.input_schema["properties"]["amount"]["type"],
             "integer"
         );
-    }
-
-    #[test]
-    fn test_action_target_schema_requires_nested_selector() {
-        let click = all_tools()
-            .into_iter()
-            .find(|tool| tool.name == "sootie_click")
-            .unwrap();
-
-        let target_schema = &click.input_schema["properties"]["target"];
-        assert_eq!(target_schema["required"][0], "selector");
-        assert!(target_schema.get("oneOf").is_none());
-    }
-
-    #[test]
-    fn test_drag_schema_uses_from_and_to_target_shapes() {
-        let drag = all_tools()
-            .into_iter()
-            .find(|tool| tool.name == "sootie_drag")
-            .unwrap();
-
-        assert!(
-            drag.input_schema["properties"]["from_target"]["properties"]["selector"].is_object()
-        );
-        assert!(drag.input_schema["properties"]["to_target"]["properties"]["selector"].is_object());
-        assert_eq!(drag.input_schema["required"][0], "from_target");
-        assert_eq!(drag.input_schema["required"][1], "to_target");
-    }
-
-    #[test]
-    fn test_find_and_inspect_schema_wrap_nested_target_at_root() {
-        let tools = all_tools();
-        let find = tools
-            .iter()
-            .find(|tool| tool.name == "sootie_find")
-            .unwrap();
-        let inspect = tools
-            .iter()
-            .find(|tool| tool.name == "sootie_inspect")
-            .unwrap();
-
-        for tool in [find, inspect] {
-            assert_eq!(tool.input_schema["required"][0], "target");
-            assert!(
-                tool.input_schema["properties"]["target"]["properties"]["selector"].is_object()
-            );
-        }
-    }
-
-    #[test]
-    fn test_screenshot_schema_uses_scope_not_target() {
-        let screenshot = all_tools()
-            .into_iter()
-            .find(|tool| tool.name == "sootie_screenshot")
-            .unwrap();
-
-        assert!(screenshot.input_schema["properties"]["scope"]["properties"]["app"].is_object());
-        assert!(screenshot.input_schema["properties"]
-            .get("target")
-            .is_none());
     }
 
     #[test]
@@ -755,12 +678,13 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|value| value == "target"));
+            .any(|value| value == "text"));
         assert!(r#type.input_schema["required"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|value| value == "text"));
+            .all(|value| value != "field"));
+        assert!(r#type.input_schema["properties"]["window"].is_object());
     }
 
     #[test]

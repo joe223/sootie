@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn test_tool_definition_serialize() {
         let tool = ToolDefinition {
-            name: "sootie_click".to_string(),
+            name: "sootie_tap_by_name".to_string(),
             description: "Click a target or coordinates".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -184,7 +184,7 @@ mod tests {
         };
 
         let json = serde_json::to_string_pretty(&tool).unwrap();
-        assert!(json.contains("sootie_click"));
+        assert!(json.contains("sootie_tap_by_name"));
         assert!(json.contains("inputSchema"));
     }
 
@@ -194,9 +194,9 @@ mod tests {
             content: vec![ToolContent::text("element clicked")],
             is_error: None,
             structured_content: Some(serde_json::json!({
-                "ok": true,
+                "success": true,
+                "message": "",
                 "data": { "status": "clicked" },
-                "warnings": []
             })),
         };
 

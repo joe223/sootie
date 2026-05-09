@@ -1,11 +1,15 @@
 use crate::action::{ActionError, ActionResult, TypeAction};
 use crate::perception::PerceptionProvider;
+use std::time::Duration;
 
-use super::hotkey::simulate_hotkey;
-use super::keyboard::simulate_type;
+use super::keyboard::{simulate_clear_text, simulate_type};
 use super::mouse::simulate_click;
 use super::mouse::simulate_mouse_move;
 use super::utils::resolve_target;
+
+const TARGET_FOCUS_SETTLE_DELAY: Duration = Duration::from_millis(180);
+const CLEAR_SETTLE_DELAY: Duration = Duration::from_millis(120);
+const TYPE_SETTLE_DELAY: Duration = Duration::from_millis(80);
 
 pub async fn perform_type<P: PerceptionProvider>(
     action: &TypeAction,
@@ -15,29 +19,16 @@ pub async fn perform_type<P: PerceptionProvider>(
         let coord = resolve_target(target, perception).await?;
         simulate_mouse_move(coord.x, coord.y).map_err(|e| ActionError::ActionFailed(e))?;
         simulate_click(coord.x, coord.y, "left", 1).map_err(|e| ActionError::ActionFailed(e))?;
+        std::thread::sleep(TARGET_FOCUS_SETTLE_DELAY);
     }
 
     if action.clear_first.unwrap_or(false) {
-        simulate_hotkey(&["Cmd".to_string(), "A".to_string()])
-            .map_err(|e| ActionError::ActionFailed(e))?;
-
-        use core_graphics::event::{CGEvent, CGEventTapLocation};
-        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-            .map_err(|_| ActionError::ActionFailed("Failed to create event source".to_string()))?;
-
-        let delete_event = CGEvent::new_keyboard_event(source.clone(), 51, true)
-            .map_err(|_| ActionError::ActionFailed("Failed to create delete event".to_string()))?;
-        delete_event.post(CGEventTapLocation::HID);
-
-        let delete_up = CGEvent::new_keyboard_event(source.clone(), 51, false).map_err(|_| {
-            ActionError::ActionFailed("Failed to create delete up event".to_string())
-        })?;
-        delete_up.post(CGEventTapLocation::HID);
+        simulate_clear_text().map_err(|e| ActionError::ActionFailed(e))?;
+        std::thread::sleep(CLEAR_SETTLE_DELAY);
     }
 
     simulate_type(&action.text).map_err(|e| ActionError::ActionFailed(e))?;
+    std::thread::sleep(TYPE_SETTLE_DELAY);
 
     Ok(ActionResult::success(None, "cgevent"))
 }

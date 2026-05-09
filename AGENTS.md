@@ -25,7 +25,7 @@ Always show the user what changes will be committed BEFORE asking for permission
 
 ## Documentation Guidelines
 
-**CRITICAL RULE:** All project documentation MUST be placed inside the `/docs/` directory. NEVER scatter new `.md` files in the root directory (except for `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, and `LICENSE`).
+**CRITICAL RULE:** All project documentation MUST be placed inside the `/docs/` directory. NEVER scatter new `.md` files in the root directory (except for `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, and `LICENSE`).
 
 When creating or updating documentation, strictly follow this categorization scheme within `/docs/`:
 
@@ -85,6 +85,11 @@ Use a superpowers-style iteration loop for all non-trivial work. The default mod
 ## Testing
 
 Sootie currently relies on crate-level unit tests.
+
+## Logs
+
+- Default runtime log file on macOS: `~/Library/Application Support/sootie/logs/YYYY-MM-DD-HH-MM-SS.log`
+- When debugging vision failures, check this log first before falling back to sidecar-specific artifacts.
 
 ### Running Tests
 

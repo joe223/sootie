@@ -247,11 +247,13 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                 window: None,
                 elements: vec![],
                 confidence: None,
+                backend_errors: None,
             };
         }
 
         let selector: Selector = target.into();
         let mut backend_attempts = vec![];
+        let mut backend_errors = vec![];
 
         for backend in &self.priority {
             backend_attempts.push(backend.to_string());
@@ -273,6 +275,7 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                 }
                 Err(e) => {
                     warn!("{} backend error: {}, trying next", backend, e);
+                    backend_errors.push((backend.to_string(), e.to_string()));
                     continue;
                 }
             }
@@ -286,6 +289,7 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
             window: None,
             elements: vec![],
             confidence: None,
+            backend_errors: (!backend_errors.is_empty()).then_some(backend_errors),
         }
     }
 
@@ -340,6 +344,7 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                     window: result.window,
                     elements,
                     confidence: None,
+                    backend_errors: None,
                 });
             }
             Ok(Some(_)) => {
@@ -396,6 +401,7 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                     window: result.window,
                     elements,
                     confidence: None,
+                    backend_errors: None,
                 });
             }
             Ok(_) => {
@@ -463,12 +469,12 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                 focused: None,
                 enabled: None,
             },
-            bounds: Bounds {
+            bounds: result.bounds.clone().unwrap_or(Bounds {
                 x: result.coordinate.x - 50.0,
                 y: result.coordinate.y - 25.0,
                 width: 100.0,
                 height: 50.0,
-            },
+            }),
             coordinate: result.coordinate.clone(),
             index: Some(0),
             confidence: Some(result.confidence),
@@ -485,6 +491,7 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                 "top_match_score": result.confidence,
                 "model": result.model_used
             })),
+            backend_errors: None,
         })
     }
 }
@@ -520,36 +527,25 @@ fn selector_region(selector: &Selector) -> Option<Bounds> {
 }
 
 fn describe_selector(selector: &Selector) -> String {
-    let mut parts = Vec::new();
-
-    if let Some(app) = selector.app.as_ref().and_then(|app| app.name.as_ref()) {
-        parts.push(format!("app={}", app));
-    }
-    if let Some(window) = selector
-        .window
-        .as_ref()
-        .and_then(|window| window.title.as_ref())
-    {
-        parts.push(format!("window={}", window));
-    }
-    if let Some(role) = selector.element.role.as_ref() {
-        parts.push(format!("role={}", role));
-    }
-    if let Some(name) = selector.element.name.as_ref() {
-        parts.push(format!("name={}", name));
-    }
-    if let Some(text) = selector.element.text.as_ref() {
-        parts.push(format!("text={}", text));
-    }
-    if let Some(id) = selector.element.id.as_ref() {
-        parts.push(format!("id={}", id));
-    }
-
-    if parts.is_empty() {
-        "unknown target".to_string()
+    let target = if let Some(name) = selector.element.name.as_ref() {
+        name.clone()
+    } else if let Some(text) = selector.element.text.as_ref() {
+        format!("element with text {}", text)
+    } else if let Some(id) = selector.element.id.as_ref() {
+        format!("element with id {}", id)
+    } else if let Some(role) = selector.element.role.as_ref() {
+        role.clone()
     } else {
-        parts.join(", ")
+        "target element".to_string()
+    };
+
+    let mut description = target;
+    if let Some(role) = selector.element.role.as_ref() {
+        if selector.element.name.is_some() {
+            description.push_str(&format!(" ({})", role));
+        }
     }
+    description
 }
 
 #[cfg(test)]
@@ -636,6 +632,7 @@ mod tests {
         async fn detect(&self, _request: &VisionRequest) -> Result<VisionResult, VisionError> {
             Ok(VisionResult {
                 coordinate: self.coordinate.clone(),
+                bounds: None,
                 confidence: 0.9,
                 model_used: "mock".to_string(),
             })
@@ -852,6 +849,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_find_target_uses_only_vision_from_env_priority() {
+        let previous = std::env::var("SOOTIE_FALLBACK_PRIORITY").ok();
+        std::env::set_var("SOOTIE_FALLBACK_PRIORITY", "vision");
+
+        let provider = MockPerceptionProvider::empty();
+        let cascade = Cascade::<_, MockVisionProvider>::new(&provider, None);
+
+        let target = Target {
+            app: None,
+            window: None,
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: Some("Missing".to_string()),
+                id: None,
+                text: None,
+            },
+        };
+
+        let result = cascade.find_target(&target).await;
+
+        if let Some(value) = previous {
+            std::env::set_var("SOOTIE_FALLBACK_PRIORITY", value);
+        } else {
+            std::env::remove_var("SOOTIE_FALLBACK_PRIORITY");
+        }
+
+        assert_eq!(
+            result.backend_attempts,
+            Some(vec![Backend::Vision.to_string()])
+        );
+    }
+
+    #[tokio::test]
     async fn test_find_target_stops_before_backend_lookup_for_invalid_target() {
         let provider = MockPerceptionProvider::empty();
         let cascade =
@@ -872,5 +902,17 @@ mod tests {
         assert_eq!(result.status, MatchStatus::None);
         assert!(result.elements.is_empty());
         assert!(result.backend_attempts.is_none());
+    }
+
+    #[test]
+    fn test_describe_selector_uses_only_element_language_for_grounding() {
+        let selector = Selector::new()
+            .with_app(AppSelector::from_name("Safari"))
+            .with_window(WindowSelector::from_title("GitHub"))
+            .with_name("address bar");
+
+        let description = describe_selector(&selector);
+
+        assert_eq!(description, "address bar");
     }
 }

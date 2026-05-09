@@ -155,8 +155,8 @@ pub unsafe fn get_size_attr(element: AXUIElementRef, attr: &str) -> Option<CGSiz
     }
 }
 
-pub unsafe fn get_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
-    let cf_attr = cfstr("AXChildren");
+pub unsafe fn get_array_attr(element: AXUIElementRef, attr: &str) -> Vec<AXUIElementRef> {
+    let cf_attr = cfstr(attr);
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value);
     if err != K_AX_ERROR_SUCCESS || value.is_null() {
@@ -166,6 +166,7 @@ pub unsafe fn get_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
     let type_id = get_type_id(value);
     let array_type_id = CFArrayGetTypeID();
     if type_id != array_type_id {
+        CFRelease(value);
         return vec![];
     }
 
@@ -174,6 +175,14 @@ pub unsafe fn get_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
         .iter()
         .map(|p| retain_ax_element(*p as AXUIElementRef))
         .collect()
+}
+
+pub unsafe fn get_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    get_array_attr(element, "AXChildren")
+}
+
+pub unsafe fn get_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    get_array_attr(element, "AXWindows")
 }
 
 #[cfg(test)]

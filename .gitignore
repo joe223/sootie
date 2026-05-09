@@ -36,4 +36,8 @@ coverage/
 .omx/
 .deepseek/
 .claude/
-.opencode/ralph-loop.local.md
+.opencode/
+scoop/
+
+
+__pycache__/

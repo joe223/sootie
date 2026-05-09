@@ -417,6 +417,9 @@ pub struct FindTargetResult {
     pub elements: Vec<ResolvedElement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<serde_json::Value>,
+    /// Detailed error messages from each backend attempt
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_errors: Option<Vec<(String, String)>>,
 }
 
 #[cfg(test)]
@@ -1519,6 +1522,7 @@ mod tests {
                 "top_match_score": 0.92,
                 "model": "sootie-vision-v1"
             })),
+            backend_errors: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: FindTargetResult = serde_json::from_str(&json).unwrap();
@@ -1542,6 +1546,10 @@ mod tests {
             window: None,
             elements: vec![],
             confidence: None,
+            backend_errors: Some(vec![
+                ("vision".to_string(), "sidecar unreachable".to_string()),
+                ("cdp".to_string(), "target not found".to_string()),
+            ]),
         };
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: FindTargetResult = serde_json::from_str(&json).unwrap();
@@ -1555,5 +1563,6 @@ mod tests {
                 "at_tree".to_string()
             ])
         );
+        assert_eq!(deserialized.backend_errors.unwrap().len(), 2);
     }
 }

@@ -289,10 +289,8 @@ into a canonical action `target` object rather than passing the resolved payload
 | Tool | What it does |
 |------|-------------|
 | `sootie_context` | Get the macro environment state: a tree of running apps and their open windows (with titles, IDs, and focus state). Does not include UI elements. |
-| `sootie_find` | Resolve UI targets across desktop apps and web apps with the unified selector scheme |
-| `sootie_inspect` | Return normalized metadata and the full sub-tree for one resolved target, with backend-specific details when available |
-| `sootie_wait` | Pause execution until a target matches a specific state (e.g., `{ "visible": true }`) or a timeout occurs |
-| `sootie_screenshot` | Capture a screen, window, or region screenshot. App/window scoping uses `scope`, not `target`. |
+| `sootie_find_element` | Find UI elements from a short element description. Returns element positions, bounds, and metadata. |
+| `sootie_find_apps` | Find installed applications by name pattern (supports wildcards like '*Chrome*') |
 
 ### Action
 
@@ -305,20 +303,21 @@ Action tools publish the same nested v2 target shape through `tools/list`:
 
 Every `tools/call` response now includes `structuredContent`:
 
-- Success: `{ "ok": true, "data": ..., "warnings": [] }`
-- Tool-level failure: `{ "ok": false, "error": { "code", "message", "details" }, "warnings": [] }`
+- Success: `{ "success": true, "message": "", "data": ... }`
+- Tool-level failure: `{ "success": false, "message": "...", "data": { "code", "details" } }`
 
 JSON-RPC errors remain reserved for invalid MCP envelope/method dispatch.
 
 | Tool | What it does | Additional Parameters |
 |------|-------------|----------------------|
 | `sootie_launch` | Launch a desktop app | None |
-| `sootie_click` | Click the top-ranked element resolved from `target` | `button` (left/right/middle), `count` (integer) |
-| `sootie_type` | Type into the top-ranked element resolved from `target` | `text` (string), `clear_first` (boolean) |
-| `sootie_press` | Press a single key | `key` (e.g., "Return", "Tab", "Escape") |
+| `sootie_tap_by_name` | Tap an element from a short element description | `el_description` (string), `button` (left/right/middle), `count` (integer) |
+| `sootie_tap_by_position` | Tap at an absolute screen coordinate | `x`, `y` (numbers), `button` (left/right/middle), `count` (integer) |
+| `sootie_type` | Type text into the focused element, or into a named field when `field` is provided | `text` (string), `field` (optional string), `clear_first` (boolean) |
+| `sootie_press_by_name` | Press a key on an element from a short element description | `el_description` (string), `key` (e.g., "Return", "Tab", "Escape") |
+| `sootie_press_by_position` | Press a key at an absolute screen coordinate | `x`, `y` (numbers), `key` (e.g., "Return", "Tab", "Escape") |
 | `sootie_hotkey` | Press key combinations | `keys` (array of strings, e.g., `["Cmd", "C"]`) |
 | `sootie_scroll` | Scroll at the top-ranked element resolved from `target` | `direction` ("up"/"down"/"left"/"right"), `amount` (integer) |
-| `sootie_hover` | Hover over the top-ranked element resolved from `target` | None |
 | `sootie_drag` | Drag from `from_target` to `to_target` after resolving both | `from_target`, `to_target` |
 
 ### Window & Focus

@@ -31,6 +31,10 @@ fn modifier_keycode_and_flag(key: &str) -> Option<(u16, core_graphics::event::CG
 }
 
 pub fn simulate_hotkey(keys: &[String]) -> Result<(), String> {
+    if !super::super::ax_fns::is_process_trusted() {
+        return Err("Accessibility permission required for hotkey actions. Go to System Settings > Privacy & Security > Accessibility, enable permission for this application, then restart the MCP server.".to_string());
+    }
+
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 

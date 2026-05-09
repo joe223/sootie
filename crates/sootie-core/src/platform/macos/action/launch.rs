@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use tracing::debug;
 
@@ -71,19 +71,7 @@ fn launch_by_name(name: &str, args: &[String]) -> Result<ActionResult, ActionErr
         cmd.arg(arg);
     }
 
-    let output = cmd
-        .output()
-        .map_err(|e| ActionError::ActionFailed(format!("Failed to launch app: {}", e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ActionError::ActionFailed(format!(
-            "Launch failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    Ok(ActionResult::success(None, "open"))
+    spawn_open(cmd)
 }
 
 fn launch_by_bundle_id(bundle_id: &str, args: &[String]) -> Result<ActionResult, ActionError> {
@@ -103,19 +91,7 @@ fn launch_by_bundle_id(bundle_id: &str, args: &[String]) -> Result<ActionResult,
         cmd.arg(arg);
     }
 
-    let output = cmd
-        .output()
-        .map_err(|e| ActionError::ActionFailed(format!("Failed to launch app: {}", e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ActionError::ActionFailed(format!(
-            "Launch failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    Ok(ActionResult::success(None, "open"))
+    spawn_open(cmd)
 }
 
 fn launch_by_path(path: &str, args: &[String]) -> Result<ActionResult, ActionError> {
@@ -135,18 +111,15 @@ fn launch_by_path(path: &str, args: &[String]) -> Result<ActionResult, ActionErr
         cmd.arg(arg);
     }
 
-    let output = cmd
-        .output()
+    spawn_open(cmd)
+}
+
+fn spawn_open(mut cmd: Command) -> Result<ActionResult, ActionError> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.spawn()
         .map_err(|e| ActionError::ActionFailed(format!("Failed to launch app: {}", e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ActionError::ActionFailed(format!(
-            "Launch failed: {}",
-            stderr.trim()
-        )));
-    }
-
     Ok(ActionResult::success(None, "open"))
 }
 

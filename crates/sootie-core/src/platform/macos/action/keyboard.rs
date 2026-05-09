@@ -110,7 +110,17 @@ pub fn char_to_keycode(ch: char) -> u16 {
     }
 }
 
+fn ensure_accessibility_trusted() -> Result<(), String> {
+    if super::super::ax_fns::is_process_trusted() {
+        return Ok(());
+    }
+
+    Err("Accessibility permission required for keyboard actions. Go to System Settings > Privacy & Security > Accessibility, enable permission for this application, then restart the MCP server.".to_string())
+}
+
 pub fn simulate_key_press(key: &str) -> Result<(), String> {
+    ensure_accessibility_trusted()?;
+
     use core_graphics::event::{CGEvent, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
@@ -131,6 +141,48 @@ pub fn simulate_key_press(key: &str) -> Result<(), String> {
 }
 
 pub fn simulate_type(text: &str) -> Result<(), String> {
+    ensure_accessibility_trusted()?;
+
+    if text.is_empty() {
+        return Ok(());
+    }
+
+    use enigo::{Enigo, Keyboard, Settings};
+
+    let mut enigo = Enigo::new(&Settings::default())
+        .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
+    enigo
+        .text(text)
+        .map_err(|e| format!("Failed to type text with Enigo: {}", e))
+}
+
+pub fn simulate_clear_text() -> Result<(), String> {
+    ensure_accessibility_trusted()?;
+
+    use enigo::{
+        Direction::{Click, Press, Release},
+        Enigo, Key, Keyboard, Settings,
+    };
+
+    let mut enigo = Enigo::new(&Settings::default())
+        .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
+    enigo
+        .key(Key::Meta, Press)
+        .map_err(|e| format!("Failed to press Command with Enigo: {}", e))?;
+    enigo
+        .key(Key::Unicode('a'), Click)
+        .map_err(|e| format!("Failed to press A with Enigo: {}", e))?;
+    enigo
+        .key(Key::Meta, Release)
+        .map_err(|e| format!("Failed to release Command with Enigo: {}", e))?;
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    enigo
+        .key(Key::Backspace, Click)
+        .map_err(|e| format!("Failed to press Backspace with Enigo: {}", e))
+}
+
+#[allow(dead_code)]
+fn simulate_type_with_key_events(text: &str) -> Result<(), String> {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 

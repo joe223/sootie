@@ -58,6 +58,13 @@ pub fn install_sidecar_files() -> Result<()> {
     let src_dir = find_bundled_sidecar_dir()?;
     let dest_dir = sidecar_install_dir();
 
+    install_sidecar_files_from(&src_dir, &dest_dir)?;
+
+    println!("✓ Sidecar files installed to {}", dest_dir.display());
+    Ok(())
+}
+
+fn install_sidecar_files_from(src_dir: &std::path::Path, dest_dir: &std::path::Path) -> Result<()> {
     if !dest_dir.exists() {
         fs::create_dir_all(&dest_dir).context("Failed to create sidecar directory")?;
     }
@@ -85,7 +92,6 @@ pub fn install_sidecar_files() -> Result<()> {
         .context("Failed to set server.py permissions")?;
     }
 
-    println!("✓ Sidecar files installed to {}", dest_dir.display());
     Ok(())
 }
 
@@ -118,52 +124,11 @@ pub async fn is_sidecar_running(port: u16) -> bool {
         .unwrap_or(false)
 }
 
-/// Generate random auth token (32 bytes hex)
-fn generate_auth_token() -> Result<String> {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let token: [u8; 32] = rng.gen();
-    Ok(hex::encode(token))
-}
-
-/// Read last N lines from stderr
-fn read_stderr_lines(_stderr: Option<Stdio>, _n: usize) -> String {
-    // This is simplified - actual implementation would capture stderr
-    "Check sidecar logs for details".to_string()
-}
-
-/// Get auth token from running sidecar process
-fn get_running_sidecar_auth_token(port: u16) -> Option<String> {
-    use std::process::Command;
-
-    let output = Command::new("ps")
-        .args(["aux"])
-        .output()
-        .ok()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains("server.py") && line.contains(&format!("--port {}", port)) {
-            if let Some(idx) = line.find("--auth-token") {
-                let remainder = &line[idx + "--auth-token ".len()..];
-                let token = remainder.split_whitespace().next()?;
-                return Some(token.to_string());
-            }
-        }
-    }
-    None
-}
-
 /// Launch sidecar with crash recovery
-pub async fn launch_sidecar(port: u16, auth_token: Option<&str>) -> Result<SidecarGuard> {
+pub async fn launch_sidecar(port: u16) -> Result<SidecarGuard> {
     // Check if already running
     if is_sidecar_running(port).await {
-        println!("Sidecar already running on port {}", port);
-        // Try to get auth token from running process
-        let running_token = get_running_sidecar_auth_token(port);
-        if let Some(token) = running_token {
-            return Ok(SidecarGuard::empty().with_auth_token(token));
-        }
+        eprintln!("Sidecar already running on port {}", port);
         return Ok(SidecarGuard::empty());
     }
 
@@ -176,23 +141,18 @@ pub async fn launch_sidecar(port: u16, auth_token: Option<&str>) -> Result<Sidec
         ));
     }
 
+    install_sidecar_files().context("Failed to sync sidecar files")?;
+
     let script = find_sidecar_script()?;
 
-    // Generate or use provided auth token
-    let token = if let Some(t) = auth_token {
-        t.to_string()
-    } else {
-        generate_auth_token()?
-    };
-
-    println!("Launching sidecar on port {} with auth token", port);
+    eprintln!("Launching sidecar on port {}", port);
 
     // Retry loop with exponential backoff (max 3 attempts)
     for attempt in 0..3 {
         let delay = 2u64.pow(attempt);
 
         if attempt > 0 {
-            println!("Retry attempt {} (delay {}s)...", attempt + 1, delay);
+            eprintln!("Retry attempt {} (delay {}s)...", attempt + 1, delay);
             tokio::time::sleep(Duration::from_secs(delay)).await;
         }
 
@@ -201,8 +161,6 @@ pub async fn launch_sidecar(port: u16, auth_token: Option<&str>) -> Result<Sidec
             .arg(&script)
             .arg("--port")
             .arg(port.to_string())
-            .arg("--auth-token")
-            .arg(&token)
             .arg("--idle-timeout")
             .arg("600")
             .stderr(Stdio::piped())
@@ -214,8 +172,8 @@ pub async fn launch_sidecar(port: u16, auth_token: Option<&str>) -> Result<Sidec
         let healthy = wait_for_sidecar_health(port, 10).await;
 
         if healthy {
-            println!("✓ Sidecar started successfully");
-            return Ok(SidecarGuard::new(child).with_auth_token(token));
+            eprintln!("✓ Sidecar started successfully");
+            return Ok(SidecarGuard::new(child));
         }
 
         // Kill failed child
@@ -224,8 +182,7 @@ pub async fn launch_sidecar(port: u16, auth_token: Option<&str>) -> Result<Sidec
 
         if attempt == 2 {
             return Err(anyhow::anyhow!(
-                "Sidecar failed to start after 3 retries. Last stderr: {}",
-                read_stderr_lines(None, 5)
+                "Sidecar failed to start after 3 retries. Check sidecar logs for details"
             ));
         }
     }
@@ -256,34 +213,18 @@ async fn wait_for_sidecar_health(port: u16, timeout_secs: u64) -> bool {
     false
 }
 
-/// Sidecar process guard with auth token
+/// Sidecar process guard
 pub struct SidecarGuard {
     child: Option<Child>,
-    auth_token: Option<String>,
 }
 
 impl SidecarGuard {
     pub fn new(child: Child) -> Self {
-        Self {
-            child: Some(child),
-            auth_token: None,
-        }
-    }
-
-    pub fn with_auth_token(mut self, token: String) -> Self {
-        self.auth_token = Some(token);
-        self
+        Self { child: Some(child) }
     }
 
     pub fn empty() -> Self {
-        Self {
-            child: None,
-            auth_token: None,
-        }
-    }
-
-    pub fn auth_token(&self) -> Option<&str> {
-        self.auth_token.as_deref()
+        Self { child: None }
     }
 }
 
@@ -301,6 +242,7 @@ impl Drop for SidecarGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_sidecar_install_dir_contains_sootie() {
@@ -309,8 +251,21 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_auth_token_length() {
-        let token = generate_auth_token().unwrap();
-        assert_eq!(token.len(), 64); // 32 bytes -> 64 hex chars
+    fn test_install_sidecar_files_from_overwrites_stale_server() {
+        let src_dir = tempdir().unwrap();
+        let dest_dir = tempdir().unwrap();
+
+        std::fs::write(src_dir.path().join("server.py"), "print('new sidecar')\n").unwrap();
+        std::fs::write(src_dir.path().join("requirements.txt"), "pillow==10.4.0\n").unwrap();
+        std::fs::write(dest_dir.path().join("server.py"), "print('old sidecar')\n").unwrap();
+
+        install_sidecar_files_from(src_dir.path(), dest_dir.path()).unwrap();
+
+        let server = std::fs::read_to_string(dest_dir.path().join("server.py")).unwrap();
+        let requirements =
+            std::fs::read_to_string(dest_dir.path().join("requirements.txt")).unwrap();
+
+        assert_eq!(server, "print('new sidecar')\n");
+        assert_eq!(requirements, "pillow==10.4.0\n");
     }
 }

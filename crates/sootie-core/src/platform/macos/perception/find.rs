@@ -110,39 +110,18 @@ unsafe fn find_elements_in_tree(
     } else {
         String::new()
     };
+    let focused = get_bool_attr(element, "AXFocused").unwrap_or(false);
+    let enabled = get_bool_attr(element, "AXEnabled").unwrap_or(true);
 
-    let matches_role = selector
-        .element
-        .role
-        .as_ref()
-        .map(|r| role.to_lowercase().contains(&r.to_lowercase()))
-        .unwrap_or(true);
-
-    let matches_name = selector
-        .element
-        .name
-        .as_ref()
-        .map(|n| {
-            name.to_lowercase().contains(&n.to_lowercase())
-                || value.to_lowercase().contains(&n.to_lowercase())
-        })
-        .unwrap_or(true);
-
-    let matches_id = selector
-        .element
-        .id
-        .as_ref()
-        .map(|id| identifier == *id)
-        .unwrap_or(true);
-
-    let matches_text = selector
-        .element
-        .text
-        .as_ref()
-        .map(|t| value.contains(t.as_str()))
-        .unwrap_or(true);
-
-    if matches_role && matches_name && matches_id && matches_text {
+    if element_matches_selector(
+        selector,
+        &role,
+        &name,
+        &value,
+        &identifier,
+        focused,
+        enabled,
+    ) {
         let position = get_point_attr(element, "AXPosition");
         let size = get_size_attr(element, "AXSize");
 
@@ -160,9 +139,6 @@ unsafe fn find_elements_in_tree(
                 height: 0.0,
             },
         };
-
-        let focused = get_bool_attr(element, "AXFocused").unwrap_or(false);
-        let enabled = get_bool_attr(element, "AXEnabled").unwrap_or(true);
 
         results.push(Element {
             role: normalize_role(&role),
@@ -191,6 +167,64 @@ unsafe fn find_elements_in_tree(
     }
 }
 
+fn canonical_role(role: &str) -> String {
+    role.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn element_matches_selector(
+    selector: &Selector,
+    role: &str,
+    name: &str,
+    value: &str,
+    identifier: &str,
+    focused: bool,
+    _enabled: bool,
+) -> bool {
+    let normalized_role = canonical_role(&normalize_role(role));
+    let matches_role = selector
+        .element
+        .role
+        .as_ref()
+        .map(|query| normalized_role == canonical_role(query))
+        .unwrap_or(true);
+
+    let matches_name = selector
+        .element
+        .name
+        .as_ref()
+        .map(|query| {
+            let query = query.to_lowercase();
+            name.to_lowercase().contains(&query) || value.to_lowercase().contains(&query)
+        })
+        .unwrap_or(true);
+
+    let matches_id = selector
+        .element
+        .id
+        .as_ref()
+        .map(|id| identifier == id)
+        .unwrap_or(true);
+
+    let matches_text = selector
+        .element
+        .text
+        .as_ref()
+        .map(|text| value.contains(text.as_str()))
+        .unwrap_or(true);
+
+    let matches_state = selector
+        .element
+        .state
+        .as_ref()
+        .map(|state| state.focused.is_none_or(|expected| expected == focused))
+        .unwrap_or(true);
+
+    matches_role && matches_name && matches_id && matches_text && matches_state
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +233,37 @@ mod tests {
     #[test]
     fn test_module_loads() {
         assert!(true);
+    }
+
+    #[test]
+    fn test_element_matches_selector_respects_focused_state() {
+        let selector =
+            Selector::new()
+                .with_role("textfield")
+                .with_state(crate::selector::WindowState {
+                    visible: None,
+                    focused: Some(true),
+                });
+
+        assert!(!element_matches_selector(
+            &selector,
+            "AXTextField",
+            "",
+            "",
+            "",
+            false,
+            true,
+        ));
+
+        assert!(element_matches_selector(
+            &selector,
+            "AXTextField",
+            "",
+            "",
+            "",
+            true,
+            true,
+        ));
     }
 
     #[test]

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use sootie_core::action::{
     ActionProvider, ActionTarget, ClickAction, DragAction, FocusAction, HotkeyAction, HoverAction,
@@ -16,7 +16,10 @@ use sootie_core::logging::{
 };
 use sootie_core::perception::{PerceptionProvider, WaitCondition};
 use sootie_core::recipe::{Recipe, RecipeEngine, StepTarget};
-use sootie_core::selector::{AppSelector, FindTargetResult, MatchStatus, Scope, Selector, Target};
+use sootie_core::selector::{
+    AppSelector, Coordinate, FindTargetResult, MatchStatus, ResolvedElement, ResolvedTarget,
+    Selector, Target, WindowSelector, WindowState,
+};
 use sootie_core::vision::RuntimeVisionProvider;
 
 use crate::tools::{
@@ -28,11 +31,41 @@ use crate::types::{
     ListToolsResult, ServerCapabilities, ServerInfo, ToolContent, ToolsCapability,
 };
 
+const WINDOW_CONTEXT_ATTEMPTS: usize = 3;
+const WINDOW_CONTEXT_RETRY_DELAY: Duration = Duration::from_millis(150);
+
 #[derive(Debug)]
 struct ToolInvocationError {
     code: &'static str,
     message: String,
     details: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct FindElementWindowScope {
+    #[serde(default)]
+    app: Option<String>,
+    #[serde(default, rename = "windowId")]
+    window_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedDescriptionWindowScope {
+    app: Option<String>,
+    window_id: Option<String>,
+    window_title: Option<String>,
+    window_index: Option<u32>,
+    display_id: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionWindowContext {
+    app_selector: AppSelector,
+    scope: ResolvedDescriptionWindowScope,
+}
+
+fn scope_has_window(scope: &ResolvedDescriptionWindowScope) -> bool {
+    scope.window_id.is_some() || scope.window_title.is_some() || scope.window_index.is_some()
 }
 
 impl ToolInvocationError {
@@ -60,13 +93,18 @@ impl ToolInvocationError {
         }
     }
 
-    fn target_not_found(message: impl Into<String>, backend_attempts: Vec<String>) -> Self {
+    fn target_not_found(
+        message: impl Into<String>,
+        backend_attempts: Vec<String>,
+        backend_errors: Option<Vec<(String, String)>>,
+    ) -> Self {
         Self {
             code: "target_not_found",
             message: message.into(),
             details: Some(serde_json::json!({
                 "backend_attempts": backend_attempts,
-                "backend": null
+                "backend": null,
+                "backend_errors": backend_errors,
             })),
         }
     }
@@ -82,6 +120,84 @@ fn present_tool_data(value: &serde_json::Value) -> Result<String, ToolInvocation
         _ => serde_json::to_string_pretty(value)
             .map_err(|e| ToolInvocationError::execution(e.to_string())),
     }
+}
+
+fn success_response(data: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "success": true,
+        "message": "",
+        "data": data,
+    })
+}
+
+fn error_response(error: &ToolInvocationError) -> serde_json::Value {
+    serde_json::json!({
+        "success": false,
+        "message": error.message,
+        "data": {
+            "code": error.code,
+            "details": error.details,
+        },
+    })
+}
+
+fn remove_role_phrase(description: &str, phrase: &str) -> String {
+    description.replace(phrase, " ")
+}
+
+fn parse_description_selector(description: &str) -> Selector {
+    let mut selector = Selector::new();
+    let mut remaining = description.trim().to_lowercase();
+
+    if remaining.contains("focused") {
+        selector = selector.with_state(WindowState {
+            visible: None,
+            focused: Some(true),
+        });
+        remaining = remaining.replace("focused", " ");
+    }
+
+    let role_aliases = [
+        ("text field", "textfield"),
+        ("textfield", "textfield"),
+        ("input field", "textfield"),
+        ("text box", "textfield"),
+        ("button", "button"),
+        ("link", "link"),
+        ("checkbox", "checkbox"),
+        ("radio button", "radio"),
+        ("tab", "tab"),
+    ];
+
+    for (phrase, role) in role_aliases {
+        if remaining.contains(phrase) {
+            selector = selector.with_role(role);
+            remaining = remove_role_phrase(&remaining, phrase);
+            break;
+        }
+    }
+
+    let remaining = remaining.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !remaining.is_empty() {
+        selector = selector.with_name(&remaining);
+    }
+
+    if selector.element.role.is_none()
+        && selector.element.state.is_none()
+        && selector.element.name.is_none()
+    {
+        selector = selector.with_name(description.trim());
+    }
+
+    selector
+}
+
+fn remove_case_insensitive_span(text: &str, start: usize, end: usize) -> String {
+    let mut result = String::with_capacity(text.len());
+    result.push_str(&text[..start]);
+    result.push(' ');
+    result.push_str(&text[end..]);
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn parse_target(args: &serde_json::Value) -> Result<Target, ToolInvocationError> {
@@ -105,27 +221,32 @@ fn parse_named_target(
         .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid {}: {}", field, e)))
 }
 
-fn parse_scope(args: &serde_json::Value) -> Result<Option<Scope>, ToolInvocationError> {
-    let scope_value = args.get("scope");
-
-    if let Some(scope) = scope_value {
-        serde_json::from_value(scope.clone())
-            .map(Some)
-            .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid scope: {}", e)))
-    } else {
-        Ok(None)
-    }
-}
-
 fn parse_selector_args(args: &serde_json::Value) -> Result<Selector, ToolInvocationError> {
     serde_json::from_value(args.clone())
         .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid selector: {}", e)))
+}
+
+fn parse_find_element_window_scope(
+    args: &serde_json::Value,
+) -> Result<Option<FindElementWindowScope>, ToolInvocationError> {
+    let Some(window_value) = args.get("window") else {
+        return Ok(None);
+    };
+
+    serde_json::from_value(window_value.clone())
+        .map(Some)
+        .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid window scope: {}", e)))
+}
+
+fn parse_window_index_from_id(window_id: &str) -> Option<u32> {
+    window_id.strip_prefix("win_")?.parse::<u32>().ok()
 }
 
 pub struct SootieServer {
     perception: Arc<Box<dyn PerceptionProvider>>,
     action: Arc<Box<dyn ActionProvider>>,
     recipe_engine: Arc<Mutex<RecipeEngine>>,
+    session_window_context: Arc<Mutex<Option<SessionWindowContext>>>,
     logger: SootieLogger,
 }
 
@@ -135,6 +256,7 @@ impl SootieServer {
             perception: Arc::new(perception),
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(RecipeEngine::new())),
+            session_window_context: Arc::new(Mutex::new(None)),
             logger: SootieLogger::new(LogConfig::default()),
         }
     }
@@ -147,6 +269,7 @@ impl SootieServer {
             perception: Arc::new(perception),
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(RecipeEngine::new_in_memory())),
+            session_window_context: Arc::new(Mutex::new(None)),
             logger: SootieLogger::new(LogConfig::default()),
         }
     }
@@ -164,6 +287,7 @@ impl SootieServer {
             perception: Arc::new(perception),
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(recipe_engine)),
+            session_window_context: Arc::new(Mutex::new(None)),
             logger: SootieLogger::new(LogConfig::default()),
         }
     }
@@ -178,7 +302,406 @@ impl SootieServer {
 
         let vision = RuntimeVisionProvider::from_env();
         let cascade = Cascade::new(self.perception.as_ref().as_ref(), Some(&vision));
-        Ok(cascade.find_target(target).await)
+        let result = cascade.find_target(target).await;
+
+        // Log detailed backend attempts for debugging
+        if result.status == MatchStatus::None {
+            warn!(
+                target = ?target,
+                backend_attempts = ?result.backend_attempts,
+                "Find target returned no matches"
+            );
+        }
+
+        Ok(result)
+    }
+
+    async fn run_find_selector(
+        &self,
+        selector: &Selector,
+    ) -> Result<FindTargetResult, ToolInvocationError> {
+        let resolved = self.perception.find(selector).await.map_err(|e| {
+            ToolInvocationError::execution(format!("Find element via AT tree failed: {}", e))
+        })?;
+
+        Ok(Self::resolved_target_to_find_result(resolved, "at_tree"))
+    }
+
+    fn resolved_target_to_find_result(resolved: ResolvedTarget, backend: &str) -> FindTargetResult {
+        let elements = resolved
+            .elements
+            .into_iter()
+            .map(|element| {
+                let coordinate = Coordinate {
+                    x: element.bounds.x + element.bounds.width / 2.0,
+                    y: element.bounds.y + element.bounds.height / 2.0,
+                };
+                ResolvedElement {
+                    role: element.role,
+                    name: Some(element.name),
+                    text: element.text,
+                    id: element.id,
+                    state: element.state,
+                    bounds: element.bounds,
+                    coordinate,
+                    index: Some(element.index),
+                    confidence: None,
+                }
+            })
+            .collect();
+
+        FindTargetResult {
+            status: resolved.status,
+            backend: backend.to_string(),
+            backend_attempts: Some(vec![backend.to_string()]),
+            app: resolved.app,
+            window: resolved.window,
+            elements,
+            confidence: None,
+            backend_errors: None,
+        }
+    }
+
+    async fn resolve_description_window_scope(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<Option<ResolvedDescriptionWindowScope>, ToolInvocationError> {
+        let Some(scope) = parse_find_element_window_scope(args)? else {
+            return Ok(None);
+        };
+
+        let mut resolved = ResolvedDescriptionWindowScope {
+            app: scope.app.clone(),
+            window_id: scope.window_id.clone(),
+            window_title: None,
+            window_index: scope
+                .window_id
+                .as_deref()
+                .and_then(parse_window_index_from_id),
+            display_id: None,
+        };
+
+        let Some(window_id) = scope.window_id.as_deref() else {
+            return Ok(Some(resolved));
+        };
+
+        let context =
+            self.perception.get_context().await.map_err(|e| {
+                ToolInvocationError::execution(format!("Failed to get context: {}", e))
+            })?;
+
+        for app_context in context.apps {
+            if let Some(app_name) = scope.app.as_deref() {
+                if app_context.app.name != app_name {
+                    continue;
+                }
+            }
+
+            if let Some(window) = app_context
+                .windows
+                .into_iter()
+                .find(|window| window.id == window_id)
+            {
+                resolved.app.get_or_insert(app_context.app.name);
+                resolved.window_title = Some(window.title);
+                resolved.window_index = Some(window.index);
+                resolved.display_id = window.display_id;
+                return Ok(Some(resolved));
+            }
+        }
+
+        Ok(Some(resolved))
+    }
+
+    async fn resolve_frontmost_window_scope(
+        &self,
+    ) -> Result<Option<ResolvedDescriptionWindowScope>, ToolInvocationError> {
+        let context = self.perception.get_context().await.map_err(|e| {
+            ToolInvocationError::execution(format!("Failed to get frontmost context: {}", e))
+        })?;
+
+        let Some(app_context) = context.apps.into_iter().find(|app| app.app.is_frontmost) else {
+            debug!("No frontmost app found for implicit find_element scope");
+            return Ok(None);
+        };
+
+        let window = app_context
+            .windows
+            .iter()
+            .find(|window| window.focused)
+            .or_else(|| app_context.windows.first())
+            .cloned();
+
+        let scope = ResolvedDescriptionWindowScope {
+            app: Some(app_context.app.name),
+            window_id: window.as_ref().map(|window| window.id.clone()),
+            window_title: window.as_ref().map(|window| window.title.clone()),
+            window_index: window.as_ref().map(|window| window.index),
+            display_id: window.as_ref().and_then(|window| window.display_id),
+        };
+
+        debug!(
+            app = ?scope.app,
+            window_id = ?scope.window_id,
+            window_title = ?scope.window_title,
+            window_index = ?scope.window_index,
+            "Resolved implicit find_element scope from frontmost window"
+        );
+
+        Ok(Some(scope))
+    }
+
+    async fn resolve_app_selector_window_scope(
+        &self,
+        app_selector: &AppSelector,
+    ) -> Result<Option<ResolvedDescriptionWindowScope>, ToolInvocationError> {
+        let context = self.perception.get_context().await.map_err(|e| {
+            ToolInvocationError::execution(format!("Failed to get app context: {}", e))
+        })?;
+
+        for app_context in context.apps {
+            let matches_name = app_selector
+                .name
+                .as_ref()
+                .is_some_and(|name| app_context.app.name == *name);
+            let matches_bundle = app_selector
+                .bundle_id
+                .as_ref()
+                .is_some_and(|bundle_id| app_context.app.bundle_id == *bundle_id);
+            if !matches_name && !matches_bundle {
+                continue;
+            }
+
+            let window = app_context
+                .windows
+                .iter()
+                .find(|window| window.focused)
+                .or_else(|| app_context.windows.first())
+                .cloned();
+            return Ok(Some(ResolvedDescriptionWindowScope {
+                app: Some(app_context.app.name),
+                window_id: window.as_ref().map(|window| window.id.clone()),
+                window_title: window.as_ref().map(|window| window.title.clone()),
+                window_index: window.as_ref().map(|window| window.index),
+                display_id: window.as_ref().and_then(|window| window.display_id),
+            }));
+        }
+
+        Ok(None)
+    }
+
+    async fn set_session_app_context(&self, app_selector: AppSelector) {
+        let scope = self
+            .resolve_app_selector_window_scope_until_window(&app_selector)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| ResolvedDescriptionWindowScope {
+                app: app_selector.name.clone(),
+                window_id: None,
+                window_title: None,
+                window_index: None,
+                display_id: None,
+            });
+        *self.session_window_context.lock().await = Some(SessionWindowContext {
+            app_selector,
+            scope,
+        });
+    }
+
+    async fn resolve_app_selector_window_scope_until_window(
+        &self,
+        app_selector: &AppSelector,
+    ) -> Result<Option<ResolvedDescriptionWindowScope>, ToolInvocationError> {
+        let mut last_scope = None;
+
+        for attempt in 1..=WINDOW_CONTEXT_ATTEMPTS {
+            let scope = self.resolve_app_selector_window_scope(app_selector).await?;
+            if scope.as_ref().is_some_and(scope_has_window) {
+                return Ok(scope);
+            }
+
+            if scope.is_some() {
+                last_scope = scope;
+            }
+
+            if attempt < WINDOW_CONTEXT_ATTEMPTS {
+                tokio::time::sleep(WINDOW_CONTEXT_RETRY_DELAY).await;
+            }
+        }
+
+        Ok(last_scope)
+    }
+
+    async fn resolve_session_window_scope(
+        &self,
+    ) -> Result<Option<ResolvedDescriptionWindowScope>, ToolInvocationError> {
+        let session_context = { self.session_window_context.lock().await.clone() };
+        let Some(session_context) = session_context else {
+            return Ok(None);
+        };
+
+        debug!(
+            app = ?session_context.scope.app,
+            window_id = ?session_context.scope.window_id,
+            window_title = ?session_context.scope.window_title,
+            window_index = ?session_context.scope.window_index,
+            display_id = ?session_context.scope.display_id,
+            "Resolved implicit find_element scope from lightweight session window context"
+        );
+        Ok(Some(session_context.scope))
+    }
+
+    async fn resolve_app_hint_window_scope(
+        &self,
+        description: &str,
+    ) -> Result<(String, Option<ResolvedDescriptionWindowScope>), ToolInvocationError> {
+        if let Some(session_context) = self.session_window_context.lock().await.clone() {
+            if let Some(app_name) = session_context.app_selector.name.as_deref() {
+                let app_name_lower = app_name.to_lowercase();
+                let description_lower = description.to_lowercase();
+                let candidates = [
+                    format!(" in app {}", app_name_lower),
+                    format!(" in {}", app_name_lower),
+                ];
+                if let Some((start, end)) = candidates.iter().find_map(|candidate| {
+                    description_lower
+                        .find(candidate)
+                        .map(|start| (start, start + candidate.len()))
+                }) {
+                    return Ok((
+                        remove_case_insensitive_span(description, start, end),
+                        Some(session_context.scope),
+                    ));
+                }
+            }
+        }
+
+        let context = self.perception.get_context().await.map_err(|e| {
+            ToolInvocationError::execution(format!("Failed to get app context: {}", e))
+        })?;
+        let description_lower = description.to_lowercase();
+
+        for app_context in context.apps {
+            let app_name_lower = app_context.app.name.to_lowercase();
+            let candidates = [
+                format!(" in app {}", app_name_lower),
+                format!(" in {}", app_name_lower),
+            ];
+
+            let Some((start, end)) = candidates.iter().find_map(|candidate| {
+                description_lower
+                    .find(candidate)
+                    .map(|start| (start, start + candidate.len()))
+            }) else {
+                continue;
+            };
+
+            let scope = self
+                .resolve_app_selector_window_scope_until_window(&AppSelector::from_name(
+                    &app_context.app.name,
+                ))
+                .await?
+                .unwrap_or(ResolvedDescriptionWindowScope {
+                    app: Some(app_context.app.name),
+                    window_id: None,
+                    window_title: None,
+                    window_index: None,
+                    display_id: None,
+                });
+            let element_description = remove_case_insensitive_span(description, start, end);
+
+            debug!(
+                original_description = description,
+                element_description,
+                app = ?scope.app,
+                window_id = ?scope.window_id,
+                window_title = ?scope.window_title,
+                "Resolved find_element scope from app hint in description"
+            );
+
+            return Ok((element_description, Some(scope)));
+        }
+
+        Ok((description.to_string(), None))
+    }
+
+    fn build_description_window_selector(
+        scope: &ResolvedDescriptionWindowScope,
+    ) -> Option<WindowSelector> {
+        if scope.window_id.is_none() && scope.window_title.is_none() && scope.window_index.is_none()
+        {
+            return None;
+        }
+
+        Some(WindowSelector {
+            title: scope.window_title.clone(),
+            id: scope.window_id.clone(),
+            index: scope.window_index,
+            focused: None,
+        })
+    }
+
+    async fn resolve_description_target_or_error(
+        &self,
+        description: &str,
+        window_scope: Option<ResolvedDescriptionWindowScope>,
+        message: &str,
+    ) -> Result<FindTargetResult, ToolInvocationError> {
+        let (description, inferred_scope) = if window_scope.is_some() {
+            (description.to_string(), None)
+        } else {
+            self.resolve_app_hint_window_scope(description).await?
+        };
+        let window_scope = match window_scope.or(inferred_scope) {
+            Some(scope) => Some(scope),
+            None => match self.resolve_session_window_scope().await? {
+                Some(scope) => Some(scope),
+                None => self.resolve_frontmost_window_scope().await?,
+            },
+        };
+        let parsed_selector = parse_description_selector(&description);
+
+        let mut selector = parsed_selector;
+        if let Some(scope) = window_scope.as_ref() {
+            if let Some(app) = scope.app.as_deref() {
+                selector = selector.with_app(AppSelector::from_name(app));
+            }
+            if let Some(window) = Self::build_description_window_selector(scope) {
+                selector = selector.with_window(window);
+            }
+        }
+
+        if selector.element.state.is_some() {
+            let result = self.run_find_selector(&selector).await?;
+            if result.status != MatchStatus::None && !result.elements.is_empty() {
+                return Ok(result);
+            }
+            return Err(ToolInvocationError::target_not_found(
+                message,
+                result.backend_attempts.clone().unwrap_or_default(),
+                result.backend_errors.clone(),
+            ));
+        }
+
+        use sootie_core::selector::TargetSelector;
+        let target = Target {
+            app: window_scope
+                .as_ref()
+                .and_then(|scope| scope.app.as_deref())
+                .map(AppSelector::from_name),
+            window: window_scope
+                .as_ref()
+                .and_then(Self::build_description_window_selector),
+            selector: TargetSelector {
+                role: selector.element.role,
+                name: selector.element.name,
+                text: selector.element.text,
+                id: selector.element.id,
+            },
+        };
+
+        self.find_target_or_error(&target, message).await
     }
 
     async fn find_target_or_error(
@@ -191,23 +714,11 @@ impl SootieServer {
             return Err(ToolInvocationError::target_not_found(
                 message,
                 result.backend_attempts.clone().unwrap_or_default(),
+                result.backend_errors.clone(),
             ));
         }
 
         Ok(result)
-    }
-
-    fn selector_for_resolved_element(target: &Target, result: &FindTargetResult) -> Selector {
-        let mut selector: Selector = target.into();
-
-        if let Some(element) = result.elements.first() {
-            selector.element.role = Some(element.role.clone());
-            selector.element.name = element.name.clone();
-            selector.element.text = element.text.clone();
-            selector.element.id = element.id.clone();
-        }
-
-        selector
     }
 
     fn execution_details(result: &FindTargetResult) -> serde_json::Value {
@@ -234,7 +745,8 @@ impl SootieServer {
             }
             "notifications/initialized" => {
                 info!("Client initialized notification received");
-                return JsonRpcResponse::success(id, serde_json::json!(null));
+                // Return value won't be sent - main.rs checks request.id
+                Ok(serde_json::json!(null))
             }
             _ => {
                 warn!(method = %request.method, "Unknown MCP method");
@@ -295,17 +807,15 @@ impl SootieServer {
 
         let result = match name {
             "sootie_context" => self.tool_context().await,
-            "sootie_find" => self.tool_find(&args).await,
-            "sootie_inspect" => self.tool_inspect(&args).await,
-            "sootie_wait" => self.tool_wait(&args).await,
-            "sootie_screenshot" => self.tool_screenshot(&args).await,
             "sootie_find_apps" => self.tool_find_apps(&args).await,
-            "sootie_click" => self.tool_click(&args).await,
+            "sootie_find_element" => self.tool_find_element(&args).await,
+            "sootie_tap_by_name" => self.tool_tap_by_name(&args).await,
+            "sootie_tap_by_position" => self.tool_tap_by_position(&args).await,
             "sootie_type" => self.tool_type(&args).await,
-            "sootie_press" => self.tool_press(&args).await,
+            "sootie_press_by_name" => self.tool_press_by_name(&args).await,
+            "sootie_press_by_position" => self.tool_press_by_position(&args).await,
             "sootie_hotkey" => self.tool_hotkey(&args).await,
             "sootie_scroll" => self.tool_scroll(&args).await,
-            "sootie_hover" => self.tool_hover(&args).await,
             "sootie_drag" => self.tool_drag(&args).await,
             "sootie_launch" => self.tool_launch(&args).await,
             "sootie_focus" => self.tool_focus(&args).await,
@@ -325,7 +835,8 @@ impl SootieServer {
         match result {
             Ok(value) => {
                 let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
-                let content_text = present_tool_data(&value).map_err(|e| (-32603, e.message))?;
+                let response = success_response(value);
+                let content_text = present_tool_data(&response).map_err(|e| (-32603, e.message))?;
 
                 self.logger.log_tool_call(&ToolCallLog {
                     tool_name: name.to_string(),
@@ -340,16 +851,14 @@ impl SootieServer {
                 let call_result = CallToolResult {
                     content: vec![ToolContent::text(&content_text)],
                     is_error: None,
-                    structured_content: Some(serde_json::json!({
-                        "ok": true,
-                        "data": value,
-                        "warnings": []
-                    })),
+                    structured_content: Some(response),
                 };
                 serde_json::to_value(call_result).map_err(|e| (-32603, e.to_string()))
             }
             Err(err) => {
                 let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
+                let response = error_response(&err);
+                let content_text = present_tool_data(&response).map_err(|e| (-32603, e.message))?;
 
                 self.logger.log_tool_call(&ToolCallLog {
                     tool_name: name.to_string(),
@@ -362,17 +871,9 @@ impl SootieServer {
                 });
 
                 let call_result = CallToolResult {
-                    content: vec![ToolContent::text(&err.message)],
+                    content: vec![ToolContent::text(&content_text)],
                     is_error: Some(true),
-                    structured_content: Some(serde_json::json!({
-                        "ok": false,
-                        "error": {
-                            "code": err.code,
-                            "message": err.message,
-                            "details": err.details,
-                        },
-                        "warnings": []
-                    })),
+                    structured_content: Some(response),
                 };
                 serde_json::to_value(call_result).map_err(|e| (-32603, e.to_string()))
             }
@@ -385,139 +886,6 @@ impl SootieServer {
                 ToolInvocationError::execution(format!("Failed to get context: {}", e))
             })?;
         to_json_value(ctx)
-    }
-
-    async fn tool_find(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_target(args)?;
-        let result = self
-            .find_target_or_error(&target, "No element matched the requested target")
-            .await?;
-        to_json_value(result)
-    }
-
-    async fn tool_inspect(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_target(args)?;
-        let find_result = self
-            .find_target_or_error(&target, "No element matched the requested target")
-            .await?;
-        let selector = Self::selector_for_resolved_element(&target, &find_result);
-        let result = self
-            .perception
-            .inspect(&selector)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Inspect failed: {}", e)))?;
-        to_json_value(result)
-    }
-
-    async fn tool_wait(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_target(args)?;
-        let selector: Selector = (&target).into();
-        let timeout = match args.get("timeout") {
-            Some(value) => value.as_u64().ok_or_else(|| {
-                ToolInvocationError::invalid_arguments("Timeout must be a non-negative integer")
-            })?,
-            None => 5000,
-        };
-
-        let state =
-            args.get("state")
-                .map(|value| {
-                    serde_json::from_value::<HashMap<String, serde_json::Value>>(value.clone())
-                        .map_err(|e| {
-                            ToolInvocationError::invalid_arguments(format!(
-                                "Invalid state object: {}",
-                                e
-                            ))
-                        })
-                })
-                .transpose()?
-                .unwrap_or_default();
-
-        let condition = WaitCondition {
-            state,
-            timeout_ms: timeout,
-        };
-
-        let resolved_selector = match self.run_find_target(&target).await? {
-            result if result.status == MatchStatus::None || result.elements.is_empty() => selector,
-            result => Self::selector_for_resolved_element(&target, &result),
-        };
-
-        let result = self
-            .perception
-            .wait(&resolved_selector, &condition)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Wait failed: {}", e)))?;
-        to_json_value(result)
-    }
-
-    async fn tool_screenshot(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        // v2: Use scope schema for app/window scoping
-        let scope = parse_scope(args)?;
-        let selector = scope.map(|s| sootie_core::selector::Selector {
-            app: s.app,
-            window: s.window,
-            element: sootie_core::selector::ElementSelector {
-                role: None,
-                name: None,
-                text: None,
-                id: None,
-                state: None,
-            },
-        });
-
-        let region = args
-            .get("region")
-            .map(|r| {
-                let x = r.get("x").and_then(|v| v.as_f64()).ok_or_else(|| {
-                    ToolInvocationError::invalid_arguments("Screenshot region requires numeric x")
-                })?;
-                let y = r.get("y").and_then(|v| v.as_f64()).ok_or_else(|| {
-                    ToolInvocationError::invalid_arguments("Screenshot region requires numeric y")
-                })?;
-                let width = r.get("width").and_then(|v| v.as_f64()).ok_or_else(|| {
-                    ToolInvocationError::invalid_arguments(
-                        "Screenshot region requires numeric width",
-                    )
-                })?;
-                let height = r.get("height").and_then(|v| v.as_f64()).ok_or_else(|| {
-                    ToolInvocationError::invalid_arguments(
-                        "Screenshot region requires numeric height",
-                    )
-                })?;
-
-                Ok(sootie_core::selector::Bounds {
-                    x,
-                    y,
-                    width,
-                    height,
-                })
-            })
-            .transpose()?;
-
-        let display_id = args
-            .get("display_id")
-            .and_then(|d| d.as_u64())
-            .map(|d| d as u32);
-
-        let result = self
-            .perception
-            .screenshot(selector.as_ref(), region.as_ref(), display_id)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Screenshot failed: {}", e)))?;
-        to_json_value(result)
     }
 
     async fn tool_find_apps(
@@ -541,15 +909,83 @@ impl SootieServer {
         to_json_value(result)
     }
 
-    async fn tool_click(
+    async fn tool_find_element(
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_target(args)?;
+        let el_description = args
+            .get("el_description")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ToolInvocationError::invalid_arguments("Missing required field: el_description")
+            })?
+            .to_string();
+
+        let window_scope = self.resolve_description_window_scope(args).await?;
         let find_result = self
-            .find_target_or_error(&target, "No element matched the requested target")
+            .resolve_description_target_or_error(
+                &el_description,
+                window_scope,
+                "No element matched the requested element description",
+            )
             .await?;
-        let coordinate = find_result.elements[0].coordinate.clone();
+
+        let elements = find_result
+            .elements
+            .iter()
+            .map(|elem| {
+                serde_json::json!({
+                    "role": elem.role,
+                    "name": elem.name,
+                    "text": elem.text,
+                    "id": elem.id,
+                    "position": {
+                        "x": elem.bounds.x,
+                        "y": elem.bounds.y,
+                        "width": elem.bounds.width,
+                        "height": elem.bounds.height
+                    },
+                    "coordinate": {
+                        "x": elem.coordinate.x,
+                        "y": elem.coordinate.y
+                    },
+                    "state": {
+                        "visible": elem.state.visible,
+                        "focused": elem.state.focused,
+                        "enabled": elem.state.enabled
+                    },
+                    "index": elem.index
+                })
+            })
+            .collect::<Vec<_>>();
+
+        to_json_value(elements)
+    }
+
+    async fn tool_tap_by_name(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let el_description = args
+            .get("el_description")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ToolInvocationError::invalid_arguments("Missing required field: el_description")
+            })?
+            .to_string();
+        let window_scope = self.resolve_description_window_scope(args).await?;
+        let find_result = self
+            .resolve_description_target_or_error(
+                &el_description,
+                window_scope,
+                "No element matched the requested element description",
+            )
+            .await?;
+        let target_element = &find_result.elements[0];
+        let coordinate = Coordinate {
+            x: target_element.bounds.x + target_element.bounds.width / 2.0,
+            y: target_element.bounds.y + target_element.bounds.height / 2.0,
+        };
 
         let button = args
             .get("button")
@@ -561,16 +997,74 @@ impl SootieServer {
         let count = args.get("count").and_then(|v| v.as_u64()).map(|v| v as u32);
 
         let action = ClickAction {
-            target: ActionTarget::Coordinate(coordinate),
+            target: ActionTarget::Coordinate(coordinate.clone()),
             button,
             count,
         };
 
         let result = self.action.click(&action).await.map_err(|e| {
             ToolInvocationError::execution_with_details(
-                format!("Click failed: {}", e),
+                format!("Tap by name failed: {}", e),
                 Self::execution_details(&find_result),
             )
+        })?;
+        let mut value = to_json_value(result)?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "target".to_string(),
+                serde_json::json!({
+                    "coordinate": {
+                        "x": coordinate.x,
+                        "y": coordinate.y
+                    },
+                    "position": {
+                        "x": target_element.bounds.x,
+                        "y": target_element.bounds.y,
+                        "width": target_element.bounds.width,
+                        "height": target_element.bounds.height
+                    },
+                    "name": target_element.name,
+                    "role": target_element.role,
+                    "backend": find_result.backend
+                }),
+            );
+        }
+        Ok(value)
+    }
+
+    async fn tool_tap_by_position(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        use sootie_core::selector::Coordinate;
+
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: x"))?;
+
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: y"))?;
+
+        let button = args
+            .get("button")
+            .and_then(|v| v.as_str())
+            .map(parse_mouse_button_strict)
+            .transpose()
+            .map_err(ToolInvocationError::invalid_arguments)?;
+
+        let count = args.get("count").and_then(|v| v.as_u64()).map(|v| v as u32);
+
+        let action = ClickAction {
+            target: ActionTarget::Coordinate(Coordinate { x, y }),
+            button,
+            count,
+        };
+
+        let result = self.action.click(&action).await.map_err(|e| {
+            ToolInvocationError::execution(format!("Tap by position failed: {}", e))
         })?;
         to_json_value(result)
     }
@@ -585,33 +1079,88 @@ impl SootieServer {
             .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: text"))?
             .to_string();
 
-        let target = parse_target(args)?;
-        let find_result = self
-            .find_target_or_error(&target, "No element matched the requested target")
-            .await?;
-        let coordinate = find_result.elements[0].coordinate.clone();
-
         let clear_first = args.get("clear_first").and_then(|v| v.as_bool());
+        let window_scope = self.resolve_description_window_scope(args).await?;
+
+        let target = if let Some(field) = args.get("field").and_then(|v| v.as_str()) {
+            let find_result = self
+                .resolve_description_target_or_error(
+                    field,
+                    window_scope,
+                    "No element matched the requested field name",
+                )
+                .await?;
+            Some(ActionTarget::Coordinate(
+                find_result.elements[0].coordinate.clone(),
+            ))
+        } else {
+            None
+        };
 
         let action = TypeAction {
-            target: Some(ActionTarget::Coordinate(coordinate)),
+            target,
             text,
             clear_first,
         };
 
-        let result = self.action.r#type(&action).await.map_err(|e| {
+        let result = self
+            .action
+            .r#type(&action)
+            .await
+            .map_err(|e| ToolInvocationError::execution(format!("Type failed: {}", e)))?;
+        to_json_value(result)
+    }
+
+    async fn tool_press_by_name(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let el_description = args
+            .get("el_description")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ToolInvocationError::invalid_arguments("Missing required field: el_description")
+            })?
+            .to_string();
+
+        let key = args
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: key"))?
+            .to_string();
+        let window_scope = self.resolve_description_window_scope(args).await?;
+        let find_result = self
+            .resolve_description_target_or_error(
+                &el_description,
+                window_scope,
+                "No element matched the requested element description",
+            )
+            .await?;
+
+        let action = PressAction { key };
+        let result = self.action.press(&action).await.map_err(|e| {
             ToolInvocationError::execution_with_details(
-                format!("Type failed: {}", e),
+                format!("Press by name failed: {}", e),
                 Self::execution_details(&find_result),
             )
         })?;
         to_json_value(result)
     }
 
-    async fn tool_press(
+    async fn tool_press_by_position(
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
+        let _x = args
+            .get("x")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: x"))?;
+
+        let _y = args
+            .get("y")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: y"))?;
+
         let key = args
             .get("key")
             .and_then(|v| v.as_str())
@@ -619,11 +1168,9 @@ impl SootieServer {
             .to_string();
 
         let action = PressAction { key };
-        let result = self
-            .action
-            .press(&action)
-            .await
-            .map_err(|e| ToolInvocationError::execution(format!("Press failed: {}", e)))?;
+        let result = self.action.press(&action).await.map_err(|e| {
+            ToolInvocationError::execution(format!("Press by position failed: {}", e))
+        })?;
         to_json_value(result)
     }
 
@@ -695,28 +1242,6 @@ impl SootieServer {
         to_json_value(result)
     }
 
-    async fn tool_hover(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_target(args)?;
-        let find_result = self
-            .find_target_or_error(&target, "No element matched the requested target")
-            .await?;
-        let coordinate = find_result.elements[0].coordinate.clone();
-
-        let action = HoverAction {
-            target: ActionTarget::Coordinate(coordinate),
-        };
-        let result = self.action.hover(&action).await.map_err(|e| {
-            ToolInvocationError::execution_with_details(
-                format!("Hover failed: {}", e),
-                Self::execution_details(&find_result),
-            )
-        })?;
-        to_json_value(result)
-    }
-
     async fn tool_drag(
         &self,
         args: &serde_json::Value,
@@ -765,6 +1290,9 @@ impl SootieServer {
             .focus(&action)
             .await
             .map_err(|e| ToolInvocationError::execution(format!("Focus failed: {}", e)))?;
+        if let Some(app_selector) = action.selector.app.clone() {
+            self.set_session_app_context(app_selector).await;
+        }
         to_json_value(result)
     }
 
@@ -801,6 +1329,7 @@ impl SootieServer {
             .launch(&action)
             .await
             .map_err(|e| ToolInvocationError::execution(format!("Launch failed: {}", e)))?;
+        self.set_session_app_context(action.app.clone()).await;
         to_json_value(result)
     }
 
@@ -859,6 +1388,9 @@ impl SootieServer {
         let result = self.action.window_op(&action).await.map_err(|e| {
             ToolInvocationError::execution(format!("Window operation failed: {}", e))
         })?;
+        if let Some(app_selector) = action.selector.app.clone() {
+            self.set_session_app_context(app_selector).await;
+        }
         to_json_value(result)
     }
 
@@ -1252,15 +1784,16 @@ fn wait_condition_from_selector(
 mod tests {
     use super::*;
     use sootie_core::action::{
-        ActionError, ActionProvider, ActionResult, ClickAction, DragAction, FocusAction,
-        HotkeyAction, HoverAction, LaunchAction, PressAction, ScrollAction, TypeAction,
-        WindowAction,
+        ActionError, ActionProvider, ActionResult, ActionTarget, ClickAction, DragAction,
+        FocusAction, HotkeyAction, HoverAction, LaunchAction, PressAction, ScrollAction,
+        TypeAction, WindowAction,
     };
     use sootie_core::perception::{
-        Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider,
+        AppContext, Context, DeepInspection, FindAppsResult, PerceptionError, PerceptionProvider,
         ScreenshotData, StubPerceptionProvider, WaitCondition, WaitResult,
     };
-    use sootie_core::selector::{Bounds, Selector};
+    use sootie_core::selector::{App, Bounds, Selector, Window};
+    use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct NoopActionProvider;
@@ -1299,7 +1832,74 @@ mod tests {
         }
     }
 
+    struct RecordingActionProvider {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ActionProvider for RecordingActionProvider {
+        async fn click(&self, action: &ClickAction) -> Result<ActionResult, ActionError> {
+            let mut calls = self.calls.lock().unwrap();
+            match &action.target {
+                ActionTarget::Coordinate(coordinate) => {
+                    calls.push(format!("click x={:.1} y={:.1}", coordinate.x, coordinate.y))
+                }
+                ActionTarget::Selector(_) => calls.push("click selector".to_string()),
+            }
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn r#type(&self, _action: &TypeAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn press(&self, _action: &PressAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn hotkey(&self, _action: &HotkeyAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn scroll(&self, _action: &ScrollAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn hover(&self, _action: &HoverAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn drag(&self, _action: &DragAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn focus(&self, action: &FocusAction) -> Result<ActionResult, ActionError> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(format!(
+                "focus app={:?} window_id={:?}",
+                action
+                    .selector
+                    .app
+                    .as_ref()
+                    .and_then(|app| app.name.clone()),
+                action
+                    .selector
+                    .window
+                    .as_ref()
+                    .and_then(|window| window.id.clone())
+            ));
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn launch(&self, _action: &LaunchAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+        async fn window_op(&self, _action: &WindowAction) -> Result<ActionResult, ActionError> {
+            Ok(ActionResult::success(None, "recording"))
+        }
+    }
+
     struct NoopPerceptionProvider;
+
+    struct RecordingPerceptionProvider {
+        selectors: Arc<Mutex<Vec<Selector>>>,
+    }
+
+    struct ContextPerceptionProvider {
+        context: Context,
+    }
 
     #[async_trait::async_trait]
     impl PerceptionProvider for NoopPerceptionProvider {
@@ -1355,10 +1955,153 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl PerceptionProvider for RecordingPerceptionProvider {
+        async fn get_context(&self) -> Result<Context, PerceptionError> {
+            Ok(Context { apps: vec![] })
+        }
+
+        async fn find(
+            &self,
+            selector: &Selector,
+        ) -> Result<sootie_core::selector::ResolvedTarget, PerceptionError> {
+            self.selectors.lock().unwrap().push(selector.clone());
+
+            if selector.element.role.as_deref() == Some("textfield")
+                && selector
+                    .element
+                    .state
+                    .as_ref()
+                    .and_then(|state| state.focused)
+                    == Some(true)
+            {
+                return Ok(sootie_core::selector::ResolvedTarget {
+                    status: MatchStatus::Unique,
+                    total_matches: 1,
+                    app: None,
+                    window: None,
+                    elements: vec![sootie_core::selector::Element {
+                        role: "textfield".to_string(),
+                        name: "Address and search bar".to_string(),
+                        text: None,
+                        id: None,
+                        state: sootie_core::selector::ElementState {
+                            visible: true,
+                            focused: Some(true),
+                            enabled: Some(true),
+                        },
+                        bounds: Bounds {
+                            x: 10.0,
+                            y: 20.0,
+                            width: 200.0,
+                            height: 30.0,
+                        },
+                        index: 0,
+                    }],
+                });
+            }
+
+            Err(PerceptionError::TargetNotFound("not found".to_string()))
+        }
+
+        async fn inspect(&self, _selector: &Selector) -> Result<DeepInspection, PerceptionError> {
+            Err(PerceptionError::NotImplemented("noop".to_string()))
+        }
+
+        async fn wait(
+            &self,
+            _selector: &Selector,
+            condition: &WaitCondition,
+        ) -> Result<WaitResult, PerceptionError> {
+            Ok(WaitResult {
+                matched: condition.state.is_empty(),
+                element: None,
+                timed_out: !condition.state.is_empty(),
+            })
+        }
+
+        async fn screenshot(
+            &self,
+            _target: Option<&Selector>,
+            _region: Option<&Bounds>,
+            _display_id: Option<u32>,
+        ) -> Result<ScreenshotData, PerceptionError> {
+            Err(PerceptionError::NotImplemented("noop".to_string()))
+        }
+
+        async fn find_apps(
+            &self,
+            _pattern: &str,
+            _limit: Option<u32>,
+        ) -> Result<FindAppsResult, PerceptionError> {
+            Ok(FindAppsResult {
+                apps: vec![],
+                total: 0,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PerceptionProvider for ContextPerceptionProvider {
+        async fn get_context(&self) -> Result<Context, PerceptionError> {
+            Ok(self.context.clone())
+        }
+
+        async fn find(
+            &self,
+            _selector: &Selector,
+        ) -> Result<sootie_core::selector::ResolvedTarget, PerceptionError> {
+            Err(PerceptionError::TargetNotFound("not found".to_string()))
+        }
+
+        async fn inspect(&self, _selector: &Selector) -> Result<DeepInspection, PerceptionError> {
+            Err(PerceptionError::NotImplemented("noop".to_string()))
+        }
+
+        async fn wait(
+            &self,
+            _selector: &Selector,
+            condition: &WaitCondition,
+        ) -> Result<WaitResult, PerceptionError> {
+            Ok(WaitResult {
+                matched: condition.state.is_empty(),
+                element: None,
+                timed_out: !condition.state.is_empty(),
+            })
+        }
+
+        async fn screenshot(
+            &self,
+            _target: Option<&Selector>,
+            _region: Option<&Bounds>,
+            _display_id: Option<u32>,
+        ) -> Result<ScreenshotData, PerceptionError> {
+            Err(PerceptionError::NotImplemented("noop".to_string()))
+        }
+
+        async fn find_apps(
+            &self,
+            _pattern: &str,
+            _limit: Option<u32>,
+        ) -> Result<FindAppsResult, PerceptionError> {
+            Ok(FindAppsResult {
+                apps: vec![],
+                total: 0,
+            })
+        }
+    }
+
     fn make_server() -> SootieServer {
         SootieServer::new_in_memory(
             Box::new(StubPerceptionProvider),
             Box::new(NoopActionProvider),
+        )
+    }
+
+    fn make_server_with_recording_action(calls: Arc<Mutex<Vec<String>>>) -> SootieServer {
+        SootieServer::new_in_memory(
+            Box::new(StubPerceptionProvider),
+            Box::new(RecordingActionProvider { calls }),
         )
     }
 
@@ -1367,6 +2110,20 @@ mod tests {
             Box::new(NoopPerceptionProvider),
             Box::new(NoopActionProvider),
             Some(path),
+        )
+    }
+
+    fn make_server_with_recording_perception(selectors: Arc<Mutex<Vec<Selector>>>) -> SootieServer {
+        SootieServer::new_in_memory(
+            Box::new(RecordingPerceptionProvider { selectors }),
+            Box::new(NoopActionProvider),
+        )
+    }
+
+    fn make_server_with_context(context: Context) -> SootieServer {
+        SootieServer::new_in_memory(
+            Box::new(ContextPerceptionProvider { context }),
+            Box::new(NoopActionProvider),
         )
     }
 
@@ -1411,7 +2168,7 @@ mod tests {
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 20);
+        assert_eq!(tools.len(), 18);
     }
 
     #[tokio::test]
@@ -1439,7 +2196,9 @@ mod tests {
 
         assert!(resp.error.is_none());
         let content = &resp.result.unwrap()["content"][0]["text"];
-        assert!(content.as_str().unwrap().contains("[]"));
+        let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(content["success"], true);
+        assert!(content["data"].to_string().contains("[]"));
     }
 
     #[tokio::test]
@@ -1570,9 +2329,10 @@ mod tests {
         let content = &resp.result.unwrap()["content"][0]["text"];
         let run_result: serde_json::Value =
             serde_json::from_str(content.as_str().unwrap()).unwrap();
-        assert_eq!(run_result["recipe"], "test-run");
-        assert_eq!(run_result["status"], "completed");
-        assert_eq!(run_result["results"].as_array().unwrap().len(), 2);
+        assert_eq!(run_result["success"], true);
+        assert_eq!(run_result["data"]["recipe"], "test-run");
+        assert_eq!(run_result["data"]["status"], "completed");
+        assert_eq!(run_result["data"]["results"].as_array().unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -1632,51 +2392,26 @@ mod tests {
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
-        let is_error = resp.result.unwrap()["isError"].as_bool();
-        assert_eq!(is_error, Some(true));
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_press() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_press",
-                "arguments": { "key": "Return" }
-            })),
+        let result = resp.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["success"], false);
+        assert_eq!(
+            result["structuredContent"]["message"],
+            "Missing required field: text"
         );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
     }
 
     #[tokio::test]
-    async fn test_tool_call_hotkey() {
+    async fn test_tool_call_type_without_field() {
         let server = make_server();
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_hotkey",
-                "arguments": { "keys": ["Cmd", "C"] }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_window() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_window",
+                "name": "sootie_type",
                 "arguments": {
-                    "app": "Chrome",
-                    "operation": "minimize"
+                    "text": "user@example.com",
+                    "clear_first": true
                 }
             })),
         );
@@ -1685,133 +2420,364 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_call_window_invalid_operation() {
+    async fn test_tool_call_find_element() {
         let server = make_server();
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_window",
+                "name": "sootie_find_element",
                 "arguments": {
-                    "app": "Chrome",
-                    "operation": "fly"
+                    "el_description": "Submit"
                 }
             })),
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
-        let is_error = resp.result.unwrap()["isError"].as_bool();
-        assert_eq!(is_error, Some(true));
+        let result = resp.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["success"], false);
+        assert_eq!(
+            result["structuredContent"]["data"]["code"],
+            "target_not_found"
+        );
     }
 
     #[tokio::test]
-    async fn test_notifications_initialized() {
-        let server = make_server();
-        let req = make_request("notifications/initialized", 1, None);
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    // ========== Additional MCP Integration Tests ==========
-
-    #[tokio::test]
-    async fn test_tool_call_find() {
-        let server = make_server();
+    async fn test_tool_call_find_element_does_not_focus_before_find() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_action(calls.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_find",
+                "name": "sootie_find_element",
                 "arguments": {
-                    "app": "Chrome",
-                    "role": "button",
-                    "name": "Submit"
+                    "el_description": "Submit",
+                    "window": {
+                        "app": "Safari",
+                        "windowId": "win_42"
+                    }
                 }
             })),
         );
         let resp = server.handle_request(req).await;
+
         assert!(resp.error.is_none());
+        let calls = calls.lock().unwrap();
+        assert!(!calls.iter().any(|call| call.starts_with("focus")));
     }
 
     #[tokio::test]
-    async fn test_tool_call_inspect() {
-        let server = make_server();
+    async fn test_find_element_defaults_to_frontmost_focused_window_scope() {
+        let server = make_server_with_context(Context {
+            apps: vec![AppContext {
+                app: App {
+                    name: "Safari".to_string(),
+                    bundle_id: "com.apple.Safari".to_string(),
+                    is_frontmost: true,
+                },
+                windows: vec![
+                    Window {
+                        id: "win_0".to_string(),
+                        title: "Other".to_string(),
+                        index: 0,
+                        focused: false,
+                        bounds: Bounds {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 1200.0,
+                            height: 800.0,
+                        },
+                        display_id: Some(1),
+                    },
+                    Window {
+                        id: "win_1".to_string(),
+                        title: "Start Page".to_string(),
+                        index: 1,
+                        focused: true,
+                        bounds: Bounds {
+                            x: -1600.0,
+                            y: 0.0,
+                            width: 1600.0,
+                            height: 900.0,
+                        },
+                        display_id: Some(2),
+                    },
+                ],
+            }],
+        });
+
+        let scope = server
+            .resolve_frontmost_window_scope()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(scope.app.as_deref(), Some("Safari"));
+        assert_eq!(scope.window_id.as_deref(), Some("win_1"));
+        assert_eq!(scope.window_title.as_deref(), Some("Start Page"));
+        assert_eq!(scope.window_index, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_find_element_app_hint_overrides_frontmost_scope() {
+        let server = make_server_with_context(Context {
+            apps: vec![
+                AppContext {
+                    app: App {
+                        name: "Opencode".to_string(),
+                        bundle_id: "ai.opencode".to_string(),
+                        is_frontmost: true,
+                    },
+                    windows: vec![Window {
+                        id: "win_0".to_string(),
+                        title: "Current task".to_string(),
+                        index: 0,
+                        focused: true,
+                        bounds: Bounds {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 1600.0,
+                            height: 900.0,
+                        },
+                        display_id: Some(1),
+                    }],
+                },
+                AppContext {
+                    app: App {
+                        name: "Safari".to_string(),
+                        bundle_id: "com.apple.Safari".to_string(),
+                        is_frontmost: false,
+                    },
+                    windows: vec![Window {
+                        id: "win_1".to_string(),
+                        title: "Start Page".to_string(),
+                        index: 1,
+                        focused: false,
+                        bounds: Bounds {
+                            x: -1600.0,
+                            y: 0.0,
+                            width: 1600.0,
+                            height: 900.0,
+                        },
+                        display_id: Some(2),
+                    }],
+                },
+            ],
+        });
+
+        let (description, scope) = server
+            .resolve_app_hint_window_scope("URL input field or address bar in Safari")
+            .await
+            .unwrap();
+        let scope = scope.unwrap();
+
+        assert_eq!(description, "URL input field or address bar");
+        assert_eq!(scope.app.as_deref(), Some("Safari"));
+        assert_eq!(scope.window_id.as_deref(), Some("win_1"));
+        assert_eq!(scope.window_title.as_deref(), Some("Start Page"));
+    }
+
+    #[tokio::test]
+    async fn test_find_element_window_app_scope_stays_lightweight() {
+        let server = make_server_with_context(Context {
+            apps: vec![AppContext {
+                app: App {
+                    name: "Safari".to_string(),
+                    bundle_id: "com.apple.Safari".to_string(),
+                    is_frontmost: false,
+                },
+                windows: vec![Window {
+                    id: "win_3".to_string(),
+                    title: "Start Page".to_string(),
+                    index: 3,
+                    focused: true,
+                    bounds: Bounds {
+                        x: -1600.0,
+                        y: 0.0,
+                        width: 1600.0,
+                        height: 900.0,
+                    },
+                    display_id: Some(2),
+                }],
+            }],
+        });
+
+        let scope = server
+            .resolve_description_window_scope(&serde_json::json!({
+                "window": {
+                    "app": "Safari"
+                }
+            }))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(scope.app.as_deref(), Some("Safari"));
+        assert_eq!(scope.window_id, None);
+        assert_eq!(scope.window_index, None);
+        assert_eq!(scope.display_id, None);
+    }
+
+    #[tokio::test]
+    async fn test_find_element_defaults_to_session_window_context_before_frontmost() {
+        let server = make_server_with_context(Context {
+            apps: vec![
+                AppContext {
+                    app: App {
+                        name: "Opencode".to_string(),
+                        bundle_id: "ai.opencode".to_string(),
+                        is_frontmost: true,
+                    },
+                    windows: vec![Window {
+                        id: "win_0".to_string(),
+                        title: "Current task".to_string(),
+                        index: 0,
+                        focused: true,
+                        bounds: Bounds {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 1600.0,
+                            height: 900.0,
+                        },
+                        display_id: Some(1),
+                    }],
+                },
+                AppContext {
+                    app: App {
+                        name: "Safari".to_string(),
+                        bundle_id: "com.apple.Safari".to_string(),
+                        is_frontmost: false,
+                    },
+                    windows: vec![Window {
+                        id: "win_1".to_string(),
+                        title: "Start Page".to_string(),
+                        index: 1,
+                        focused: false,
+                        bounds: Bounds {
+                            x: -1600.0,
+                            y: 0.0,
+                            width: 1600.0,
+                            height: 900.0,
+                        },
+                        display_id: Some(2),
+                    }],
+                },
+            ],
+        });
+        let launch_req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_launch",
+                "arguments": {
+                    "app": "Safari"
+                }
+            })),
+        );
+
+        let resp = server.handle_request(launch_req).await;
+        assert!(resp.error.is_none());
+
+        let scope = server
+            .resolve_session_window_scope()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(scope.app.as_deref(), Some("Safari"));
+        assert_eq!(scope.window_id.as_deref(), Some("win_1"));
+        assert_eq!(scope.window_title.as_deref(), Some("Start Page"));
+        assert_eq!(scope.window_index, Some(1));
+        assert_eq!(scope.display_id, Some(2));
+    }
+
+    #[test]
+    fn test_parse_description_selector_extracts_focused_text_field() {
+        let selector = parse_description_selector("focused text field");
+        assert_eq!(selector.element.role.as_deref(), Some("textfield"));
+        assert!(selector.element.name.is_none());
+        assert_eq!(
+            selector
+                .element
+                .state
+                .as_ref()
+                .and_then(|state| state.focused),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_find_element_uses_structured_selector_for_focused_text_field() {
+        let selectors = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_perception(selectors.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_inspect",
+                "name": "sootie_find_element",
                 "arguments": {
-                    "role": "button",
-                    "name": "Submit"
+                    "el_description": "focused text field"
+                }
+            })),
+        );
+
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+
+        let selectors = selectors.lock().unwrap();
+        assert_eq!(selectors.len(), 1);
+        assert_eq!(selectors[0].element.role.as_deref(), Some("textfield"));
+        assert_eq!(
+            selectors[0]
+                .element
+                .state
+                .as_ref()
+                .and_then(|state| state.focused),
+            Some(true)
+        );
+
+        let result = resp.result.unwrap();
+        assert!(result.get("isError").is_none() || result["isError"] == false);
+        assert_eq!(result["structuredContent"]["success"], true);
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_tap_by_name_does_not_focus_before_find() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_action(calls.clone());
+        let req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_tap_by_name",
+                "arguments": {
+                    "el_description": "Submit",
+                    "window": {
+                        "app": "Safari",
+                        "windowId": "win_42"
+                    }
                 }
             })),
         );
         let resp = server.handle_request(req).await;
+
         assert!(resp.error.is_none());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 0);
     }
 
     #[tokio::test]
-    async fn test_tool_call_wait() {
+    async fn test_tool_call_tap_by_name() {
         let server = make_server();
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_wait",
+                "name": "sootie_tap_by_name",
                 "arguments": {
-                    "role": "button",
-                    "name": "Submit",
-                    "timeout": 1000
-                }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_screenshot() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_screenshot",
-                "arguments": {}
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_screenshot_with_region() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_screenshot",
-                "arguments": {
-                    "region": { "x": 0, "y": 0, "width": 100, "height": 100 }
-                }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_click_with_target() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_click",
-                "arguments": {
-                    "target": { "role": "button", "name": "Submit" },
+                    "el_description": "Submit",
                     "button": "left",
                     "count": 1
                 }
@@ -1822,15 +2788,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_call_click_with_coordinate() {
+    async fn test_tool_call_tap_by_position() {
         let server = make_server();
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_click",
+                "name": "sootie_tap_by_position",
                 "arguments": {
-                    "coordinate": { "x": 100, "y": 200 },
+                    "x": 100.0,
+                    "y": 200.0,
                     "button": "right"
                 }
             })),
@@ -1840,7 +2807,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_call_type_with_target() {
+    async fn test_tool_call_type_with_field() {
         let server = make_server();
         let req = make_request(
             "tools/call",
@@ -1848,7 +2815,7 @@ mod tests {
             Some(serde_json::json!({
                 "name": "sootie_type",
                 "arguments": {
-                    "target": { "role": "textfield", "name": "Email" },
+                    "field": "Email",
                     "text": "user@example.com",
                     "clear_first": true
                 }
@@ -1856,6 +2823,76 @@ mod tests {
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_type_with_field_does_not_focus_before_find() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_action(calls.clone());
+        let req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_type",
+                "arguments": {
+                    "field": "Email",
+                    "text": "user@example.com",
+                    "window": {
+                        "app": "Safari",
+                        "windowId": "win_42"
+                    }
+                }
+            })),
+        );
+        let resp = server.handle_request(req).await;
+
+        assert!(resp.error.is_none());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_press_by_name() {
+        let server = make_server();
+        let req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_press_by_name",
+                "arguments": {
+                    "el_description": "Submit",
+                    "key": "Return"
+                }
+            })),
+        );
+        let resp = server.handle_request(req).await;
+        assert!(resp.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_press_by_name_does_not_focus_before_find() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_action(calls.clone());
+        let req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_press_by_name",
+                "arguments": {
+                    "el_description": "Submit",
+                    "key": "Return",
+                    "window": {
+                        "app": "Safari",
+                        "windowId": "win_42"
+                    }
+                }
+            })),
+        );
+        let resp = server.handle_request(req).await;
+
+        assert!(resp.error.is_none());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 0);
     }
 
     #[tokio::test]
@@ -1874,156 +2911,6 @@ mod tests {
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_hover() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_hover",
-                "arguments": {
-                    "coordinate": { "x": 100, "y": 200 }
-                }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_drag() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_drag",
-                "arguments": {
-                    "from": { "x": 100, "y": 100 },
-                    "to": { "x": 200, "y": 200 }
-                }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_focus() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_focus",
-                "arguments": {
-                    "app": "Chrome"
-                }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_recipe_run_not_found() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_run",
-                "arguments": {
-                    "name": "nonexistent",
-                    "params": {}
-                }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-        let is_error = resp.result.unwrap()["isError"].as_bool();
-        assert_eq!(is_error, Some(true));
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_recipe_delete_not_found() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_recipe_delete",
-                "arguments": { "name": "nonexistent" }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-        let is_error = resp.result.unwrap()["isError"].as_bool();
-        assert_eq!(is_error, Some(true));
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_recipe_save_invalid() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_recipe_save",
-                "arguments": {
-                    "recipe": {
-                        "name": "",
-                        "steps": []
-                    }
-                }
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-        let is_error = resp.result.unwrap()["isError"].as_bool();
-        assert_eq!(is_error, Some(true));
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_missing_arguments() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_context"
-            })),
-        );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_no_params() {
-        let server = make_server();
-        let req = make_request("tools/call", 1, None);
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_some());
-        assert_eq!(resp.error.unwrap().code, -32602);
-    }
-
-    #[tokio::test]
-    async fn test_response_has_jsonrpc_version() {
-        let server = make_server();
-        let req = make_request("initialize", 1, None);
-        let resp = server.handle_request(req).await;
-        assert_eq!(resp.jsonrpc, "2.0");
-    }
-
-    #[tokio::test]
-    async fn test_response_preserves_id() {
-        let server = make_server();
-        let req = make_request("initialize", 42, None);
-        let resp = server.handle_request(req).await;
-        assert_eq!(resp.id, Some(serde_json::Value::Number(42.into())));
     }
 
     #[tokio::test]

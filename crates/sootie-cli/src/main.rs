@@ -4,6 +4,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use chrono::Local;
 use clap::{Parser, Subcommand};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -115,12 +116,13 @@ fn print_usage_instructions() {
 }
 
 fn default_log_file_path() -> PathBuf {
+    let file_name = format!("{}.log", Local::now().format("%Y-%m-%d-%H-%M-%S"));
     dirs_next::data_local_dir()
         .or_else(dirs_next::config_dir)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("sootie")
         .join("logs")
-        .join("sootie.log")
+        .join(file_name)
 }
 
 fn resolve_log_file_path(log_file: Option<String>) -> PathBuf {
@@ -197,13 +199,9 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
     );
 
     let _sidecar = if !config.vision.model_path.is_empty() || config.vision.auto_start {
-        match setup::launch_sidecar(config.vision.sidecar_port, None).await {
+        match setup::launch_sidecar(config.vision.sidecar_port).await {
             Ok(guard) => {
                 info!(port = %config.vision.sidecar_port, auto_start = %config.vision.auto_start, "Python sidecar launched");
-                if let Some(token) = guard.auth_token() {
-                    std::env::set_var("SOOTIE_SIDECAR_AUTH_TOKEN", token);
-                    info!("Sidecar auth token set in environment");
-                }
                 Some(guard)
             }
             Err(e) => {
@@ -252,10 +250,16 @@ async fn run_serve(log_level: String, log_file: Option<String>) -> Result<()> {
 
         match serde_json::from_str::<JsonRpcRequest>(line) {
             Ok(request) => {
+                // Check if this is a notification (no id)
+                let is_notification = request.id.is_none();
                 let response = server.handle_request(request).await;
-                let response_json = serde_json::to_string(&response)?;
-                writeln!(stdout, "{}", response_json)?;
-                stdout.flush()?;
+
+                // Only send response for requests (not notifications)
+                if !is_notification {
+                    let response_json = serde_json::to_string(&response)?;
+                    writeln!(stdout, "{}", response_json)?;
+                    stdout.flush()?;
+                }
             }
             Err(e) => {
                 tracing::error!(error = %e, raw_input = %line, "Failed to parse MCP request");
@@ -431,13 +435,29 @@ mod tests {
     }
 
     #[test]
-    fn test_default_log_file_path_uses_sootie_log_suffix() {
+    fn test_default_log_file_path_uses_datetime_filename() {
         let path = default_log_file_path();
-        let suffix = Path::new("sootie").join("logs").join("sootie.log");
+        let suffix = Path::new("sootie").join("logs");
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap();
         assert!(
-            path.ends_with(&suffix),
+            path.parent()
+                .is_some_and(|parent| parent.ends_with(&suffix)),
             "unexpected default log path: {}",
             path.display()
+        );
+        assert!(
+            file_name.len() == "2026-05-09-08-54-54.log".len()
+                && file_name.ends_with(".log")
+                && file_name
+                    .strip_suffix(".log")
+                    .unwrap()
+                    .chars()
+                    .enumerate()
+                    .all(
+                        |(index, ch)| matches!(index, 4 | 7 | 10 | 13 | 16) && ch == '-'
+                            || !matches!(index, 4 | 7 | 10 | 13 | 16) && ch.is_ascii_digit()
+                    ),
+            "unexpected log filename: {file_name}"
         );
     }
 
