@@ -505,6 +505,19 @@ pub fn get_pid_for_app_name(name: &str) -> i32 {
         .unwrap_or(0)
 }
 
+pub fn get_bundle_id_for_app_name(name: &str) -> Option<String> {
+    get_running_app_records()
+        .into_iter()
+        .find(|(app_name, _, _, _)| app_name == name)
+        .and_then(|(_, bundle_id, _, _)| {
+            if bundle_id.is_empty() {
+                None
+            } else {
+                Some(bundle_id)
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

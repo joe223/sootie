@@ -17,6 +17,8 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         action_hotkey(),
         action_scroll(),
         action_drag(),
+        action_drag_by_position(),
+        perception_save_screenshot(),
         app_launch(),
         window_focus(),
         window_op(),
@@ -378,6 +380,54 @@ fn action_drag() -> ToolDefinition {
     }
 }
 
+fn action_drag_by_position() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_drag_by_position".to_string(),
+        description: "Drag from one absolute screen coordinate to another".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "from_x": {
+                    "type": "number",
+                    "description": "Starting X coordinate from screen top-left origin"
+                },
+                "from_y": {
+                    "type": "number",
+                    "description": "Starting Y coordinate from screen top-left origin"
+                },
+                "to_x": {
+                    "type": "number",
+                    "description": "Ending X coordinate from screen top-left origin"
+                },
+                "to_y": {
+                    "type": "number",
+                    "description": "Ending Y coordinate from screen top-left origin"
+                }
+            },
+            "required": ["from_x", "from_y", "to_x", "to_y"]
+        }),
+    }
+}
+
+fn perception_save_screenshot() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_save_screenshot".to_string(),
+        description: "Capture the current scoped window or screen and save it as a PNG file"
+            .to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute destination path for the screenshot PNG"
+                },
+                "window": description_window_scope_schema()
+            },
+            "required": ["path"]
+        }),
+    }
+}
+
 fn window_focus() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_focus".to_string(),
@@ -587,7 +637,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 20);
     }
 
     #[test]
@@ -605,6 +655,8 @@ mod tests {
         assert!(names.contains(&"sootie_hotkey"));
         assert!(names.contains(&"sootie_scroll"));
         assert!(names.contains(&"sootie_drag"));
+        assert!(names.contains(&"sootie_drag_by_position"));
+        assert!(names.contains(&"sootie_save_screenshot"));
         assert!(names.contains(&"sootie_focus"));
         assert!(names.contains(&"sootie_window"));
         assert!(names.contains(&"sootie_recipes"));

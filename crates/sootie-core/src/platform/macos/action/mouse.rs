@@ -3,6 +3,9 @@ use std::time::Duration;
 
 const CLICK_SETTLE_DELAY: Duration = Duration::from_millis(40);
 const CLICK_DOWN_DELAY: Duration = Duration::from_millis(60);
+const DRAG_STEP_DELAY: Duration = Duration::from_millis(8);
+const DRAG_STEP_DISTANCE: f64 = 12.0;
+const DRAG_MIN_STEPS: usize = 8;
 
 fn ensure_accessibility_trusted() -> Result<(), String> {
     if super::super::ax_fns::is_process_trusted() {
@@ -140,6 +143,16 @@ pub fn simulate_drag(from: Coordinate, to: Coordinate) -> Result<(), String> {
     let from_point = CGPoint::new(from.x, from.y);
     let to_point = CGPoint::new(to.x, to.y);
 
+    let move_to_start_event = CGEvent::new_mouse_event(
+        source.clone(),
+        CGEventType::MouseMoved,
+        from_point,
+        CGMouseButton::Left,
+    )
+    .map_err(|_| "Failed to create mouse move event".to_string())?;
+    move_to_start_event.post(CGEventTapLocation::HID);
+    std::thread::sleep(CLICK_SETTLE_DELAY);
+
     let down_event = CGEvent::new_mouse_event(
         source.clone(),
         CGEventType::LeftMouseDown,
@@ -148,15 +161,23 @@ pub fn simulate_drag(from: Coordinate, to: Coordinate) -> Result<(), String> {
     )
     .map_err(|_| "Failed to create mouse down event".to_string())?;
     down_event.post(CGEventTapLocation::HID);
+    std::thread::sleep(CLICK_DOWN_DELAY);
 
-    let move_event = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::LeftMouseDragged,
-        to_point,
-        CGMouseButton::Left,
-    )
-    .map_err(|_| "Failed to create mouse drag event".to_string())?;
-    move_event.post(CGEventTapLocation::HID);
+    let distance = ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt();
+    let steps = ((distance / DRAG_STEP_DISTANCE).ceil() as usize).max(DRAG_MIN_STEPS);
+    for step in 1..=steps {
+        let t = step as f64 / steps as f64;
+        let point = CGPoint::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+        let move_event = CGEvent::new_mouse_event(
+            source.clone(),
+            CGEventType::LeftMouseDragged,
+            point,
+            CGMouseButton::Left,
+        )
+        .map_err(|_| "Failed to create mouse drag event".to_string())?;
+        move_event.post(CGEventTapLocation::HID);
+        std::thread::sleep(DRAG_STEP_DELAY);
+    }
 
     let up_event = CGEvent::new_mouse_event(
         source.clone(),

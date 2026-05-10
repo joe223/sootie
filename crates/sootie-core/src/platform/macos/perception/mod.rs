@@ -6,6 +6,8 @@ mod screenshot;
 mod utils;
 mod wait;
 
+pub(crate) use context::{get_bundle_id_for_app_name, get_pid_for_app_name};
+
 use async_trait::async_trait;
 use std::process::Command;
 use std::time::Duration;

@@ -39,6 +39,12 @@ extern "C" {
         attribute: CFStringRef,
         value: *mut CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementSetAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: CFTypeRef,
+    ) -> AXError;
+    pub fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
     pub fn AXValueGetValue(value: AXValueRef, type_: i32, value_ptr: *mut std::ffi::c_void)
         -> bool;
     pub fn AXIsProcessTrusted() -> bool;
@@ -175,6 +181,30 @@ pub unsafe fn get_array_attr(element: AXUIElementRef, attr: &str) -> Vec<AXUIEle
         .iter()
         .map(|p| retain_ax_element(*p as AXUIElementRef))
         .collect()
+}
+
+pub unsafe fn perform_action(element: AXUIElementRef, action: &str) -> AXError {
+    let cf_action = cfstr(action);
+    AXUIElementPerformAction(element, cf_action.as_concrete_TypeRef())
+}
+
+pub unsafe fn set_bool_attr(element: AXUIElementRef, attr: &str, value: bool) -> AXError {
+    let cf_attr = cfstr(attr);
+    let cf_value = CFBoolean::from(value);
+    AXUIElementSetAttributeValue(
+        element,
+        cf_attr.as_concrete_TypeRef(),
+        cf_value.as_CFTypeRef(),
+    )
+}
+
+pub unsafe fn set_element_attr(
+    element: AXUIElementRef,
+    attr: &str,
+    value: AXUIElementRef,
+) -> AXError {
+    let cf_attr = cfstr(attr);
+    AXUIElementSetAttributeValue(element, cf_attr.as_concrete_TypeRef(), value as CFTypeRef)
 }
 
 pub unsafe fn get_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {

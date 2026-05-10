@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -138,6 +138,12 @@ fn error_response(error: &ToolInvocationError) -> serde_json::Value {
             "code": error.code,
             "details": error.details,
         },
+    })
+}
+
+fn required_f64(args: &serde_json::Value, field: &'static str) -> Result<f64, ToolInvocationError> {
+    args.get(field).and_then(|v| v.as_f64()).ok_or_else(|| {
+        ToolInvocationError::invalid_arguments(format!("Missing required field: {}", field))
     })
 }
 
@@ -817,6 +823,8 @@ impl SootieServer {
             "sootie_hotkey" => self.tool_hotkey(&args).await,
             "sootie_scroll" => self.tool_scroll(&args).await,
             "sootie_drag" => self.tool_drag(&args).await,
+            "sootie_drag_by_position" => self.tool_drag_by_position(&args).await,
+            "sootie_save_screenshot" => self.tool_save_screenshot(&args).await,
             "sootie_launch" => self.tool_launch(&args).await,
             "sootie_focus" => self.tool_focus(&args).await,
             "sootie_window" => self.tool_window(&args).await,
@@ -1271,6 +1279,89 @@ impl SootieServer {
             )
         })?;
         to_json_value(result)
+    }
+
+    async fn tool_drag_by_position(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let from_x = required_f64(args, "from_x")?;
+        let from_y = required_f64(args, "from_y")?;
+        let to_x = required_f64(args, "to_x")?;
+        let to_y = required_f64(args, "to_y")?;
+
+        let action = DragAction {
+            from: ActionTarget::Coordinate(Coordinate {
+                x: from_x,
+                y: from_y,
+            }),
+            to: ActionTarget::Coordinate(Coordinate { x: to_x, y: to_y }),
+        };
+        let result = self.action.drag(&action).await.map_err(|e| {
+            ToolInvocationError::execution(format!("Drag by position failed: {}", e))
+        })?;
+        to_json_value(result)
+    }
+
+    async fn tool_save_screenshot(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolInvocationError::invalid_arguments("Missing required field: path")
+        })?;
+        let path = Path::new(path);
+        if !path.is_absolute() {
+            return Err(ToolInvocationError::invalid_arguments(
+                "Screenshot path must be absolute",
+            ));
+        }
+
+        let window_scope = match self.resolve_description_window_scope(args).await? {
+            Some(scope) => Some(scope),
+            None => match self.resolve_session_window_scope().await? {
+                Some(scope) => Some(scope),
+                None => self.resolve_frontmost_window_scope().await?,
+            },
+        };
+
+        let mut selector = Selector::new();
+        if let Some(scope) = window_scope.as_ref() {
+            if let Some(app) = scope.app.as_deref() {
+                selector = selector.with_app(AppSelector::from_name(app));
+            }
+            if let Some(window) = Self::build_description_window_selector(scope) {
+                selector = selector.with_window(window);
+            }
+        }
+        let selector = window_scope.as_ref().map(|_| selector);
+
+        let screenshot = self
+            .perception
+            .screenshot(selector.as_ref(), None, None)
+            .await
+            .map_err(|e| ToolInvocationError::execution(format!("Screenshot failed: {}", e)))?;
+
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                ToolInvocationError::execution(format!(
+                    "Failed to create screenshot directory: {}",
+                    e
+                ))
+            })?;
+        }
+        tokio::fs::write(path, &screenshot.data)
+            .await
+            .map_err(|e| {
+                ToolInvocationError::execution(format!("Failed to write screenshot: {}", e))
+            })?;
+
+        to_json_value(serde_json::json!({
+            "path": path.display().to_string(),
+            "format": screenshot.format,
+            "bytes": screenshot.data.len(),
+            "bounds": screenshot.bounds,
+        }))
     }
 
     async fn tool_focus(

@@ -1,7 +1,31 @@
-use std::process::Command;
+use std::time::Duration;
+
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+use objc2_foundation::NSString;
 
 use crate::action::{ActionError, ActionResult, FocusAction};
 use crate::selector::WindowSelector;
+
+use super::super::ax_fns::{
+    get_children, get_string_attr, get_windows, is_process_trusted, perform_action,
+    release_ax_element, set_bool_attr, set_element_attr, AXUIElementCreateApplication,
+    K_AX_ERROR_SUCCESS,
+};
+use super::super::perception::{get_bundle_id_for_app_name, get_pid_for_app_name};
+
+const FOCUS_SETTLE_DELAY: Duration = Duration::from_millis(200);
+
+#[repr(C)]
+struct ProcessSerialNumber {
+    high_long_of_psn: u32,
+    low_long_of_psn: u32,
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn GetProcessForPID(pid: i32, psn: *mut ProcessSerialNumber) -> i32;
+    fn SetFrontProcessWithOptions(psn: *const ProcessSerialNumber, options: u32) -> i32;
+}
 
 pub fn perform_focus(action: &FocusAction) -> Result<ActionResult, ActionError> {
     let app_name = action.selector.app.as_ref().and_then(|a| a.name.clone());
@@ -9,7 +33,7 @@ pub fn perform_focus(action: &FocusAction) -> Result<ActionResult, ActionError> 
     match app_name {
         Some(name) => {
             focus_app(&name, action.selector.window.as_ref()).map_err(ActionError::ActionFailed)?;
-            Ok(ActionResult::success(None, "osascript"))
+            Ok(ActionResult::success(None, "appkit"))
         }
         None => Err(ActionError::TargetNotFound(
             "no app name specified in selector".to_string(),
@@ -18,67 +42,172 @@ pub fn perform_focus(action: &FocusAction) -> Result<ActionResult, ActionError> 
 }
 
 fn focus_app(app_name: &str, window: Option<&WindowSelector>) -> Result<(), String> {
-    let script = build_activate_script(app_name, window);
+    activate_app(app_name)?;
+    if is_process_trusted() {
+        let _ = raise_window(app_name, window);
+    }
+    std::thread::sleep(FOCUS_SETTLE_DELAY);
+    Ok(())
+}
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .output()
-        .map_err(|e| format!("osascript failed: {}", e))?;
+fn activate_app(app_name: &str) -> Result<(), String> {
+    let pid = get_pid_for_app_name(app_name);
+    if pid <= 0 {
+        return Err(format!("No running app matched '{}'", app_name));
+    }
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to focus app '{}': {}", app_name, stderr));
+    let mut activated = activate_process(pid).is_ok();
+
+    let bundle_id = get_bundle_id_for_app_name(app_name)
+        .ok_or_else(|| format!("No running app matched '{}'", app_name))?;
+    let bundle_id = NSString::from_str(&bundle_id);
+    let apps = unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id) };
+    let app = (0..apps.len())
+        .filter_map(|index| apps.get(index))
+        .find(|app| unsafe { !app.isTerminated() })
+        .ok_or_else(|| format!("No running application found for '{}'", app_name))?;
+
+    unsafe {
+        app.unhide();
+        #[allow(deprecated)]
+        let options = NSApplicationActivationOptions::NSApplicationActivateAllWindows
+            | NSApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps;
+        if app.activateWithOptions(options) {
+            activated = true;
+        }
+    }
+
+    if activated {
+        Ok(())
+    } else {
+        Err(format!("Failed to activate app '{}'", app_name))
+    }
+}
+
+fn activate_process(pid: i32) -> Result<(), String> {
+    let mut psn = ProcessSerialNumber {
+        high_long_of_psn: 0,
+        low_long_of_psn: 0,
+    };
+
+    let get_status = unsafe { GetProcessForPID(pid, &mut psn) };
+    if get_status != 0 {
+        return Err(format!(
+            "GetProcessForPID failed with status {}",
+            get_status
+        ));
+    }
+
+    let set_status = unsafe { SetFrontProcessWithOptions(&psn, 0) };
+    if set_status != 0 {
+        return Err(format!(
+            "SetFrontProcessWithOptions failed with status {}",
+            set_status
+        ));
     }
 
     Ok(())
 }
 
-fn build_activate_script(app_name: &str, window: Option<&WindowSelector>) -> String {
-    let escaped_name = app_name.replace('\\', "\\\\").replace('"', "\\\"");
-    let mut script = format!(
-        "tell application \"{}\" to activate\ndelay 0.2",
-        escaped_name
-    );
-
-    if let Some(window_title) = window.and_then(|window| window.title.as_deref()) {
-        let escaped_title = window_title.replace('\\', "\\\\").replace('"', "\\\"");
-        script.push_str(&format!(
-            "\ntell application \"System Events\"\n    tell process \"{}\"\n        set frontmost to true\n        perform action \"AXRaise\" of (first window whose name contains \"{}\")\n    end tell\nend tell",
-            escaped_name, escaped_title
-        ));
-    } else if let Some(window_number) = window_index(window) {
-        script.push_str(&format!(
-            "\ntell application \"System Events\"\n    tell process \"{}\"\n        set frontmost to true\n        perform action \"AXRaise\" of window {}\n    end tell\nend tell",
-            escaped_name, window_number
-        ));
+fn raise_window(app_name: &str, window: Option<&WindowSelector>) -> Result<(), String> {
+    if !is_process_trusted() {
+        return Err("Accessibility permission required to raise a specific window".to_string());
     }
 
-    script
+    let pid = get_pid_for_app_name(app_name);
+    if pid <= 0 {
+        return Err(format!("No running app matched '{}'", app_name));
+    }
+
+    unsafe {
+        let app_element = AXUIElementCreateApplication(pid);
+        if app_element.is_null() {
+            return Err(format!(
+                "Failed to create accessibility element for '{}'",
+                app_name
+            ));
+        }
+
+        let mut windows = get_windows(app_element);
+        if windows.is_empty() {
+            windows = get_children(app_element);
+        }
+
+        let target_index = window_index(window);
+        let target_title = window.and_then(|window| window.title.as_deref());
+        let _ = set_bool_attr(app_element, "AXFrontmost", true);
+        let mut raised = false;
+        let mut first_window: Option<usize> = None;
+
+        for (index, window_ref) in windows.iter().enumerate() {
+            first_window.get_or_insert(index);
+            let title = get_string_attr(*window_ref, "AXTitle").unwrap_or_default();
+            let title_matches = target_title
+                .map(|needle| title.contains(needle))
+                .unwrap_or(false);
+            let index_matches = target_index
+                .map(|target_index| target_index == index)
+                .unwrap_or(false);
+
+            if title_matches || index_matches || (target_title.is_none() && target_index.is_none())
+            {
+                let _ = set_bool_attr(*window_ref, "AXMain", true);
+                let _ = set_element_attr(app_element, "AXFocusedWindow", *window_ref);
+                let err = perform_action(*window_ref, "AXRaise");
+                raised = err == K_AX_ERROR_SUCCESS;
+            }
+
+            if raised {
+                break;
+            }
+        }
+
+        if !raised {
+            if let Some(index) = first_window {
+                if let Some(window_ref) = windows.get(index) {
+                    let _ = set_bool_attr(*window_ref, "AXMain", true);
+                    let _ = set_element_attr(app_element, "AXFocusedWindow", *window_ref);
+                    let err = perform_action(*window_ref, "AXRaise");
+                    raised = err == K_AX_ERROR_SUCCESS;
+                }
+            }
+        }
+
+        for window_ref in windows {
+            release_ax_element(window_ref);
+        }
+        release_ax_element(app_element);
+
+        if raised {
+            Ok(())
+        } else {
+            Err("No matching window could be raised".to_string())
+        }
+    }
 }
 
-fn window_index(window: Option<&WindowSelector>) -> Option<u32> {
+fn window_index(window: Option<&WindowSelector>) -> Option<usize> {
     if let Some(index) = window.and_then(|window| window.index) {
-        return Some(index + 1);
+        return Some(index as usize);
     }
 
     window
         .and_then(|window| window.id.as_deref())
         .and_then(|id| id.strip_prefix("win_"))
-        .and_then(|index| index.parse::<u32>().ok())
-        .map(|index| index + 1)
+        .and_then(|index| index.parse::<usize>().ok())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::selector::{AppSelector, Selector, WindowSelector};
+    use crate::selector::WindowSelector;
 
     #[test]
     #[ignore = "requires accessibility permissions"]
     fn test_perform_focus_finder() {
         let action = FocusAction {
-            selector: Selector::new().with_app(AppSelector::from_name("Finder")),
+            selector: crate::selector::Selector::new()
+                .with_app(crate::selector::AppSelector::from_name("Finder")),
         };
         let result = perform_focus(&action);
         assert!(result.is_ok() || result.is_err());
@@ -88,54 +217,27 @@ mod tests {
     #[ignore = "requires accessibility permissions"]
     fn test_perform_focus_safari() {
         let action = FocusAction {
-            selector: Selector::new().with_app(AppSelector::from_name("Safari")),
+            selector: crate::selector::Selector::new()
+                .with_app(crate::selector::AppSelector::from_name("Safari")),
         };
         let result = perform_focus(&action);
         assert!(result.is_ok() || result.is_err());
     }
 
     #[test]
-    fn test_build_activate_script() {
-        let script = build_activate_script("Example App", None);
-        assert_eq!(
-            script,
-            "tell application \"Example App\" to activate\ndelay 0.2"
-        );
-    }
-
-    #[test]
-    fn test_build_activate_script_escapes_quotes() {
-        let script = build_activate_script("Foo \"Bar\"", None);
-        assert_eq!(
-            script,
-            "tell application \"Foo \\\"Bar\\\"\" to activate\ndelay 0.2"
-        );
-    }
-
-    #[test]
-    fn test_build_activate_script_with_window_title() {
-        let script = build_activate_script("Safari", Some(&WindowSelector::from_title("GitHub")));
-        assert!(script.contains("perform action \"AXRaise\""));
-        assert!(script.contains("whose name contains \"GitHub\""));
-    }
-
-    #[test]
-    fn test_build_activate_script_with_window_id() {
-        let script = build_activate_script(
-            "Safari",
-            Some(&WindowSelector {
-                title: None,
-                id: Some("win_2".to_string()),
-                index: None,
-                focused: None,
-            }),
-        );
-        assert!(script.contains("perform action \"AXRaise\" of window 3"));
-    }
-
-    #[test]
     fn test_window_index_from_window_id() {
         let selector = WindowSelector::from_title("GitHub").with_id("win_2");
-        assert_eq!(window_index(Some(&selector)), Some(3));
+        assert_eq!(window_index(Some(&selector)), Some(2));
+    }
+
+    #[test]
+    fn test_window_index_prefers_explicit_index() {
+        let selector = WindowSelector {
+            title: None,
+            id: Some("win_2".to_string()),
+            index: Some(4),
+            focused: None,
+        };
+        assert_eq!(window_index(Some(&selector)), Some(4));
     }
 }
