@@ -15,6 +15,7 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         action_type(),
         action_press(),
         action_hotkey(),
+        action_paste_text(),
         action_scroll(),
         action_drag(),
         perception_save_screenshot(),
@@ -87,6 +88,18 @@ fn perception_find_element() -> ToolDefinition {
                             "description": "Optional window identifier to focus and scope before finding"
                         }
                     }
+                },
+                "region": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "x": { "type": "number", "description": "X coordinate. Window-relative when window is provided; otherwise absolute screen X." },
+                        "y": { "type": "number", "description": "Y coordinate. Window-relative when window is provided; otherwise absolute screen Y." },
+                        "width": { "type": "number", "description": "Region width" },
+                        "height": { "type": "number", "description": "Region height" }
+                    },
+                    "required": ["x", "y", "width", "height"],
+                    "description": "Optional region to constrain vision grounding. With a window scope, the region is relative to that window and Sootie converts it to screen coordinates internally; without a window scope it is an absolute screen region."
                 }
             },
             "required": ["el_description"]
@@ -337,6 +350,29 @@ fn action_hotkey() -> ToolDefinition {
     }
 }
 
+fn action_paste_text() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_paste_text".to_string(),
+        description:
+            "Paste text through the system clipboard, optionally focusing a canonical target first. Useful for large structured payloads that would be unreliable to type character-by-character."
+                .to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "description": "Optional canonical action target to focus before pasting",
+                    "allOf": [action_target_schema()]
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to place on the clipboard and paste"
+                }
+            },
+            "required": ["text"]
+        }),
+    }
+}
+
 fn action_scroll() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_scroll".to_string(),
@@ -397,7 +433,19 @@ fn perception_save_screenshot() -> ToolDefinition {
                     "type": "string",
                     "description": "Absolute destination path for the screenshot PNG"
                 },
-                "window": description_window_scope_schema()
+                "window": description_window_scope_schema(),
+                "region": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "x": { "type": "number", "description": "X coordinate. Window-relative when window is provided; otherwise absolute screen X." },
+                        "y": { "type": "number", "description": "Y coordinate. Window-relative when window is provided; otherwise absolute screen Y." },
+                        "width": { "type": "number", "description": "Region width" },
+                        "height": { "type": "number", "description": "Region height" }
+                    },
+                    "required": ["x", "y", "width", "height"],
+                    "description": "Optional region to capture instead of the whole window. With a window scope, the region is relative to that window and Sootie converts it to screen coordinates internally; without a window scope it is an absolute screen region."
+                }
             },
             "required": ["path"]
         }),
@@ -591,7 +639,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 20);
+        assert_eq!(tools.len(), 21);
     }
 
     #[test]
@@ -608,6 +656,7 @@ mod tests {
         assert!(names.contains(&"sootie_type"));
         assert!(names.contains(&"sootie_press"));
         assert!(names.contains(&"sootie_hotkey"));
+        assert!(names.contains(&"sootie_paste_text"));
         assert!(names.contains(&"sootie_scroll"));
         assert!(names.contains(&"sootie_drag"));
         assert!(names.contains(&"sootie_save_screenshot"));

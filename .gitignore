@@ -1,5 +1,6 @@
 target/
 /docs/*
+!docs/development/
 *.log
 
 # Environment files with secrets

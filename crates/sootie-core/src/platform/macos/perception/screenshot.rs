@@ -164,7 +164,7 @@ fn xcap_window_bounds(window: &xcap::Window) -> Option<Bounds> {
 
 fn take_xcap_window_screenshot(
     window_id: u32,
-    region: Option<&Bounds>,
+    _region: Option<&Bounds>,
 ) -> Result<ScreenshotData, PerceptionError> {
     let windows = xcap::Window::all().map_err(|e| {
         PerceptionError::ScreenshotFailed(format!("xcap failed to list windows: {}", e))
@@ -191,7 +191,7 @@ fn take_xcap_window_screenshot(
         ))
     })?;
     let data = encode_png(image)?;
-    let bounds = region.cloned().or_else(|| xcap_window_bounds(&window));
+    let bounds = xcap_window_bounds(&window);
 
     Ok(ScreenshotData {
         format: ScreenshotFormat::Png,

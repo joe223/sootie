@@ -86,6 +86,15 @@ fn window_capture_target(
     ))
 }
 
+fn window_relative_region(window_bounds: &Bounds, region: &Bounds) -> Bounds {
+    Bounds {
+        x: window_bounds.x + region.x,
+        y: window_bounds.y + region.y,
+        width: region.width,
+        height: region.height,
+    }
+}
+
 fn selector_context(target: Option<&Selector>) -> Option<Context> {
     let app_selector = target.and_then(|selector| selector.app.as_ref())?;
     context::get_app_context(app_selector).map(|app_context| Context {
@@ -106,25 +115,33 @@ fn screenshot_capture_target(
     region: Option<&Bounds>,
     display_id: Option<u32>,
 ) -> ScreenshotCaptureTarget {
-    if let Some(region) = region {
-        return ScreenshotCaptureTarget {
-            region: Some(region.clone()),
-            display_id,
-            window_id: None,
-        };
-    }
-
     let window_target = match (target, ctx) {
         (Some(target), Some(ctx)) => window_capture_target(Some(target), ctx),
         _ => None,
     };
 
     if let Some((bounds, window_display_id, window_id)) = window_target {
+        if let Some(region) = region {
+            return ScreenshotCaptureTarget {
+                region: Some(window_relative_region(&bounds, region)),
+                display_id: display_id.or(window_display_id),
+                window_id: None,
+            };
+        }
+
         if bounds.width > 0.0 && bounds.height > 0.0 {
+            if let Some(window_id) = window_id {
+                return ScreenshotCaptureTarget {
+                    region: None,
+                    display_id: display_id.or(window_display_id),
+                    window_id: Some(window_id),
+                };
+            }
+
             return ScreenshotCaptureTarget {
                 region: Some(bounds),
                 display_id: display_id.or(window_display_id),
-                window_id,
+                window_id: None,
             };
         }
 
@@ -132,6 +149,14 @@ fn screenshot_capture_target(
             region: None,
             display_id: display_id.or(window_display_id),
             window_id,
+        };
+    }
+
+    if let Some(region) = region {
+        return ScreenshotCaptureTarget {
+            region: Some(region.clone()),
+            display_id,
+            window_id: None,
         };
     }
 
@@ -442,15 +467,7 @@ mod tests {
 
         assert_eq!(target.window_id, Some(20663));
         assert_eq!(target.display_id, Some(1));
-        assert_eq!(
-            target.region,
-            Some(Bounds {
-                x: 1097.0,
-                y: 529.0,
-                width: 631.0,
-                height: 549.0,
-            })
-        );
+        assert_eq!(target.region, None);
     }
 
     #[test]
@@ -516,6 +533,53 @@ mod tests {
 
         assert_eq!(target.region, Some(region));
         assert_eq!(target.display_id, Some(2));
+        assert_eq!(target.window_id, None);
+    }
+
+    #[test]
+    fn test_screenshot_capture_target_interprets_region_relative_to_window() {
+        let ctx = Context {
+            apps: vec![AppContext {
+                app: App {
+                    name: "Safari".to_string(),
+                    bundle_id: "com.apple.Safari".to_string(),
+                    is_frontmost: true,
+                },
+                windows: vec![Window {
+                    id: "cg_20663".to_string(),
+                    title: "Start Page".to_string(),
+                    index: 20663,
+                    focused: true,
+                    bounds: Bounds {
+                        x: 1097.0,
+                        y: 529.0,
+                        width: 631.0,
+                        height: 549.0,
+                    },
+                    display_id: Some(1),
+                }],
+            }],
+        };
+        let selector = Selector::new().with_app(AppSelector::from_name("Safari"));
+        let region = Bounds {
+            x: 10.0,
+            y: 20.0,
+            width: 300.0,
+            height: 200.0,
+        };
+
+        let target = screenshot_capture_target(Some(&selector), Some(&ctx), Some(&region), None);
+
+        assert_eq!(
+            target.region,
+            Some(Bounds {
+                x: 1107.0,
+                y: 549.0,
+                width: 300.0,
+                height: 200.0,
+            })
+        );
+        assert_eq!(target.display_id, Some(1));
         assert_eq!(target.window_id, None);
     }
 

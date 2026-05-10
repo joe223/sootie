@@ -52,11 +52,12 @@ class ServerState:
 state = ServerState()
 
 GROUNDING_SYSTEM_PROMPT = (
-    "Based on the screenshot of the page, I give a text description and you give "
-    "its corresponding location. The coordinate represents a clickable location "
-    "[x, y] for an element, which is a relative coordinate on the screenshot, "
-    "scaled from 0 to 1.\n\n"
-    "Return only the coordinate as [x, y]."
+    "Based on the screenshot of the page, I give a text description and you "
+    "return its corresponding location only if the described target is visible. "
+    "Coordinates are relative to the screenshot and scaled from 0 to 1. "
+    "Return only JSON in this shape: "
+    "{\"matches\":[{\"label\":\"target\",\"point\":[x,y],\"confidence\":0.9}]}. "
+    "If the target is not visible, return {\"matches\":[]}. Do not guess."
 )
 
 def reset_idle_timer():
@@ -285,8 +286,6 @@ def normalize_match_payload(payload, image_width, image_height, task_desc=""):
     )
 
 def build_grounding_response(matches):
-    if not matches:
-        raise ValueError("No grounding matches found")
     return {"matches": matches}
 
 def first_present(payload, keys):

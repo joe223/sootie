@@ -15,6 +15,8 @@ const GROUNDING_IMAGE_DIR: &str = "/tmp/sootie";
 const MAX_GROUNDING_IMAGE_WIDTH: u32 = 1600;
 const GROUNDING_IMAGE_SAVE_ATTEMPTS: usize = 10;
 const GROUNDING_IMAGE_SAVE_WAIT: Duration = Duration::from_millis(10);
+const DEFAULT_VISION_TIMEOUT: Duration = Duration::from_secs(12);
+const SIDECAR_CLIENT_TIMEOUT_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionRequest {
@@ -55,6 +57,9 @@ pub enum VisionError {
 
     #[error("network error: {0}")]
     NetworkError(String),
+
+    #[error("vision timeout: {0}")]
+    Timeout(String),
 
     #[error("not implemented: {0}")]
     NotImplemented(String),
@@ -667,17 +672,20 @@ pub struct SidecarVisionProvider {
     base_url: String,
     client: reqwest::Client,
     auth_token: Option<String>,
+    timeout: Duration,
 }
 
 impl SidecarVisionProvider {
     pub fn new(port: u16) -> Self {
+        let timeout = vision_timeout_from_env();
         Self {
             base_url: format!("http://127.0.0.1:{}", port),
             client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(timeout + SIDECAR_CLIENT_TIMEOUT_GRACE)
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             auth_token: std::env::var("SOOTIE_SIDECAR_AUTH_TOKEN").ok(),
+            timeout,
         }
     }
 
@@ -688,6 +696,26 @@ impl SidecarVisionProvider {
             Err(_) => Ok(false),
         }
     }
+}
+
+fn parse_positive_duration_ms(value: Option<&str>) -> Option<Duration> {
+    let millis = value?.parse::<u64>().ok()?;
+    (millis > 0).then(|| Duration::from_millis(millis))
+}
+
+fn parse_positive_duration_secs(value: Option<&str>) -> Option<Duration> {
+    let secs = value?.parse::<u64>().ok()?;
+    (secs > 0).then(|| Duration::from_secs(secs))
+}
+
+fn vision_timeout_from_env() -> Duration {
+    parse_positive_duration_ms(std::env::var("SOOTIE_VISION_TIMEOUT_MS").ok().as_deref())
+        .or_else(|| {
+            parse_positive_duration_secs(
+                std::env::var("SOOTIE_VISION_TIMEOUT_SECS").ok().as_deref(),
+            )
+        })
+        .unwrap_or(DEFAULT_VISION_TIMEOUT)
 }
 
 #[async_trait]
@@ -705,13 +733,41 @@ impl VisionProvider for SidecarVisionProvider {
         if let Some(token) = self.auth_token.as_deref() {
             request_builder = request_builder.header("X-Sootie-Auth", token);
         }
-        let resp = request_builder.send().await.map_err(|e| {
-            VisionError::NetworkError(format!("Sidecar unreachable on {}: {}", self.base_url, e))
-        })?;
+
+        let timeout_message = || {
+            format!(
+                "Sidecar grounding exceeded {}ms for '{}'",
+                self.timeout.as_millis(),
+                request.target_description
+            )
+        };
+        let resp = match tokio::time::timeout(self.timeout, request_builder.send()).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) if e.is_timeout() => {
+                return Err(VisionError::Timeout(format!(
+                    "{}: {}",
+                    timeout_message(),
+                    e
+                )));
+            }
+            Ok(Err(e)) => {
+                return Err(VisionError::NetworkError(format!(
+                    "Sidecar unreachable on {}: {}",
+                    self.base_url, e
+                )));
+            }
+            Err(_) => return Err(VisionError::Timeout(timeout_message())),
+        };
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
+            if matches!(status, 408 | 504) {
+                return Err(VisionError::Timeout(format!(
+                    "Sidecar returned {} while grounding '{}': {}",
+                    status, request.target_description, body
+                )));
+            }
             return Err(VisionError::InferenceFailed(format!(
                 "Sidecar returned {}: {}",
                 status, body
@@ -726,9 +782,24 @@ impl VisionProvider for SidecarVisionProvider {
             return Err(VisionError::InferenceFailed(err));
         }
 
-        let primary_match = result.matches.first().ok_or_else(|| {
-            VisionError::InferenceFailed("Sidecar returned no grounding matches".to_string())
-        })?;
+        if result.matches.is_empty() {
+            return Err(VisionError::NotDetected(format!(
+                "Sidecar returned no grounding matches for '{}'",
+                request.target_description
+            )));
+        }
+        let primary_match = result
+            .matches
+            .iter()
+            .find(|grounding_match| {
+                label_matches_target(&grounding_match.label, &request.target_description)
+            })
+            .ok_or_else(|| {
+                VisionError::NotDetected(format!(
+                    "Sidecar returned no label matching '{}'",
+                    request.target_description
+                ))
+            })?;
 
         annotate_grounding_image(&grounding_image, &result, &request.target_description)?;
 
@@ -742,6 +813,34 @@ impl VisionProvider for SidecarVisionProvider {
             model_used: "showui-2b".to_string(),
         })
     }
+}
+
+fn label_matches_target(label: &str, target_description: &str) -> bool {
+    let label = label.trim().to_lowercase();
+    if label.is_empty()
+        || matches!(
+            label.as_str(),
+            "target" | "match" | "vision match" | "target element" | "element"
+        )
+    {
+        return true;
+    }
+
+    let label_tokens = tokenize_grounding_text(&label);
+    let target_tokens = tokenize_grounding_text(target_description);
+    label_tokens
+        .iter()
+        .any(|token| target_tokens.iter().any(|target| target == token))
+}
+
+fn tokenize_grounding_text(value: &str) -> Vec<String> {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter_map(|token| {
+            let token = token.trim().to_lowercase();
+            (token.len() >= 3).then_some(token)
+        })
+        .collect()
 }
 
 pub struct StubVisionProvider;
@@ -801,6 +900,24 @@ mod tests {
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("task_desc"));
         assert!(json.contains("local_image_path"));
+    }
+
+    #[test]
+    fn test_parse_positive_duration_ms_rejects_zero_and_invalid() {
+        assert_eq!(
+            parse_positive_duration_ms(Some("250")),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(parse_positive_duration_ms(Some("0")), None);
+        assert_eq!(parse_positive_duration_ms(Some("nope")), None);
+        assert_eq!(parse_positive_duration_ms(None), None);
+    }
+
+    #[test]
+    fn test_vision_timeout_error_is_explicit() {
+        let error = VisionError::Timeout("grounding exceeded 12000ms".to_string());
+        assert!(error.to_string().contains("vision timeout"));
+        assert!(error.to_string().contains("12000ms"));
     }
 
     #[test]
@@ -1096,6 +1213,30 @@ mod tests {
         assert_eq!(resp.matches[0].label, "primary compose button");
         assert_eq!(resp.matches[0].bbox.width, 0.3);
         assert_eq!(resp.matches[1].confidence, 0.67);
+    }
+
+    #[test]
+    fn test_label_matching_accepts_generic_and_overlapping_labels() {
+        assert!(label_matches_target(
+            "vision match",
+            "old smiley face drawing"
+        ));
+        assert!(label_matches_target(
+            "primary compose button",
+            "compose button"
+        ));
+        assert!(label_matches_target(
+            "pink flower",
+            "colorful small flower drawing"
+        ));
+    }
+
+    #[test]
+    fn test_label_matching_rejects_unrelated_specific_labels() {
+        assert!(!label_matches_target(
+            "Safari",
+            "old smiley face drawing in the Excalidraw canvas"
+        ));
     }
 
     #[test]

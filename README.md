@@ -390,6 +390,42 @@ When your agent figures out a workflow, it saves it as a recipe. A recipe is a J
 - Share with your team. One person learns the workflow, everyone benefits.
 - Canonical targets stay portable even when backend choice differs by platform.
 
+## Development
+
+### Bootstrap Development Environment
+
+For contributors working on Sootie itself, we provide a bootstrap script that initializes the entire development environment:
+
+```bash
+git clone https://github.com/joe223/sootie.git
+cd sootie
+./bootstrap.sh
+```
+
+The bootstrap script will:
+- ✓ Check Rust toolchain (rustc, cargo)
+- ✓ Install development tools (cargo-commitlint)
+- ✓ Set up Git hooks (commit message validation)
+- ✓ Build the project
+- ✓ Run tests to verify setup
+- ✓ Validate commitlint configuration
+
+This one-command setup ensures all tools and hooks are properly configured without manual steps.
+
+### Manual Setup
+
+If you prefer manual setup:
+
+1. Install Rust: `rustup` (https://rustup.rs)
+2. Install cargo-commitlint: `cargo install cargo-commitlint`
+3. Set up Git hooks: `cargo commitlint install`
+4. Build: `cargo build --workspace`
+5. Test: `cargo test --workspace`
+
+## Contributing
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages. See [Commit Guidelines](docs/development/commit-guidelines.md) for details.
+
 ## License
 
 Apache 2.0

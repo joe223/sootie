@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::selector::{Coordinate, Target};
+use crate::selector::{AppSelector, Coordinate, Target};
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
@@ -33,10 +33,14 @@ pub struct RecipeParam {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecipeStep {
     pub action: String,
+    #[serde(default, deserialize_with = "deserialize_optional_app_selector")]
+    pub app: Option<AppSelector>,
     #[serde(default)]
     pub target: Option<StepTarget>,
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub clear_first: Option<bool>,
     #[serde(default)]
     pub key: Option<String>,
     #[serde(default)]
@@ -52,15 +56,38 @@ pub struct RecipeStep {
     #[serde(default)]
     pub timeout: Option<u64>,
     #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
     pub to_target: Option<StepTarget>,
     #[serde(default)]
     pub params: Option<HashMap<String, serde_json::Value>>,
+}
+
+fn deserialize_optional_app_selector<'de, D>(
+    deserializer: D,
+) -> Result<Option<AppSelector>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    if let Some(name) = value.as_str() {
+        return Ok(Some(AppSelector::from_name(name)));
+    }
+
+    serde_json::from_value::<AppSelector>(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StepTarget {
     Target(Target),
     Coordinate(Coordinate),
+    WindowCoordinate(Coordinate),
 }
 
 impl Serialize for StepTarget {
@@ -77,6 +104,17 @@ impl Serialize for StepTarget {
                 }
 
                 CoordinateTarget { coordinate }.serialize(serializer)
+            }
+            StepTarget::WindowCoordinate(coordinate) => {
+                #[derive(Serialize)]
+                struct WindowCoordinateTarget<'a> {
+                    window_coordinate: &'a Coordinate,
+                }
+
+                WindowCoordinateTarget {
+                    window_coordinate: coordinate,
+                }
+                .serialize(serializer)
             }
         }
     }
@@ -100,6 +138,17 @@ impl<'de> Deserialize<'de> for StepTarget {
             }
             return serde_json::from_value::<Coordinate>(coordinate.clone())
                 .map(StepTarget::Coordinate)
+                .map_err(serde::de::Error::custom);
+        }
+
+        if let Some(coordinate) = object.get("window_coordinate") {
+            if object.len() != 1 {
+                return Err(serde::de::Error::custom(
+                    "window_coordinate recipe target cannot include selector fields",
+                ));
+            }
+            return serde_json::from_value::<Coordinate>(coordinate.clone())
+                .map(StepTarget::WindowCoordinate)
                 .map_err(serde::de::Error::custom);
         }
 
@@ -413,9 +462,23 @@ fn validate_step(step: &RecipeStep) -> Result<(), String> {
 
     match step.action.as_str() {
         "click" => Ok(()),
+        "launch" => {
+            if step.app.is_none() {
+                Err("launch action requires 'app' field".to_string())
+            } else {
+                Ok(())
+            }
+        }
         "type" => {
             if step.text.is_none() {
                 Err("type action requires 'text' field".to_string())
+            } else {
+                Ok(())
+            }
+        }
+        "paste_text" => {
+            if step.text.is_none() {
+                Err("paste_text action requires 'text' field".to_string())
             } else {
                 Ok(())
             }
@@ -453,7 +516,7 @@ fn validate_step(step: &RecipeStep) -> Result<(), String> {
 fn validate_step_target(target: &StepTarget) -> Result<(), String> {
     match target {
         StepTarget::Target(target) => target.validate().map_err(|e| e.to_string()),
-        StepTarget::Coordinate(_) => Ok(()),
+        StepTarget::Coordinate(_) | StepTarget::WindowCoordinate(_) => Ok(()),
     }
 }
 
@@ -478,8 +541,10 @@ mod tests {
     fn make_step(action: &str) -> RecipeStep {
         RecipeStep {
             action: action.to_string(),
+            app: None,
             target: None,
             text: None,
+            clear_first: None,
             key: None,
             keys: None,
             direction: None,
@@ -487,6 +552,7 @@ mod tests {
             button: None,
             count: None,
             timeout: None,
+            path: None,
             to_target: None,
             params: None,
         }
@@ -519,6 +585,33 @@ mod tests {
     #[test]
     fn test_validate_type_needs_text() {
         let recipe = make_recipe("test", vec![make_step("type")]);
+        assert!(validate_recipe(&recipe).is_err());
+    }
+
+    #[test]
+    fn test_validate_launch_needs_app() {
+        let recipe = make_recipe("test", vec![make_step("launch")]);
+        assert!(validate_recipe(&recipe).is_err());
+    }
+
+    #[test]
+    fn test_recipe_launch_app_accepts_string() {
+        let recipe: Recipe = serde_json::from_value(serde_json::json!({
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "name": "launch-app-string",
+            "steps": [
+                { "action": "launch", "app": "Safari" }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(recipe.steps[0].app, Some(AppSelector::from_name("Safari")));
+        assert!(validate_recipe(&recipe).is_ok());
+    }
+
+    #[test]
+    fn test_validate_paste_text_needs_text() {
+        let recipe = make_recipe("test", vec![make_step("paste_text")]);
         assert!(validate_recipe(&recipe).is_err());
     }
 
@@ -675,8 +768,10 @@ mod tests {
         let engine = RecipeEngine::new_in_memory();
         let step = RecipeStep {
             action: "type".to_string(),
+            app: None,
             target: None,
             text: Some("Hello ${name}, welcome to ${app}".to_string()),
+            clear_first: None,
             key: None,
             keys: None,
             direction: None,
@@ -684,6 +779,7 @@ mod tests {
             button: None,
             count: None,
             timeout: None,
+            path: None,
             to_target: None,
             params: None,
         };
@@ -710,6 +806,7 @@ mod tests {
         let engine = RecipeEngine::new_in_memory();
         let step = RecipeStep {
             action: "click".to_string(),
+            app: None,
             target: Some(StepTarget::Target(
                 serde_json::from_value(serde_json::json!({
                     "app": "${app}",
@@ -718,6 +815,7 @@ mod tests {
                 .unwrap(),
             )),
             text: None,
+            clear_first: None,
             key: None,
             keys: None,
             direction: None,
@@ -725,6 +823,7 @@ mod tests {
             button: None,
             count: None,
             timeout: None,
+            path: None,
             to_target: None,
             params: None,
         };
@@ -798,10 +897,12 @@ mod tests {
             steps: vec![
                 RecipeStep {
                     action: "click".to_string(),
+                    app: None,
                     target: Some(StepTarget::Target(
                         serde_json::from_str(r#"{"app": "Chrome", "window": "Gmail", "selector": {"name": "Compose", "role": "button"}}"#).unwrap(),
                     )),
                     text: None,
+                    clear_first: None,
                     key: None,
                     keys: None,
                     direction: None,
@@ -809,15 +910,18 @@ mod tests {
                     button: None,
                     count: None,
                     timeout: None,
+                    path: None,
                     to_target: None,
                     params: None,
                 },
                 RecipeStep {
                     action: "type".to_string(),
+                    app: None,
                     target: Some(StepTarget::Target(
                         serde_json::from_str(r#"{"selector": {"role": "textfield", "name": "To"}}"#).unwrap(),
                     )),
                     text: Some("${to}".to_string()),
+                    clear_first: None,
                     key: None,
                     keys: None,
                     direction: None,
@@ -825,6 +929,7 @@ mod tests {
                     button: None,
                     count: None,
                     timeout: None,
+                    path: None,
                     to_target: None,
                     params: None,
                 },
