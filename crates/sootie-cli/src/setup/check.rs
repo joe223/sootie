@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::process::Command;
 
 use super::config::{config_file_path, resolve_vision_model_path};
 use super::style::{BOLD, CYAN, GREEN, RED, RESET, YELLOW};
@@ -56,8 +56,8 @@ pub fn check_accessibility() -> CheckResult {
 
     match platform {
         "macos" => check_macos_accessibility(),
-        "linux" => check_linux_at_spi(),
-        "windows" => check_windows_uia(),
+        "linux" => check_linux_x11_fallback(),
+        "windows" => check_windows_win32_fallback(),
         _ => CheckResult {
             name: "Accessibility permissions",
             status: CheckStatus::Warn,
@@ -149,34 +149,51 @@ fn check_macos_screen_recording() -> CheckResult {
     }
 }
 
-fn check_linux_at_spi() -> CheckResult {
-    let at_spi_bus = std::env::var("AT_SPI_BUS_ADDRESS").ok();
-    let at_spi_lib = PathBuf::from("/usr/lib/at-spi2");
+fn check_linux_x11_fallback() -> CheckResult {
+    let missing: Vec<&str> = ["wmctrl", "xdotool", "import"]
+        .into_iter()
+        .filter(|command| !command_available(command))
+        .collect();
 
-    if at_spi_bus.is_some() || at_spi_lib.exists() {
+    if missing.is_empty() {
         CheckResult {
             name: "Accessibility permissions",
-            status: CheckStatus::Pass,
-            message: "AT-SPI2 available".to_string(),
+            status: CheckStatus::Warn,
+            message: "X11 fallback available via wmctrl, xdotool, import; native AT-SPI tree is not implemented yet".to_string(),
             fixable: false,
         }
     } else {
         CheckResult {
             name: "Accessibility permissions",
             status: CheckStatus::Fail,
-            message: "AT-SPI2 not found. Install: sudo apt install at-spi2-core".to_string(),
-            fixable: false,
+            message: format!(
+                "Missing Linux X11 fallback commands: {}. Install wmctrl, xdotool, and ImageMagick.",
+                missing.join(", ")
+            ),
+            fixable: true,
         }
     }
 }
 
-fn check_windows_uia() -> CheckResult {
+fn check_windows_win32_fallback() -> CheckResult {
     CheckResult {
         name: "Accessibility permissions",
-        status: CheckStatus::Pass,
-        message: "UI Automation available to desktop apps".to_string(),
+        status: CheckStatus::Warn,
+        message:
+            "Win32/window-tree fallback enabled; full UI Automation tree is not implemented yet"
+                .to_string(),
         fixable: false,
     }
+}
+
+fn command_available(name: &str) -> bool {
+    Command::new(name)
+        .arg("--version")
+        .output()
+        .map(|output| {
+            output.status.success() || !output.stdout.is_empty() || !output.stderr.is_empty()
+        })
+        .unwrap_or(false)
 }
 
 pub async fn check_cdp(ctx: &CheckContext) -> CheckResult {

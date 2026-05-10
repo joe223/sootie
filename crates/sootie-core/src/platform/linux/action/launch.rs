@@ -3,7 +3,11 @@ use std::process::Command;
 use crate::action::{ActionError, ActionResult, LaunchAction};
 
 pub fn perform_launch(action: &LaunchAction) -> Result<ActionResult, ActionError> {
-    let app_identifier = action.app.name.or(action.app.bundle_id).clone();
+    let app_identifier = action
+        .app
+        .name
+        .clone()
+        .or_else(|| action.app.bundle_id.clone());
 
     match app_identifier {
         Some(identifier) => {

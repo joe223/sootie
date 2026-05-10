@@ -1,3 +1,4 @@
+mod apps;
 mod context;
 mod find;
 
@@ -107,71 +108,83 @@ impl PerceptionProvider for WindowsPerceptionProvider {
         use image::{ColorType, ImageEncoder};
         use windows::Win32::Foundation::*;
         use windows::Win32::Graphics::Gdi::*;
-
-        let hwnd = if let Some(b) = region {
-            HWND(0)
-        } else {
-            GetDesktopWindow()
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetDesktopWindow, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
         };
 
-        let hdc = GetDC(hwnd);
-        let width = region
-            .map(|b| b.width as i32)
-            .unwrap_or_else(|| GetSystemMetrics(SM_CXSCREEN));
-        let height = region
-            .map(|b| b.height as i32)
-            .unwrap_or_else(|| GetSystemMetrics(SM_CYSCREEN));
+        let (width, height, mut data, scanlines) = unsafe {
+            let hwnd = if region.is_some() {
+                HWND(std::ptr::null_mut())
+            } else {
+                GetDesktopWindow()
+            };
 
-        let memdc = CreateCompatibleDC(hdc);
-        let hbitmap = CreateCompatibleBitmap(hdc, width, height);
-        let old_bitmap = SelectObject(memdc, hbitmap);
+            let hdc = GetDC(hwnd);
+            let width = region
+                .map(|b| b.width as i32)
+                .unwrap_or_else(|| GetSystemMetrics(SM_CXSCREEN));
+            let height = region
+                .map(|b| b.height as i32)
+                .unwrap_or_else(|| GetSystemMetrics(SM_CYSCREEN));
 
-        BitBlt(
-            memdc,
-            0,
-            0,
-            width,
-            height,
-            hdc,
-            region.map(|b| b.x as i32).unwrap_or(0),
-            region.map(|b| b.y as i32).unwrap_or(0),
-            SRCCOPY,
-        );
+            let memdc = CreateCompatibleDC(hdc);
+            let hbitmap = CreateCompatibleBitmap(hdc, width, height);
+            let old_bitmap = SelectObject(memdc, hbitmap);
 
-        let mut bitmap_info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                biHeight: -height,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
-                biSizeImage: 0,
-                biXPelsPerMeter: 0,
-                biYPelsPerMeter: 0,
-                biClrUsed: 0,
-                biClrImportant: 0,
-            },
-            bmiColors: [0; 1],
+            let _ = BitBlt(
+                memdc,
+                0,
+                0,
+                width,
+                height,
+                hdc,
+                region.map(|b| b.x as i32).unwrap_or(0),
+                region.map(|b| b.y as i32).unwrap_or(0),
+                SRCCOPY,
+            );
+
+            let mut bitmap_info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    biHeight: -height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    biSizeImage: 0,
+                    biXPelsPerMeter: 0,
+                    biYPelsPerMeter: 0,
+                    biClrUsed: 0,
+                    biClrImportant: 0,
+                },
+                bmiColors: [RGBQUAD {
+                    rgbBlue: 0,
+                    rgbGreen: 0,
+                    rgbRed: 0,
+                    rgbReserved: 0,
+                }],
+            };
+
+            let size = (width * height * 4) as usize;
+            let mut data = vec![0u8; size];
+
+            let scanlines = GetDIBits(
+                memdc,
+                hbitmap,
+                0,
+                height as u32,
+                Some(data.as_mut_ptr() as *mut _),
+                &mut bitmap_info,
+                DIB_RGB_COLORS,
+            );
+
+            SelectObject(memdc, old_bitmap);
+            let _ = DeleteDC(memdc);
+            ReleaseDC(hwnd, hdc);
+            let _ = DeleteObject(hbitmap);
+
+            (width, height, data, scanlines)
         };
-
-        let size = (width * height * 4) as usize;
-        let mut data = vec![0u8; size];
-
-        let scanlines = GetDIBits(
-            memdc,
-            hbitmap,
-            0,
-            height as u32,
-            Some(data.as_mut_ptr() as *mut _),
-            &mut bitmap_info,
-            DIB_RGB_COLORS,
-        );
-
-        SelectObject(memdc, old_bitmap);
-        DeleteDC(memdc);
-        ReleaseDC(hwnd, hdc);
-        DeleteObject(hbitmap);
 
         if scanlines == 0 {
             return Err(PerceptionError::ScreenshotFailed(
@@ -197,11 +210,9 @@ impl PerceptionProvider for WindowsPerceptionProvider {
 
     async fn find_apps(
         &self,
-        _pattern: &str,
-        _limit: Option<u32>,
+        pattern: &str,
+        limit: Option<u32>,
     ) -> Result<FindAppsResult, PerceptionError> {
-        Err(PerceptionError::NotImplemented(
-            "find_apps not implemented for Windows".to_string(),
-        ))
+        Ok(apps::find_installed_apps(pattern, limit))
     }
 }

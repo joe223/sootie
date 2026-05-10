@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use crate::action::{ActionError, ActionResult, ClickAction};
 use crate::cascade::resolve_target_with_cascade;
 use crate::perception::PerceptionProvider;

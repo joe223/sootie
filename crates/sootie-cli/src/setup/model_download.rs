@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
@@ -307,50 +309,60 @@ pub fn validate_model_dir(path: &Path) -> Result<bool> {
 }
 
 pub async fn download_showui_model() -> Result<PathBuf> {
-    let dest_dir = showui_model_path();
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(anyhow::anyhow!(
+            "Automatic ShowUI model download is only enabled for macOS builds. Configure SOOTIE_VISION_MODEL_PATH or install the model files manually on this platform."
+        ))
+    }
 
-    // Selective cleanup before download
-    if dest_dir.exists() {
-        // Remove incomplete safetensors
-        let safetensors = dest_dir.join("model.safetensors");
-        if safetensors.exists() {
-            let size = safetensors.metadata()?.len();
-            if size < MIN_MODEL_SIZE {
-                println!("Removing incomplete model.safetensors");
-                fs::remove_file(&safetensors)?;
+    #[cfg(target_os = "macos")]
+    {
+        let dest_dir = showui_model_path();
+
+        // Selective cleanup before download
+        if dest_dir.exists() {
+            // Remove incomplete safetensors
+            let safetensors = dest_dir.join("model.safetensors");
+            if safetensors.exists() {
+                let size = safetensors.metadata()?.len();
+                if size < MIN_MODEL_SIZE {
+                    println!("Removing incomplete model.safetensors");
+                    fs::remove_file(&safetensors)?;
+                }
             }
         }
-    }
 
-    if validate_model_dir(&dest_dir)? {
-        println!("Model already validated at {}", dest_dir.display());
-        return Ok(dest_dir);
-    }
-
-    println!("Downloading ShowUI-2B model (~3GB) from Hugging Face...");
-    println!("Checksums will be verified for each file");
-
-    let downloader = HfDownloader::new();
-    match downloader.download_model(&dest_dir).await {
-        Ok(_) if validate_model_dir(&dest_dir)? => {
-            println!("✓ Model saved and validated at {}", dest_dir.display());
-            Ok(dest_dir)
+        if validate_model_dir(&dest_dir)? {
+            println!("Model already validated at {}", dest_dir.display());
+            return Ok(dest_dir);
         }
-        Ok(_) => Err(anyhow::anyhow!(
-            "Download incomplete - required files missing or checksum failed"
-        )),
-        Err(e) => {
-            eprintln!("  Primary source failed: {}", e);
-            eprintln!("  Trying Chinese mirror (hf-mirror.com)...");
-            let downloader = HfDownloader::new().with_mirror();
-            downloader.download_model(&dest_dir).await?;
-            if validate_model_dir(&dest_dir)? {
+
+        println!("Downloading ShowUI-2B model (~3GB) from Hugging Face...");
+        println!("Checksums will be verified for each file");
+
+        let downloader = HfDownloader::new();
+        match downloader.download_model(&dest_dir).await {
+            Ok(_) if validate_model_dir(&dest_dir)? => {
                 println!("✓ Model saved and validated at {}", dest_dir.display());
                 Ok(dest_dir)
-            } else {
-                Err(anyhow::anyhow!(
-                    "Download incomplete - required files missing or checksum failed"
-                ))
+            }
+            Ok(_) => Err(anyhow::anyhow!(
+                "Download incomplete - required files missing or checksum failed"
+            )),
+            Err(e) => {
+                eprintln!("  Primary source failed: {}", e);
+                eprintln!("  Trying Chinese mirror (hf-mirror.com)...");
+                let downloader = HfDownloader::new().with_mirror();
+                downloader.download_model(&dest_dir).await?;
+                if validate_model_dir(&dest_dir)? {
+                    println!("✓ Model saved and validated at {}", dest_dir.display());
+                    Ok(dest_dir)
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Download incomplete - required files missing or checksum failed"
+                    ))
+                }
             }
         }
     }

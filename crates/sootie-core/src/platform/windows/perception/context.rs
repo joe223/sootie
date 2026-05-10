@@ -11,8 +11,7 @@ pub fn get_running_apps() -> Result<Context, crate::perception::PerceptionError>
     unsafe {
         let mut apps = Vec::new();
 
-        let hwnd = GetDesktopWindow();
-        EnumWindows(
+        let _ = EnumWindows(
             Some(enum_windows_callback),
             LPARAM(&mut apps as *mut _ as isize),
         );
@@ -25,7 +24,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     let apps = &mut *(lparam.0 as *mut Vec<AppContext>);
 
     let mut title = [0u16; 512];
-    let title_len = GetWindowTextW(hwnd, &mut title, 512);
+    let title_len = GetWindowTextW(hwnd, &mut title);
     if title_len == 0 {
         return BOOL(1);
     }
@@ -48,7 +47,11 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     }
 
     let mut exe_name = [0u16; 260];
-    let exe_len = GetModuleFileNameExW(process_handle.unwrap(), HMODULE(0), &mut exe_name, 260);
+    let exe_len = GetModuleFileNameExW(
+        process_handle.unwrap(),
+        HMODULE(std::ptr::null_mut()),
+        &mut exe_name,
+    );
 
     let exe_string = if exe_len > 0 {
         String::from_utf16_lossy(&exe_name[..exe_len as usize])
@@ -62,13 +65,13 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
         return BOOL(1);
     }
 
-    let mut rect = windows::Win32::Graphics::Gdi::RECT {
+    let mut rect = RECT {
         left: 0,
         top: 0,
         right: 0,
         bottom: 0,
     };
-    GetWindowRect(hwnd, &mut rect);
+    let _ = GetWindowRect(hwnd, &mut rect);
 
     let bounds = Bounds {
         x: rect.left as f64,
@@ -84,11 +87,12 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
             is_frontmost: GetForegroundWindow() == hwnd,
         },
         windows: vec![Window {
-            id: format!("win_{}", hwnd.0),
+            id: format!("win_{:?}", hwnd.0),
             title: title_string,
             index: 0,
             focused: GetForegroundWindow() == hwnd,
             bounds,
+            display_id: None,
         }],
     });
 

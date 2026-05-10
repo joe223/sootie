@@ -1,11 +1,15 @@
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
-use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
 
 use crate::action::{ActionError, ActionResult, LaunchAction};
 
 pub fn perform_launch(action: &LaunchAction) -> Result<ActionResult, ActionError> {
-    let app_identifier = action.app.name.or(action.app.bundle_id).clone();
+    let app_identifier = action
+        .app
+        .name
+        .clone()
+        .or_else(|| action.app.bundle_id.clone());
 
     match app_identifier {
         Some(identifier) => {
@@ -26,7 +30,7 @@ pub fn perform_launch(action: &LaunchAction) -> Result<ActionResult, ActionError
                     .collect::<Vec<u16>>();
 
                 let result = ShellExecuteW(
-                    HWND(0),
+                    HWND(std::ptr::null_mut()),
                     windows::core::w!("open"),
                     windows::core::PCWSTR(exe_path.as_ptr()),
                     windows::core::PCWSTR(params.as_ptr()),
@@ -34,10 +38,10 @@ pub fn perform_launch(action: &LaunchAction) -> Result<ActionResult, ActionError
                     SW_SHOW,
                 );
 
-                if result <= 32 {
+                if (result.0 as isize) <= 32 {
                     return Err(ActionError::ActionFailed(format!(
-                        "ShellExecute failed: {}",
-                        result
+                        "ShellExecute failed: {:?}",
+                        result.0
                     )));
                 }
             }

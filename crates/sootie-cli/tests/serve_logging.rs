@@ -10,24 +10,30 @@ fn unique_temp_home() -> PathBuf {
     std::env::temp_dir().join(format!("sootie-log-test-{}-{}", std::process::id(), nanos))
 }
 
-fn candidate_log_paths(home: &std::path::Path) -> [PathBuf; 3] {
+fn candidate_log_dirs(home: &std::path::Path) -> [PathBuf; 3] {
     [
         home.join("Library")
             .join("Application Support")
             .join("sootie")
-            .join("logs")
-            .join("sootie.log"),
+            .join("logs"),
         home.join(".local")
             .join("share")
             .join("sootie")
-            .join("logs")
-            .join("sootie.log"),
+            .join("logs"),
         home.join("AppData")
             .join("Local")
             .join("sootie")
-            .join("logs")
-            .join("sootie.log"),
+            .join("logs"),
     ]
+}
+
+fn find_log_file(home: &std::path::Path) -> Option<PathBuf> {
+    candidate_log_dirs(home)
+        .into_iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "log"))
 }
 
 #[test]
@@ -40,6 +46,7 @@ fn serve_creates_default_log_file() {
         .env("HOME", &home)
         .env_remove("XDG_DATA_HOME")
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("RUST_LOG")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -52,10 +59,7 @@ fn serve_creates_default_log_file() {
         output.status.code()
     );
 
-    let log_path = candidate_log_paths(&home)
-        .into_iter()
-        .find(|path| path.exists())
-        .expect("default log file was not created");
+    let log_path = find_log_file(&home).expect("default log file was not created");
 
     let contents = std::fs::read_to_string(&log_path).unwrap();
     assert!(

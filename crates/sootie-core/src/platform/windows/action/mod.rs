@@ -5,7 +5,6 @@ mod hotkey;
 mod hover;
 mod keyboard;
 mod launch;
-mod mouse;
 mod press;
 mod resolver;
 mod scroll;

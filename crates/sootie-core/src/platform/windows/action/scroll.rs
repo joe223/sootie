@@ -1,7 +1,7 @@
-use windows::Win32::Foundation::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
 
-use crate::action::{ActionError, ActionResult, ActionTarget, ScrollAction, ScrollDirection};
+use crate::action::{ActionError, ActionResult, ScrollAction, ScrollDirection};
 use crate::cascade::resolve_target_with_cascade;
 use crate::perception::PerceptionProvider;
 
@@ -26,10 +26,10 @@ pub async fn perform_scroll<P: PerceptionProvider>(
     };
 
     unsafe {
-        SetCursorPos(x, y);
+        let _ = SetCursorPos(x, y);
 
         for _ in 0..amount {
-            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, None);
+            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, 0);
         }
     }
 

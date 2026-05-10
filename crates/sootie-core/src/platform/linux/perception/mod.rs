@@ -1,3 +1,4 @@
+mod apps;
 mod context;
 mod find;
 mod screenshot;
@@ -109,11 +110,9 @@ impl PerceptionProvider for LinuxPerceptionProvider {
 
     async fn find_apps(
         &self,
-        _pattern: &str,
-        _limit: Option<u32>,
+        pattern: &str,
+        limit: Option<u32>,
     ) -> Result<FindAppsResult, PerceptionError> {
-        Err(PerceptionError::NotImplemented(
-            "find_apps not implemented for Linux".to_string(),
-        ))
+        Ok(apps::find_installed_apps(pattern, limit))
     }
 }

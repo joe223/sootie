@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Gdi::GetWindowRect;
 use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -17,7 +16,7 @@ pub fn resolve_window(selector: &Selector) -> Result<HWND, ActionError> {
     };
 
     unsafe {
-        EnumWindows(
+        let _ = EnumWindows(
             Some(enum_windows_callback),
             LPARAM(&mut search as *mut _ as isize),
         );
@@ -98,7 +97,7 @@ fn executable_path(hwnd: HWND) -> Option<String> {
         )
         .ok()?;
         let mut exe_name = [0u16; 260];
-        let len = GetModuleFileNameExW(process, HMODULE(0), &mut exe_name, 260);
+        let len = GetModuleFileNameExW(process, HMODULE(std::ptr::null_mut()), &mut exe_name);
         if len == 0 {
             None
         } else {
@@ -139,7 +138,7 @@ fn matches_selector(
 
     if let Some(window) = selector.window.as_ref() {
         if let Some(id) = window.id.as_ref() {
-            if id != &format!("win_{}", hwnd.0) {
+            if id != &format!("win_{:?}", hwnd.0) {
                 return false;
             }
         }

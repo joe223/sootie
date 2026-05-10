@@ -1,6 +1,5 @@
-use windows::Win32::Foundation::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
-use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
 
 use crate::action::{ActionError, ActionResult, ClickAction};
 use crate::cascade::resolve_target_with_cascade;
@@ -14,7 +13,7 @@ pub async fn perform_click<P: PerceptionProvider>(
     let (x, y) = (coord.x as i32, coord.y as i32);
 
     unsafe {
-        SetCursorPos(x, y);
+        let _ = SetCursorPos(x, y);
 
         let button_flag = match action.button {
             Some(crate::action::MouseButton::Right) => MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP,
@@ -25,7 +24,7 @@ pub async fn perform_click<P: PerceptionProvider>(
         };
 
         for _ in 0..action.count.unwrap_or(1) {
-            mouse_event(button_flag, 0, 0, 0, None);
+            mouse_event(button_flag, 0, 0, 0, 0);
         }
     }
 

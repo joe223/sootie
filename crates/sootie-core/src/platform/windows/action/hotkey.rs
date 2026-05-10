@@ -1,4 +1,3 @@
-use windows::Win32::Foundation::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 use crate::action::{ActionError, ActionResult, HotkeyAction};
@@ -10,16 +9,16 @@ pub fn perform_hotkey(action: &HotkeyAction) -> Result<ActionResult, ActionError
 
     unsafe {
         for vk in &vks[..vks.len().saturating_sub(1)] {
-            keybd_event(*vk, 0, KEYEVENTF_EXTENDEDKEY, None);
+            keybd_event(*vk, 0, KEYEVENTF_EXTENDEDKEY, 0);
         }
 
         if let Some(last_vk) = vks.last() {
-            keybd_event(*last_vk, 0, KEYEVENTF_EXTENDEDKEY, None);
-            keybd_event(*last_vk, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, None);
+            keybd_event(*last_vk, 0, KEYEVENTF_EXTENDEDKEY, 0);
+            keybd_event(*last_vk, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0);
         }
 
         for vk in &vks[..vks.len().saturating_sub(1)] {
-            keybd_event(*vk, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, None);
+            keybd_event(*vk, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0);
         }
     }
 

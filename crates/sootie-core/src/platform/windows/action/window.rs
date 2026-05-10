@@ -1,3 +1,4 @@
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::action::{ActionError, ActionResult, WindowAction, WindowOperation};
@@ -7,18 +8,18 @@ pub fn perform_window_op(action: &WindowAction) -> Result<ActionResult, ActionEr
     unsafe {
         match action.operation {
             WindowOperation::Minimize => {
-                ShowWindow(hwnd, SW_MINIMIZE);
+                let _ = ShowWindow(hwnd, SW_MINIMIZE);
             }
             WindowOperation::Maximize => {
-                ShowWindow(hwnd, SW_MAXIMIZE);
+                let _ = ShowWindow(hwnd, SW_MAXIMIZE);
             }
             WindowOperation::Close => {
-                PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
             }
             WindowOperation::Move { x, y } => {
-                SetWindowPos(
+                let _ = SetWindowPos(
                     hwnd,
-                    HWND(0),
+                    HWND(std::ptr::null_mut()),
                     x as i32,
                     y as i32,
                     0,
@@ -27,9 +28,9 @@ pub fn perform_window_op(action: &WindowAction) -> Result<ActionResult, ActionEr
                 );
             }
             WindowOperation::Resize { width, height } => {
-                SetWindowPos(
+                let _ = SetWindowPos(
                     hwnd,
-                    HWND(0),
+                    HWND(std::ptr::null_mut()),
                     0,
                     0,
                     width as i32,

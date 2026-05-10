@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::action::{ActionError, ActionResult, ActionTarget, HoverAction};
+use crate::action::{ActionError, ActionResult, HoverAction};
 use crate::cascade::resolve_target_with_cascade;
 use crate::perception::PerceptionProvider;
 

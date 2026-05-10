@@ -48,6 +48,7 @@ pub fn get_running_apps() -> Result<Context, PerceptionError> {
                     width,
                     height,
                 },
+                display_id: None,
             });
         }
     }

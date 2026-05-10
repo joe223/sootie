@@ -1,5 +1,5 @@
-use windows::Win32::Foundation::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
 
 use crate::action::{ActionError, ActionResult, TypeAction};
 use crate::cascade::resolve_target_with_cascade;
@@ -20,26 +20,21 @@ pub async fn perform_type<P: PerceptionProvider>(
         }
 
         unsafe {
-            SetCursorPos(x, y);
-            mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, 0, 0, 0, None);
+            let _ = SetCursorPos(x, y);
+            mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
         }
     }
 
     if action.clear_first.unwrap_or(false) {
         unsafe {
-            keybd_event(VK_CONTROL.0 as u8, 0, KEYEVENTF_EXTENDEDKEY, None);
-            keybd_event(VK_KEY_A as u8, 0, KEYEVENTF_EXTENDEDKEY, None);
-            keybd_event(
-                VK_KEY_A as u8,
-                0,
-                KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP,
-                None,
-            );
+            keybd_event(VK_CONTROL.0 as u8, 0, KEYEVENTF_EXTENDEDKEY, 0);
+            keybd_event(VK_A.0 as u8, 0, KEYEVENTF_EXTENDEDKEY, 0);
+            keybd_event(VK_A.0 as u8, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0);
             keybd_event(
                 VK_CONTROL.0 as u8,
                 0,
                 KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP,
-                None,
+                0,
             );
         }
     }

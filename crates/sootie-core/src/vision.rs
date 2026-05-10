@@ -319,8 +319,9 @@ fn prepare_grounding_image(
         VisionError::InferenceFailed(format!("Failed to create grounding image directory: {}", e))
     })?;
     let file_name = format!(
-        "{}.png",
-        chrono::Local::now().format("%Y-%m-%d-%H-%M-%S-%9f")
+        "{}-{}.png",
+        chrono::Local::now().format("%Y-%m-%d-%H-%M-%S-%9f"),
+        uuid::Uuid::new_v4()
     );
     let path = dir.join(file_name);
     save_rgba_png_stripped(&path, &prepared_image.to_rgba8())?;
@@ -982,11 +983,10 @@ mod tests {
 
         assert!(path.starts_with(std::path::Path::new("/tmp/sootie")));
         assert_eq!(path.parent(), Some(std::path::Path::new("/tmp/sootie")));
-        assert_eq!(file_name.len(), "2026-05-09-20-10-11-123456789.png".len());
         assert!(file_name.ends_with(".png"));
         assert!(file_name[..file_name.len() - 4]
             .chars()
-            .all(|ch| ch.is_ascii_digit() || ch == '-'));
+            .all(|ch| ch.is_ascii_hexdigit() || ch == '-'));
 
         drop(prepared);
 
