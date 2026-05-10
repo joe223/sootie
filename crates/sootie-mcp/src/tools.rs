@@ -1,23 +1,22 @@
 use sootie_core::action::{MouseButton, ScrollDirection};
 use sootie_core::recipe::StepTarget;
-use sootie_core::selector::{Coordinate, Selector};
 
 use crate::types::ToolDefinition;
 
 pub fn all_tools() -> Vec<ToolDefinition> {
     vec![
+        system_capabilities(),
+        system_last_report(),
         perception_context(),
         perception_find_apps(),
+        perception_find(),
         perception_find_element(),
-        action_tap_by_name(),
-        action_tap_by_position(),
+        action_click(),
         action_type(),
-        action_press_by_name(),
-        action_press_by_position(),
+        action_press(),
         action_hotkey(),
         action_scroll(),
         action_drag(),
-        action_drag_by_position(),
         perception_save_screenshot(),
         app_launch(),
         window_focus(),
@@ -27,6 +26,28 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         workflow_recipe_save(),
         workflow_recipe_delete(),
     ]
+}
+
+fn system_last_report() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_last_report".to_string(),
+        description: "Return the most recent tool execution report for debugging and recovery. Reports include sanitized arguments, success status, elapsed time, error code, and error details.".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+    }
+}
+
+fn system_capabilities() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_capabilities".to_string(),
+        description: "Describe this Sootie server's platform support, degraded capabilities, and the recommended agent workflow. Call this once before planning desktop automation on a new host.".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+    }
 }
 
 fn perception_context() -> ToolDefinition {
@@ -69,6 +90,25 @@ fn perception_find_element() -> ToolDefinition {
                 }
             },
             "required": ["el_description"]
+        }),
+    }
+}
+
+fn perception_find() -> ToolDefinition {
+    ToolDefinition {
+        name: "sootie_find".to_string(),
+        description: "Find UI elements with the canonical structured target object. Prefer this over natural-language element descriptions when you have app, window, role, name, text, or id fields.".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "description": "Canonical target object",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
+                }
+            },
+            "required": ["target"]
         }),
     }
 }
@@ -178,48 +218,44 @@ fn target_schema() -> serde_json::Value {
     })
 }
 
-fn action_tap_by_name() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_tap_by_name".to_string(),
-        description: "Tap an element from a short element description. Internally finds the element and clicks it.".to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "el_description": {
-                    "type": "string",
-                    "description": "Short element description for locating the target element"
+fn coordinate_target_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "coordinate": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "x": { "type": "number", "description": "Absolute screen X coordinate" },
+                    "y": { "type": "number", "description": "Absolute screen Y coordinate" }
                 },
-                "window": description_window_scope_schema(),
-                "button": {
-                    "type": "string",
-                    "enum": ["left", "right", "middle"],
-                    "default": "left"
-                },
-                "count": {
-                    "type": "integer",
-                    "default": 1
-                }
-            },
-            "required": ["el_description"]
-        }),
-    }
+                "required": ["x", "y"]
+            }
+        },
+        "required": ["coordinate"]
+    })
 }
 
-fn action_tap_by_position() -> ToolDefinition {
+fn action_target_schema() -> serde_json::Value {
+    serde_json::json!({
+        "oneOf": [
+            target_schema(),
+            coordinate_target_schema()
+        ]
+    })
+}
+
+fn action_click() -> ToolDefinition {
     ToolDefinition {
-        name: "sootie_tap_by_position".to_string(),
-        description: "Tap at an absolute screen coordinate position (from top-left origin)"
-            .to_string(),
+        name: "sootie_click".to_string(),
+        description: "Click a canonical structured target. Resolves the target first, reports the selected backend and coordinates, then performs the click.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "x": {
-                    "type": "number",
-                    "description": "X coordinate from screen top-left origin"
-                },
-                "y": {
-                    "type": "number",
-                    "description": "Y coordinate from screen top-left origin"
+                "target": {
+                    "description": "Canonical action target: structured element target or coordinate fallback",
+                    "allOf": [action_target_schema()]
                 },
                 "button": {
                     "type": "string",
@@ -231,7 +267,7 @@ fn action_tap_by_position() -> ToolDefinition {
                     "default": 1
                 }
             },
-            "required": ["x", "y"]
+            "required": ["target"]
         }),
     }
 }
@@ -239,19 +275,18 @@ fn action_tap_by_position() -> ToolDefinition {
 fn action_type() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_type".to_string(),
-        description: "Type text into a field. If 'field' is provided, finds that element first; otherwise types into the currently focused element.".to_string(),
+        description: "Type text. If target is provided, resolves the structured element target or coordinate first; otherwise types into the currently focused element.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
+                "target": {
+                    "description": "Optional canonical action target to type into",
+                    "allOf": [action_target_schema()]
+                },
                 "text": {
                     "type": "string",
                     "description": "Text to type"
                 },
-                "field": {
-                    "type": "string",
-                    "description": "Optional field name to locate before typing. If omitted, types into the focused element."
-                },
-                "window": description_window_scope_schema(),
                 "clear_first": {
                     "type": "boolean",
                     "default": false,
@@ -263,49 +298,23 @@ fn action_type() -> ToolDefinition {
     }
 }
 
-fn action_press_by_name() -> ToolDefinition {
+fn action_press() -> ToolDefinition {
     ToolDefinition {
-        name: "sootie_press_by_name".to_string(),
-        description: "Press a key on an element from a short element description. Internally finds the element first.".to_string(),
+        name: "sootie_press".to_string(),
+        description: "Press a key. If target is provided, resolves and clicks the structured element target or coordinate first, then presses the key.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "el_description": {
-                    "type": "string",
-                    "description": "Short element description for locating the target element"
-                },
-                "window": description_window_scope_schema(),
-                "key": {
-                    "type": "string",
-                    "description": "Key to press (e.g. Return, Tab, Escape)"
-                }
-            },
-            "required": ["el_description", "key"]
-        }),
-    }
-}
-
-fn action_press_by_position() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_press_by_position".to_string(),
-        description: "Press a key at an absolute screen coordinate position".to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "x": {
-                    "type": "number",
-                    "description": "X coordinate from screen top-left origin"
-                },
-                "y": {
-                    "type": "number",
-                    "description": "Y coordinate from screen top-left origin"
+                "target": {
+                    "description": "Optional canonical action target to focus before pressing",
+                    "allOf": [action_target_schema()]
                 },
                 "key": {
                     "type": "string",
                     "description": "Key to press (e.g. Return, Tab, Escape)"
                 }
             },
-            "required": ["x", "y", "key"]
+            "required": ["key"]
         }),
     }
 }
@@ -363,48 +372,15 @@ fn action_drag() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "from_target": {
-                    "description": "Source target",
-                    "type": "object",
-                    "properties": target_schema()["properties"].clone(),
-                    "required": target_schema()["required"].clone()
+                    "description": "Source canonical action target",
+                    "allOf": [action_target_schema()]
                 },
                 "to_target": {
-                    "description": "Destination target",
-                    "type": "object",
-                    "properties": target_schema()["properties"].clone(),
-                    "required": target_schema()["required"].clone()
+                    "description": "Destination canonical action target",
+                    "allOf": [action_target_schema()]
                 }
             },
             "required": ["from_target", "to_target"]
-        }),
-    }
-}
-
-fn action_drag_by_position() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_drag_by_position".to_string(),
-        description: "Drag from one absolute screen coordinate to another".to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "from_x": {
-                    "type": "number",
-                    "description": "Starting X coordinate from screen top-left origin"
-                },
-                "from_y": {
-                    "type": "number",
-                    "description": "Starting Y coordinate from screen top-left origin"
-                },
-                "to_x": {
-                    "type": "number",
-                    "description": "Ending X coordinate from screen top-left origin"
-                },
-                "to_y": {
-                    "type": "number",
-                    "description": "Ending Y coordinate from screen top-left origin"
-                }
-            },
-            "required": ["from_x", "from_y", "to_x", "to_y"]
         }),
     }
 }
@@ -605,29 +581,7 @@ pub fn parse_scroll_direction_strict(s: &str) -> Result<ScrollDirection, String>
 }
 
 pub fn parse_step_target(value: &serde_json::Value) -> Option<StepTarget> {
-    if let (Some(x), Some(y)) = (
-        value.get("x").and_then(|v| v.as_f64()),
-        value.get("y").and_then(|v| v.as_f64()),
-    ) {
-        return Some(StepTarget::Coordinate(Coordinate { x, y }));
-    }
-
-    if let Some(coord) = value.get("coordinate") {
-        if let (Some(x), Some(y)) = (
-            coord.get("x").and_then(|v| v.as_f64()),
-            coord.get("y").and_then(|v| v.as_f64()),
-        ) {
-            return Some(StepTarget::Coordinate(Coordinate { x, y }));
-        }
-    }
-
-    if value.is_object() {
-        if let Ok(selector) = serde_json::from_value::<Selector>(value.clone()) {
-            return Some(StepTarget::Selector(selector));
-        }
-    }
-
-    None
+    serde_json::from_value::<StepTarget>(value.clone()).ok()
 }
 
 #[cfg(test)]
@@ -644,18 +598,18 @@ mod tests {
     fn test_tool_names() {
         let tools = all_tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"sootie_capabilities"));
+        assert!(names.contains(&"sootie_last_report"));
         assert!(names.contains(&"sootie_context"));
         assert!(names.contains(&"sootie_find_apps"));
+        assert!(names.contains(&"sootie_find"));
         assert!(names.contains(&"sootie_find_element"));
-        assert!(names.contains(&"sootie_tap_by_name"));
-        assert!(names.contains(&"sootie_tap_by_position"));
-        assert!(names.contains(&"sootie_press_by_name"));
-        assert!(names.contains(&"sootie_press_by_position"));
+        assert!(names.contains(&"sootie_click"));
         assert!(names.contains(&"sootie_type"));
+        assert!(names.contains(&"sootie_press"));
         assert!(names.contains(&"sootie_hotkey"));
         assert!(names.contains(&"sootie_scroll"));
         assert!(names.contains(&"sootie_drag"));
-        assert!(names.contains(&"sootie_drag_by_position"));
         assert!(names.contains(&"sootie_save_screenshot"));
         assert!(names.contains(&"sootie_focus"));
         assert!(names.contains(&"sootie_window"));
@@ -669,21 +623,18 @@ mod tests {
     fn test_description_based_tools_require_el_description() {
         let tools = all_tools();
 
-        for tool_name in [
-            "sootie_find_element",
-            "sootie_tap_by_name",
-            "sootie_press_by_name",
-        ] {
-            let tool = tools.iter().find(|tool| tool.name == tool_name).unwrap();
-            assert!(tool.input_schema["properties"]["el_description"].is_object());
-            assert!(tool.input_schema["properties"]["window"].is_object());
-            assert!(tool.input_schema["properties"].get("name").is_none());
-            assert!(tool.input_schema["required"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|value| value == "el_description"));
-        }
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_find_element")
+            .unwrap();
+        assert!(tool.input_schema["properties"]["el_description"].is_object());
+        assert!(tool.input_schema["properties"]["window"].is_object());
+        assert!(tool.input_schema["properties"].get("name").is_none());
+        assert!(tool.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "el_description"));
     }
 
     #[test]
@@ -710,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn test_scroll_and_type_require_target() {
+    fn test_scroll_requires_target_and_type_accepts_optional_target() {
         let tools = all_tools();
         let scroll = tools
             .iter()
@@ -736,7 +687,56 @@ mod tests {
             .unwrap()
             .iter()
             .all(|value| value != "field"));
-        assert!(r#type.input_schema["properties"]["window"].is_object());
+        assert!(r#type.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|value| value != "target"));
+        assert!(
+            r#type.input_schema["properties"]["target"]["allOf"][0]["oneOf"][0]["properties"]
+                ["selector"]
+                .is_object()
+        );
+        assert!(r#type.input_schema["properties"].get("field").is_none());
+        assert!(r#type.input_schema["properties"].get("window").is_none());
+    }
+
+    #[test]
+    fn test_action_tools_use_canonical_targets() {
+        let tools = all_tools();
+        let click = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_click")
+            .unwrap();
+        let press = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_press")
+            .unwrap();
+        let drag = tools
+            .iter()
+            .find(|tool| tool.name == "sootie_drag")
+            .unwrap();
+
+        assert!(
+            click.input_schema["properties"]["target"]["allOf"][0]["oneOf"][0]["properties"]
+                ["selector"]
+                .is_object()
+        );
+        assert!(
+            click.input_schema["properties"]["target"]["allOf"][0]["oneOf"][1]["properties"]
+                ["coordinate"]
+                .is_object()
+        );
+        assert!(
+            press.input_schema["properties"]["target"]["allOf"][0]["oneOf"][0]["properties"]
+                ["selector"]
+                .is_object()
+        );
+        assert!(
+            drag.input_schema["properties"]["from_target"]["allOf"][0]["oneOf"][1]["properties"]
+                ["coordinate"]
+                .is_object()
+        );
     }
 
     #[test]
@@ -802,15 +802,17 @@ mod tests {
     #[test]
     fn test_parse_step_target_selector() {
         let val = serde_json::json!({
-            "role": "button",
-            "name": "Submit"
+            "selector": {
+                "role": "button",
+                "name": "Submit"
+            }
         });
         let target = parse_step_target(&val).unwrap();
         match target {
-            StepTarget::Selector(s) => {
-                assert_eq!(s.element.role, Some("button".to_string()));
+            StepTarget::Target(target) => {
+                assert_eq!(target.selector.role, Some("button".to_string()));
             }
-            _ => panic!("expected selector"),
+            _ => panic!("expected structured target"),
         }
     }
 }

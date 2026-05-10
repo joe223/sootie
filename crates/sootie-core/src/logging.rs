@@ -958,13 +958,13 @@ mod tests {
             let input = serde_json::json!({
                 "count": 42,
                 "enabled": true,
-                "ratio": 3.14,
+                "ratio": 2.5,
                 "password": "secret"
             });
             let output = sanitize_json_value(input, None);
             assert_eq!(output["count"], 42);
             assert_eq!(output["enabled"], true);
-            assert_eq!(output["ratio"], 3.14);
+            assert_eq!(output["ratio"], 2.5);
             assert_eq!(output["password"], "[REDACTED:password]");
         }
 

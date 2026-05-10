@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::selector::{Coordinate, Selector};
+use crate::selector::{Coordinate, Target};
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
@@ -57,11 +57,56 @@ pub struct RecipeStep {
     pub params: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StepTarget {
-    Selector(Selector),
+    Target(Target),
     Coordinate(Coordinate),
+}
+
+impl Serialize for StepTarget {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            StepTarget::Target(target) => target.serialize(serializer),
+            StepTarget::Coordinate(coordinate) => {
+                #[derive(Serialize)]
+                struct CoordinateTarget<'a> {
+                    coordinate: &'a Coordinate,
+                }
+
+                CoordinateTarget { coordinate }.serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StepTarget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let Some(object) = value.as_object() else {
+            return Err(serde::de::Error::custom("recipe target must be an object"));
+        };
+
+        if let Some(coordinate) = object.get("coordinate") {
+            if object.len() != 1 {
+                return Err(serde::de::Error::custom(
+                    "coordinate recipe target cannot include selector fields",
+                ));
+            }
+            return serde_json::from_value::<Coordinate>(coordinate.clone())
+                .map(StepTarget::Coordinate)
+                .map_err(serde::de::Error::custom);
+        }
+
+        serde_json::from_value::<Target>(value)
+            .map(StepTarget::Target)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -359,6 +404,13 @@ pub fn validate_recipe(recipe: &Recipe) -> Result<(), RecipeError> {
 }
 
 fn validate_step(step: &RecipeStep) -> Result<(), String> {
+    if let Some(target) = &step.target {
+        validate_step_target(target)?;
+    }
+    if let Some(target) = &step.to_target {
+        validate_step_target(target)?;
+    }
+
     match step.action.as_str() {
         "click" => Ok(()),
         "type" => {
@@ -398,10 +450,16 @@ fn validate_step(step: &RecipeStep) -> Result<(), String> {
     }
 }
 
+fn validate_step_target(target: &StepTarget) -> Result<(), String> {
+    match target {
+        StepTarget::Target(target) => target.validate().map_err(|e| e.to_string()),
+        StepTarget::Coordinate(_) => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::selector::AppSelector;
 
     fn make_recipe(name: &str, steps: Vec<RecipeStep>) -> Recipe {
         Recipe {
@@ -652,10 +710,12 @@ mod tests {
         let engine = RecipeEngine::new_in_memory();
         let step = RecipeStep {
             action: "click".to_string(),
-            target: Some(StepTarget::Selector(
-                Selector::new()
-                    .with_app(AppSelector::from_name("${app}"))
-                    .with_name("${button_name}"),
+            target: Some(StepTarget::Target(
+                serde_json::from_value(serde_json::json!({
+                    "app": "${app}",
+                    "selector": { "name": "${button_name}" }
+                }))
+                .unwrap(),
             )),
             text: None,
             key: None,
@@ -681,11 +741,11 @@ mod tests {
 
         let resolved = engine.substitute_step(&step, &params);
         match resolved.target.unwrap() {
-            StepTarget::Selector(selector) => {
-                assert_eq!(selector.app.unwrap().name.as_deref(), Some("Chrome"));
-                assert_eq!(selector.element.name.as_deref(), Some("Compose"));
+            StepTarget::Target(target) => {
+                assert_eq!(target.app.unwrap().name.as_deref(), Some("Chrome"));
+                assert_eq!(target.selector.name.as_deref(), Some("Compose"));
             }
-            _ => panic!("expected selector target"),
+            _ => panic!("expected structured target"),
         }
     }
 
@@ -738,8 +798,8 @@ mod tests {
             steps: vec![
                 RecipeStep {
                     action: "click".to_string(),
-                    target: Some(StepTarget::Selector(
-                        serde_json::from_str(r#"{"app": "Chrome", "window": "Gmail", "name": "Compose", "role": "button"}"#).unwrap(),
+                    target: Some(StepTarget::Target(
+                        serde_json::from_str(r#"{"app": "Chrome", "window": "Gmail", "selector": {"name": "Compose", "role": "button"}}"#).unwrap(),
                     )),
                     text: None,
                     key: None,
@@ -754,8 +814,8 @@ mod tests {
                 },
                 RecipeStep {
                     action: "type".to_string(),
-                    target: Some(StepTarget::Selector(
-                        serde_json::from_str(r#"{"role": "textfield", "name": "To"}"#).unwrap(),
+                    target: Some(StepTarget::Target(
+                        serde_json::from_str(r#"{"selector": {"role": "textfield", "name": "To"}}"#).unwrap(),
                     )),
                     text: Some("${to}".to_string()),
                     key: None,
@@ -793,24 +853,29 @@ mod tests {
                     "target": {
                         "app": "Chrome",
                         "window": "Gmail",
-                        "name": "Compose",
-                        "role": "button",
-                        "state": { "visible": true }
+                        "selector": {
+                            "name": "Compose",
+                            "role": "button"
+                        }
                     }
                 },
                 {
                     "action": "wait",
                     "target": {
-                        "role": "textfield",
-                        "name": "To"
+                        "selector": {
+                            "role": "textfield",
+                            "name": "To"
+                        }
                     },
                     "timeout": 5000
                 },
                 {
                     "action": "type",
                     "target": {
-                        "role": "textfield",
-                        "name": "To"
+                        "selector": {
+                            "role": "textfield",
+                            "name": "To"
+                        }
                     },
                     "text": "${to}"
                 }

@@ -311,14 +311,14 @@ JSON-RPC errors remain reserved for invalid MCP envelope/method dispatch.
 | Tool | What it does | Additional Parameters |
 |------|-------------|----------------------|
 | `sootie_launch` | Launch a desktop app | None |
-| `sootie_tap_by_name` | Tap an element from a short element description | `el_description` (string), `button` (left/right/middle), `count` (integer) |
-| `sootie_tap_by_position` | Tap at an absolute screen coordinate | `x`, `y` (numbers), `button` (left/right/middle), `count` (integer) |
-| `sootie_type` | Type text into the focused element, or into a named field when `field` is provided | `text` (string), `field` (optional string), `clear_first` (boolean) |
-| `sootie_press_by_name` | Press a key on an element from a short element description | `el_description` (string), `key` (e.g., "Return", "Tab", "Escape") |
-| `sootie_press_by_position` | Press a key at an absolute screen coordinate | `x`, `y` (numbers), `key` (e.g., "Return", "Tab", "Escape") |
+| `sootie_find` | Resolve a canonical structured target | `target` with `selector`, optional `app`/`window` |
+| `sootie_find_element` | Find UI elements from a short element description | `el_description` (string), optional `window` scope |
+| `sootie_click` | Click a canonical action target | `target` as either `{ "selector": ... }` or `{ "coordinate": { "x", "y" } }`, `button`, `count` |
+| `sootie_type` | Type text into the focused element, or into a canonical action target when provided | `text` (string), optional `target`, `clear_first` (boolean) |
+| `sootie_press` | Press a key, optionally focusing a canonical action target first | `key` (e.g., "Return", "Tab", "Escape"), optional `target` |
 | `sootie_hotkey` | Press key combinations | `keys` (array of strings, e.g., `["Cmd", "C"]`) |
-| `sootie_scroll` | Scroll at the top-ranked element resolved from `target` | `direction` ("up"/"down"/"left"/"right"), `amount` (integer) |
-| `sootie_drag` | Drag from `from_target` to `to_target` after resolving both | `from_target`, `to_target` |
+| `sootie_scroll` | Scroll at a canonical action target | `target`, `direction` ("up"/"down"/"left"/"right"), `amount` (integer) |
+| `sootie_drag` | Drag between two canonical action targets | `from_target`, `to_target` |
 
 ### Window & Focus
 
@@ -356,24 +356,29 @@ When your agent figures out a workflow, it saves it as a recipe. A recipe is a J
       "target": {
         "app": "Chrome",
         "window": "Gmail",
-        "name": "Compose",
-        "role": "button",
-        "state": { "visible": true }
+        "selector": {
+          "name": "Compose",
+          "role": "button"
+        }
       }
     },
     {
       "action": "wait",
       "target": {
-        "role": "textfield",
-        "name": "To"
+        "selector": {
+          "role": "textfield",
+          "name": "To"
+        }
       },
       "timeout": 5000
     },
     {
       "action": "type",
       "target": {
-        "role": "textfield",
-        "name": "To"
+        "selector": {
+          "role": "textfield",
+          "name": "To"
+        }
       },
       "text": "${to}"
     }
@@ -383,7 +388,7 @@ When your agent figures out a workflow, it saves it as a recipe. A recipe is a J
 
 - Recipes are just JSON. Read every step before running.
 - Share with your team. One person learns the workflow, everyone benefits.
-- Normalized selectors stay portable even when backend choice differs by platform.
+- Canonical targets stay portable even when backend choice differs by platform.
 
 ## License
 

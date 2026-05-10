@@ -8,13 +8,15 @@ use tracing::{debug, error, info, warn};
 
 use sootie_core::action::{
     ActionProvider, ActionTarget, ClickAction, DragAction, FocusAction, HotkeyAction, HoverAction,
-    LaunchAction, PressAction, ScrollAction, TypeAction, WindowAction, WindowOperation,
+    LaunchAction, MouseButton, PressAction, ScrollAction, TypeAction, WindowAction,
+    WindowOperation,
 };
 use sootie_core::cascade::Cascade;
 use sootie_core::logging::{
     create_duration_ms, sanitize_tool_call_args, LogConfig, SootieLogger, ToolCallLog,
 };
 use sootie_core::perception::{PerceptionProvider, WaitCondition};
+use sootie_core::platform::current_capabilities;
 use sootie_core::recipe::{Recipe, RecipeEngine, StepTarget};
 use sootie_core::selector::{
     AppSelector, Coordinate, FindTargetResult, MatchStatus, ResolvedElement, ResolvedTarget,
@@ -62,6 +64,19 @@ struct ResolvedDescriptionWindowScope {
 struct SessionWindowContext {
     app_selector: AppSelector,
     scope: ResolvedDescriptionWindowScope,
+}
+
+#[derive(Debug, Clone)]
+enum CanonicalActionTarget {
+    Coordinate(Coordinate),
+    Target(Target),
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedActionTarget {
+    coordinate: Coordinate,
+    find_result: Option<FindTargetResult>,
+    summary: serde_json::Value,
 }
 
 fn scope_has_window(scope: &ResolvedDescriptionWindowScope) -> bool {
@@ -141,10 +156,10 @@ fn error_response(error: &ToolInvocationError) -> serde_json::Value {
     })
 }
 
-fn required_f64(args: &serde_json::Value, field: &'static str) -> Result<f64, ToolInvocationError> {
-    args.get(field).and_then(|v| v.as_f64()).ok_or_else(|| {
-        ToolInvocationError::invalid_arguments(format!("Missing required field: {}", field))
-    })
+fn attach_report(response: &mut serde_json::Value, report: serde_json::Value) {
+    if let Some(object) = response.as_object_mut() {
+        object.insert("report".to_string(), report);
+    }
 }
 
 fn remove_role_phrase(description: &str, phrase: &str) -> String {
@@ -215,16 +230,49 @@ fn parse_target(args: &serde_json::Value) -> Result<Target, ToolInvocationError>
         .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid target: {}", e)))
 }
 
-fn parse_named_target(
+fn parse_coordinate_target(
+    value: &serde_json::Value,
+) -> Result<Option<Coordinate>, ToolInvocationError> {
+    let Some(coordinate) = value.get("coordinate") else {
+        return Ok(None);
+    };
+
+    let x = coordinate
+        .get("x")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| {
+            ToolInvocationError::invalid_arguments("target.coordinate.x must be a number")
+        })?;
+    let y = coordinate
+        .get("y")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| {
+            ToolInvocationError::invalid_arguments("target.coordinate.y must be a number")
+        })?;
+
+    Ok(Some(Coordinate { x, y }))
+}
+
+fn parse_action_target_arg(
     args: &serde_json::Value,
     field: &str,
-) -> Result<Target, ToolInvocationError> {
+) -> Result<CanonicalActionTarget, ToolInvocationError> {
     let target_value = args.get(field).ok_or_else(|| {
         ToolInvocationError::invalid_arguments(format!("Missing required field: {}", field))
     })?;
 
-    serde_json::from_value(target_value.clone())
-        .map_err(|e| ToolInvocationError::invalid_arguments(format!("Invalid {}: {}", field, e)))
+    if let Some(coordinate) = parse_coordinate_target(target_value)? {
+        return Ok(CanonicalActionTarget::Coordinate(coordinate));
+    }
+
+    serde_json::from_value::<Target>(target_value.clone())
+        .map(CanonicalActionTarget::Target)
+        .map_err(|e| {
+            ToolInvocationError::invalid_arguments(format!(
+                "Invalid {}: expected canonical target or coordinate target: {}",
+                field, e
+            ))
+        })
 }
 
 fn parse_selector_args(args: &serde_json::Value) -> Result<Selector, ToolInvocationError> {
@@ -253,6 +301,7 @@ pub struct SootieServer {
     action: Arc<Box<dyn ActionProvider>>,
     recipe_engine: Arc<Mutex<RecipeEngine>>,
     session_window_context: Arc<Mutex<Option<SessionWindowContext>>>,
+    last_report: Arc<Mutex<Option<serde_json::Value>>>,
     logger: SootieLogger,
 }
 
@@ -263,6 +312,7 @@ impl SootieServer {
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(RecipeEngine::new())),
             session_window_context: Arc::new(Mutex::new(None)),
+            last_report: Arc::new(Mutex::new(None)),
             logger: SootieLogger::new(LogConfig::default()),
         }
     }
@@ -276,6 +326,7 @@ impl SootieServer {
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(RecipeEngine::new_in_memory())),
             session_window_context: Arc::new(Mutex::new(None)),
+            last_report: Arc::new(Mutex::new(None)),
             logger: SootieLogger::new(LogConfig::default()),
         }
     }
@@ -294,6 +345,7 @@ impl SootieServer {
             action: Arc::new(action),
             recipe_engine: Arc::new(Mutex::new(recipe_engine)),
             session_window_context: Arc::new(Mutex::new(None)),
+            last_report: Arc::new(Mutex::new(None)),
             logger: SootieLogger::new(LogConfig::default()),
         }
     }
@@ -727,10 +779,89 @@ impl SootieServer {
         Ok(result)
     }
 
+    async fn resolve_action_target_or_error(
+        &self,
+        target: CanonicalActionTarget,
+        message: &str,
+    ) -> Result<ResolvedActionTarget, ToolInvocationError> {
+        match target {
+            CanonicalActionTarget::Coordinate(coordinate) => {
+                let summary = serde_json::json!({
+                    "coordinate": {
+                        "x": coordinate.x,
+                        "y": coordinate.y
+                    },
+                    "backend": "coordinate"
+                });
+                Ok(ResolvedActionTarget {
+                    coordinate,
+                    find_result: None,
+                    summary,
+                })
+            }
+            CanonicalActionTarget::Target(target) => {
+                let find_result = self.find_target_or_error(&target, message).await?;
+                let target_element = &find_result.elements[0];
+                let coordinate = target_element.coordinate.clone();
+                let summary = serde_json::json!({
+                    "coordinate": {
+                        "x": coordinate.x,
+                        "y": coordinate.y
+                    },
+                    "position": {
+                        "x": target_element.bounds.x,
+                        "y": target_element.bounds.y,
+                        "width": target_element.bounds.width,
+                        "height": target_element.bounds.height
+                    },
+                    "name": target_element.name,
+                    "role": target_element.role,
+                    "backend": find_result.backend,
+                    "element_index": target_element.index
+                });
+                Ok(ResolvedActionTarget {
+                    coordinate,
+                    find_result: Some(find_result),
+                    summary,
+                })
+            }
+        }
+    }
+
     fn execution_details(result: &FindTargetResult) -> serde_json::Value {
         serde_json::json!({
             "backend": result.backend,
             "element_index": 0
+        })
+    }
+
+    fn build_execution_report(
+        tool_name: &str,
+        arguments: serde_json::Value,
+        success: bool,
+        duration_ms: u64,
+        error: Option<&ToolInvocationError>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "tool": tool_name,
+            "success": success,
+            "duration_ms": duration_ms,
+            "arguments": arguments,
+            "error": error.map(|err| serde_json::json!({
+                "code": err.code,
+                "message": err.message,
+                "details": err.details,
+            })),
+            "recovery": if success {
+                Vec::<String>::new()
+            } else {
+                vec![
+                    "Call sootie_last_report to inspect the structured failure.".to_string(),
+                    "Call sootie_context to confirm the active app and window.".to_string(),
+                    "Try sootie_find_element with a more specific description or use coordinate fallback.".to_string(),
+                    "Check backend_attempts and backend_errors when present.".to_string()
+                ]
+            }
         })
     }
 
@@ -812,18 +943,18 @@ impl SootieServer {
         info!(tool = %name, args = %args, "Tool call started");
 
         let result = match name {
+            "sootie_capabilities" => self.tool_capabilities().await,
+            "sootie_last_report" => self.tool_last_report().await,
             "sootie_context" => self.tool_context().await,
             "sootie_find_apps" => self.tool_find_apps(&args).await,
+            "sootie_find" => self.tool_find(&args).await,
             "sootie_find_element" => self.tool_find_element(&args).await,
-            "sootie_tap_by_name" => self.tool_tap_by_name(&args).await,
-            "sootie_tap_by_position" => self.tool_tap_by_position(&args).await,
+            "sootie_click" => self.tool_click(&args).await,
             "sootie_type" => self.tool_type(&args).await,
-            "sootie_press_by_name" => self.tool_press_by_name(&args).await,
-            "sootie_press_by_position" => self.tool_press_by_position(&args).await,
+            "sootie_press" => self.tool_press(&args).await,
             "sootie_hotkey" => self.tool_hotkey(&args).await,
             "sootie_scroll" => self.tool_scroll(&args).await,
             "sootie_drag" => self.tool_drag(&args).await,
-            "sootie_drag_by_position" => self.tool_drag_by_position(&args).await,
             "sootie_save_screenshot" => self.tool_save_screenshot(&args).await,
             "sootie_launch" => self.tool_launch(&args).await,
             "sootie_focus" => self.tool_focus(&args).await,
@@ -843,7 +974,16 @@ impl SootieServer {
         match result {
             Ok(value) => {
                 let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
-                let response = success_response(value);
+                let report = Self::build_execution_report(
+                    name,
+                    sanitized_args.clone(),
+                    true,
+                    duration_ms,
+                    None,
+                );
+                *self.last_report.lock().await = Some(report.clone());
+                let mut response = success_response(value);
+                attach_report(&mut response, report);
                 let content_text = present_tool_data(&response).map_err(|e| (-32603, e.message))?;
 
                 self.logger.log_tool_call(&ToolCallLog {
@@ -865,7 +1005,16 @@ impl SootieServer {
             }
             Err(err) => {
                 let sanitized_args = sanitize_tool_call_args(&args, self.logger.config());
-                let response = error_response(&err);
+                let report = Self::build_execution_report(
+                    name,
+                    sanitized_args.clone(),
+                    false,
+                    duration_ms,
+                    Some(&err),
+                );
+                *self.last_report.lock().await = Some(report.clone());
+                let mut response = error_response(&err);
+                attach_report(&mut response, report);
                 let content_text = present_tool_data(&response).map_err(|e| (-32603, e.message))?;
 
                 self.logger.log_tool_call(&ToolCallLog {
@@ -896,6 +1045,81 @@ impl SootieServer {
         to_json_value(ctx)
     }
 
+    async fn tool_capabilities(&self) -> Result<serde_json::Value, ToolInvocationError> {
+        let capabilities = current_capabilities();
+        Ok(serde_json::json!({
+            "platform": capabilities.platform,
+            "version": env!("CARGO_PKG_VERSION"),
+            "capabilities": {
+                "native_tree": capabilities.native_tree.as_str(),
+                "screen_capture": capabilities.screen_capture.as_str(),
+                "input": capabilities.input.as_str(),
+                "app_discovery": capabilities.app_discovery.as_str(),
+                "window_management": capabilities.window_management.as_str(),
+            },
+            "positioning": "Sootie is an agent-facing desktop automation runtime: MCP is the control plane, native accessibility and browser CDP are structured perception backends, and vision is the grounding fallback rather than the only source of truth.",
+            "recommended_workflow": [
+                "Call sootie_capabilities once when connecting to learn platform depth and degradation.",
+                "Call sootie_recipes before multi-step workflows; recipes encode learned reliable flows.",
+                "Call sootie_context before acting so app/window focus and coordinates are grounded.",
+                "Prefer structured targets from sootie_find_element or sootie_context before coordinate actions.",
+                "Use canonical sootie_find and sootie_click targets when you can express app, window, role, name, text, or id explicitly.",
+                "Use coordinates as a fallback and read report, backend_attempts, and backend_errors when a target is not found."
+            ],
+            "platform_notes": match capabilities.platform {
+                "macos" => vec![
+                    "Full native Accessibility tree, screen capture, input, app discovery, and window management are the reference implementation."
+                ],
+                "linux" => vec![
+                    "Current support is an X11 fallback using wmctrl, xdotool, and ImageMagick import.",
+                    "Native AT-SPI tree parity is not implemented yet.",
+                    "Display-specific screenshots are not supported by the Linux fallback."
+                ],
+                "windows" => vec![
+                    "Current support is a Win32/window-tree fallback.",
+                    "Full UI Automation tree parity is not implemented yet.",
+                    "Element search is window-level and coordinate actions are synthetic."
+                ],
+                _ => vec![
+                    "This platform is not supported by a native provider."
+                ],
+            },
+            "tool_groups": [
+                {
+                    "name": "orientation",
+                    "tools": ["sootie_capabilities", "sootie_last_report", "sootie_context", "sootie_find_apps", "sootie_find", "sootie_find_element", "sootie_save_screenshot"]
+                },
+                {
+                    "name": "actions",
+                    "tools": ["sootie_click", "sootie_type", "sootie_press", "sootie_hotkey", "sootie_scroll", "sootie_drag", "sootie_launch", "sootie_focus", "sootie_window"]
+                },
+                {
+                    "name": "workflows",
+                    "tools": ["sootie_recipes", "sootie_run", "sootie_recipe_save", "sootie_recipe_delete"]
+                }
+            ],
+            "next_architecture_priorities": [
+                "Make an explicit device/session layer so desktop, browser, and future mobile targets are first-class connections.",
+                "Add execution reports with screenshots, backend attempts, and action logs for every tool call.",
+                "Add annotation and direct visual grounding tools for recovery when structured selectors are weak.",
+                "Replace ad hoc natural-language parsing with a locator builder that ranks dom_id, accessibility identifier, role, name, and visual description."
+            ]
+        }))
+    }
+
+    async fn tool_last_report(&self) -> Result<serde_json::Value, ToolInvocationError> {
+        Ok(self.last_report.lock().await.clone().unwrap_or_else(|| {
+            serde_json::json!({
+                "tool": null,
+                "success": null,
+                "duration_ms": null,
+                "arguments": null,
+                "error": null,
+                "recovery": ["No tool execution report has been recorded yet."]
+            })
+        }))
+    }
+
     async fn tool_find_apps(
         &self,
         args: &serde_json::Value,
@@ -914,6 +1138,15 @@ impl SootieServer {
             .find_apps(pattern, limit)
             .await
             .map_err(|e| ToolInvocationError::execution(format!("Find apps failed: {}", e)))?;
+        to_json_value(result)
+    }
+
+    async fn tool_find(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let target = parse_target(args)?;
+        let result = self.run_find_target(&target).await?;
         to_json_value(result)
     }
 
@@ -970,30 +1203,14 @@ impl SootieServer {
         to_json_value(elements)
     }
 
-    async fn tool_tap_by_name(
+    async fn tool_click(
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let el_description = args
-            .get("el_description")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ToolInvocationError::invalid_arguments("Missing required field: el_description")
-            })?
-            .to_string();
-        let window_scope = self.resolve_description_window_scope(args).await?;
-        let find_result = self
-            .resolve_description_target_or_error(
-                &el_description,
-                window_scope,
-                "No element matched the requested element description",
-            )
+        let target = parse_action_target_arg(args, "target")?;
+        let resolved = self
+            .resolve_action_target_or_error(target, "No element matched the requested target")
             .await?;
-        let target_element = &find_result.elements[0];
-        let coordinate = Coordinate {
-            x: target_element.bounds.x + target_element.bounds.width / 2.0,
-            y: target_element.bounds.y + target_element.bounds.height / 2.0,
-        };
 
         let button = args
             .get("button")
@@ -1005,76 +1222,24 @@ impl SootieServer {
         let count = args.get("count").and_then(|v| v.as_u64()).map(|v| v as u32);
 
         let action = ClickAction {
-            target: ActionTarget::Coordinate(coordinate.clone()),
+            target: ActionTarget::Coordinate(resolved.coordinate.clone()),
             button,
             count,
         };
 
         let result = self.action.click(&action).await.map_err(|e| {
-            ToolInvocationError::execution_with_details(
-                format!("Tap by name failed: {}", e),
-                Self::execution_details(&find_result),
-            )
+            let details = resolved
+                .find_result
+                .as_ref()
+                .map(Self::execution_details)
+                .unwrap_or_else(|| serde_json::json!({"backend": "coordinate"}));
+            ToolInvocationError::execution_with_details(format!("Click failed: {}", e), details)
         })?;
         let mut value = to_json_value(result)?;
         if let Some(object) = value.as_object_mut() {
-            object.insert(
-                "target".to_string(),
-                serde_json::json!({
-                    "coordinate": {
-                        "x": coordinate.x,
-                        "y": coordinate.y
-                    },
-                    "position": {
-                        "x": target_element.bounds.x,
-                        "y": target_element.bounds.y,
-                        "width": target_element.bounds.width,
-                        "height": target_element.bounds.height
-                    },
-                    "name": target_element.name,
-                    "role": target_element.role,
-                    "backend": find_result.backend
-                }),
-            );
+            object.insert("target".to_string(), resolved.summary);
         }
         Ok(value)
-    }
-
-    async fn tool_tap_by_position(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        use sootie_core::selector::Coordinate;
-
-        let x = args
-            .get("x")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: x"))?;
-
-        let y = args
-            .get("y")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: y"))?;
-
-        let button = args
-            .get("button")
-            .and_then(|v| v.as_str())
-            .map(parse_mouse_button_strict)
-            .transpose()
-            .map_err(ToolInvocationError::invalid_arguments)?;
-
-        let count = args.get("count").and_then(|v| v.as_u64()).map(|v| v as u32);
-
-        let action = ClickAction {
-            target: ActionTarget::Coordinate(Coordinate { x, y }),
-            button,
-            count,
-        };
-
-        let result = self.action.click(&action).await.map_err(|e| {
-            ToolInvocationError::execution(format!("Tap by position failed: {}", e))
-        })?;
-        to_json_value(result)
     }
 
     async fn tool_type(
@@ -1088,98 +1253,94 @@ impl SootieServer {
             .to_string();
 
         let clear_first = args.get("clear_first").and_then(|v| v.as_bool());
-        let window_scope = self.resolve_description_window_scope(args).await?;
-
-        let target = if let Some(field) = args.get("field").and_then(|v| v.as_str()) {
-            let find_result = self
-                .resolve_description_target_or_error(
-                    field,
-                    window_scope,
-                    "No element matched the requested field name",
+        let resolved_target = if args.get("target").is_some() {
+            let target = parse_action_target_arg(args, "target")?;
+            Some(
+                self.resolve_action_target_or_error(
+                    target,
+                    "No element matched the requested target",
                 )
-                .await?;
-            Some(ActionTarget::Coordinate(
-                find_result.elements[0].coordinate.clone(),
-            ))
+                .await?,
+            )
         } else {
             None
         };
 
         let action = TypeAction {
-            target,
+            target: resolved_target
+                .as_ref()
+                .map(|resolved| ActionTarget::Coordinate(resolved.coordinate.clone())),
             text,
             clear_first,
         };
 
+        let result = self.action.r#type(&action).await.map_err(|e| {
+            let details = resolved_target
+                .as_ref()
+                .map(|resolved| {
+                    resolved
+                        .find_result
+                        .as_ref()
+                        .map(Self::execution_details)
+                        .unwrap_or_else(|| resolved.summary.clone())
+                })
+                .unwrap_or_else(|| serde_json::json!({"backend": "focused"}));
+            ToolInvocationError::execution_with_details(format!("Type failed: {}", e), details)
+        })?;
+        let mut value = to_json_value(result)?;
+        if let (Some(object), Some(target)) = (value.as_object_mut(), resolved_target) {
+            object.insert("target".to_string(), target.summary);
+        }
+        Ok(value)
+    }
+
+    async fn tool_press(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolInvocationError> {
+        let key = args
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: key"))?
+            .to_string();
+
+        let focused_target = if args.get("target").is_some() {
+            let target = parse_action_target_arg(args, "target")?;
+            let resolved = self
+                .resolve_action_target_or_error(target, "No element matched the requested target")
+                .await?;
+            let click_action = ClickAction {
+                target: ActionTarget::Coordinate(resolved.coordinate.clone()),
+                button: Some(MouseButton::Left),
+                count: Some(1),
+            };
+            self.action.click(&click_action).await.map_err(|e| {
+                let details = resolved
+                    .find_result
+                    .as_ref()
+                    .map(Self::execution_details)
+                    .unwrap_or_else(|| serde_json::json!({"backend": "coordinate"}));
+                ToolInvocationError::execution_with_details(
+                    format!("Press target focus failed: {}", e),
+                    details,
+                )
+            })?;
+            Some(resolved.summary)
+        } else {
+            None
+        };
+
+        let action = PressAction { key };
         let result = self
             .action
-            .r#type(&action)
+            .press(&action)
             .await
-            .map_err(|e| ToolInvocationError::execution(format!("Type failed: {}", e)))?;
-        to_json_value(result)
-    }
-
-    async fn tool_press_by_name(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let el_description = args
-            .get("el_description")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ToolInvocationError::invalid_arguments("Missing required field: el_description")
-            })?
-            .to_string();
-
-        let key = args
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: key"))?
-            .to_string();
-        let window_scope = self.resolve_description_window_scope(args).await?;
-        let find_result = self
-            .resolve_description_target_or_error(
-                &el_description,
-                window_scope,
-                "No element matched the requested element description",
-            )
-            .await?;
-
-        let action = PressAction { key };
-        let result = self.action.press(&action).await.map_err(|e| {
-            ToolInvocationError::execution_with_details(
-                format!("Press by name failed: {}", e),
-                Self::execution_details(&find_result),
-            )
-        })?;
-        to_json_value(result)
-    }
-
-    async fn tool_press_by_position(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let _x = args
-            .get("x")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: x"))?;
-
-        let _y = args
-            .get("y")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: y"))?;
-
-        let key = args
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolInvocationError::invalid_arguments("Missing required field: key"))?
-            .to_string();
-
-        let action = PressAction { key };
-        let result = self.action.press(&action).await.map_err(|e| {
-            ToolInvocationError::execution(format!("Press by position failed: {}", e))
-        })?;
-        to_json_value(result)
+            .map_err(|e| ToolInvocationError::execution(format!("Press failed: {}", e)))?;
+        let mut value = to_json_value(result)?;
+        if let (Some(object), Some(target)) = (value.as_object_mut(), focused_target) {
+            object.insert("target".to_string(), target);
+        }
+        Ok(value)
     }
 
     async fn tool_hotkey(
@@ -1225,82 +1386,77 @@ impl SootieServer {
         let direction = parse_scroll_direction_strict(&direction)
             .map_err(ToolInvocationError::invalid_arguments)?;
 
-        let target = parse_target(args)?;
-        let find_result = self
-            .find_target_or_error(&target, "No element matched the requested target")
+        let target = parse_action_target_arg(args, "target")?;
+        let resolved = self
+            .resolve_action_target_or_error(target, "No element matched the requested target")
             .await?;
-        let coordinate = find_result.elements[0].coordinate.clone();
         let amount = args
             .get("amount")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
 
         let action = ScrollAction {
-            target: Some(ActionTarget::Coordinate(coordinate)),
+            target: Some(ActionTarget::Coordinate(resolved.coordinate.clone())),
             direction,
             amount,
         };
 
         let result = self.action.scroll(&action).await.map_err(|e| {
-            ToolInvocationError::execution_with_details(
-                format!("Scroll failed: {}", e),
-                Self::execution_details(&find_result),
-            )
+            let details = resolved
+                .find_result
+                .as_ref()
+                .map(Self::execution_details)
+                .unwrap_or_else(|| serde_json::json!({"backend": "coordinate"}));
+            ToolInvocationError::execution_with_details(format!("Scroll failed: {}", e), details)
         })?;
-        to_json_value(result)
+        let mut value = to_json_value(result)?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("target".to_string(), resolved.summary);
+        }
+        Ok(value)
     }
 
     async fn tool_drag(
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let from_target = parse_named_target(args, "from_target")?;
-        let to_target = parse_named_target(args, "to_target")?;
-        let from_result = self
-            .find_target_or_error(&from_target, "No element matched the from_target")
+        let from_target = parse_action_target_arg(args, "from_target")?;
+        let to_target = parse_action_target_arg(args, "to_target")?;
+        let from = self
+            .resolve_action_target_or_error(from_target, "No element matched the from_target")
             .await?;
-        let to_result = self
-            .find_target_or_error(&to_target, "No element matched the to_target")
+        let to = self
+            .resolve_action_target_or_error(to_target, "No element matched the to_target")
             .await?;
 
+        let from_summary = from.summary.clone();
+        let to_summary = to.summary.clone();
         let action = DragAction {
-            from: ActionTarget::Coordinate(from_result.elements[0].coordinate.clone()),
-            to: ActionTarget::Coordinate(to_result.elements[0].coordinate.clone()),
+            from: ActionTarget::Coordinate(from.coordinate.clone()),
+            to: ActionTarget::Coordinate(to.coordinate.clone()),
         };
         let result = self.action.drag(&action).await.map_err(|e| {
             ToolInvocationError::execution_with_details(
                 format!("Drag failed: {}", e),
                 serde_json::json!({
-                    "backend": from_result.backend,
-                    "element_index": 0,
-                    "to_backend": to_result.backend,
-                    "to_element_index": 0
+                    "backend": from_summary["backend"],
+                    "element_index": from_summary["element_index"],
+                    "to_backend": to_summary["backend"],
+                    "to_element_index": to_summary["element_index"]
                 }),
             )
         })?;
-        to_json_value(result)
-    }
-
-    async fn tool_drag_by_position(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let from_x = required_f64(args, "from_x")?;
-        let from_y = required_f64(args, "from_y")?;
-        let to_x = required_f64(args, "to_x")?;
-        let to_y = required_f64(args, "to_y")?;
-
-        let action = DragAction {
-            from: ActionTarget::Coordinate(Coordinate {
-                x: from_x,
-                y: from_y,
-            }),
-            to: ActionTarget::Coordinate(Coordinate { x: to_x, y: to_y }),
-        };
-        let result = self.action.drag(&action).await.map_err(|e| {
-            ToolInvocationError::execution(format!("Drag by position failed: {}", e))
-        })?;
-        to_json_value(result)
+        let mut value = to_json_value(result)?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "target".to_string(),
+                serde_json::json!({
+                    "from": from_summary,
+                    "to": to_summary,
+                }),
+            );
+        }
+        Ok(value)
     }
 
     async fn tool_save_screenshot(
@@ -1840,13 +1996,13 @@ impl SootieServer {
 fn step_target_to_action_target(target: &StepTarget) -> ActionTarget {
     match target {
         StepTarget::Coordinate(coord) => ActionTarget::Coordinate(coord.clone()),
-        StepTarget::Selector(selector) => ActionTarget::Selector(selector.clone()),
+        StepTarget::Target(target) => ActionTarget::Selector(Selector::from(target)),
     }
 }
 
 fn step_target_to_selector(target: Option<&StepTarget>) -> Option<sootie_core::selector::Selector> {
     match target {
-        Some(StepTarget::Selector(selector)) => Some(selector.clone()),
+        Some(StepTarget::Target(target)) => Some(Selector::from(target)),
         _ => None,
     }
 }
@@ -1939,22 +2095,47 @@ mod tests {
             }
             Ok(ActionResult::success(None, "recording"))
         }
-        async fn r#type(&self, _action: &TypeAction) -> Result<ActionResult, ActionError> {
+        async fn r#type(&self, action: &TypeAction) -> Result<ActionResult, ActionError> {
+            let mut calls = self.calls.lock().unwrap();
+            match &action.target {
+                Some(ActionTarget::Coordinate(coordinate)) => {
+                    calls.push(format!("type x={:.1} y={:.1}", coordinate.x, coordinate.y))
+                }
+                Some(ActionTarget::Selector(_)) => calls.push("type selector".to_string()),
+                None => calls.push("type focused".to_string()),
+            }
             Ok(ActionResult::success(None, "recording"))
         }
-        async fn press(&self, _action: &PressAction) -> Result<ActionResult, ActionError> {
+        async fn press(&self, action: &PressAction) -> Result<ActionResult, ActionError> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(format!("press key={}", action.key));
             Ok(ActionResult::success(None, "recording"))
         }
         async fn hotkey(&self, _action: &HotkeyAction) -> Result<ActionResult, ActionError> {
             Ok(ActionResult::success(None, "recording"))
         }
-        async fn scroll(&self, _action: &ScrollAction) -> Result<ActionResult, ActionError> {
+        async fn scroll(&self, action: &ScrollAction) -> Result<ActionResult, ActionError> {
+            let mut calls = self.calls.lock().unwrap();
+            match &action.target {
+                Some(ActionTarget::Coordinate(coordinate)) => calls.push(format!(
+                    "scroll x={:.1} y={:.1}",
+                    coordinate.x, coordinate.y
+                )),
+                Some(ActionTarget::Selector(_)) => calls.push("scroll selector".to_string()),
+                None => calls.push("scroll none".to_string()),
+            }
             Ok(ActionResult::success(None, "recording"))
         }
         async fn hover(&self, _action: &HoverAction) -> Result<ActionResult, ActionError> {
             Ok(ActionResult::success(None, "recording"))
         }
-        async fn drag(&self, _action: &DragAction) -> Result<ActionResult, ActionError> {
+        async fn drag(&self, action: &DragAction) -> Result<ActionResult, ActionError> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(format!(
+                "drag {} -> {}",
+                describe_action_target(&action.from),
+                describe_action_target(&action.to)
+            ));
             Ok(ActionResult::success(None, "recording"))
         }
         async fn focus(&self, action: &FocusAction) -> Result<ActionResult, ActionError> {
@@ -1979,6 +2160,15 @@ mod tests {
         }
         async fn window_op(&self, _action: &WindowAction) -> Result<ActionResult, ActionError> {
             Ok(ActionResult::success(None, "recording"))
+        }
+    }
+
+    fn describe_action_target(target: &ActionTarget) -> String {
+        match target {
+            ActionTarget::Coordinate(coordinate) => {
+                format!("x={:.1} y={:.1}", coordinate.x, coordinate.y)
+            }
+            ActionTarget::Selector(_) => "selector".to_string(),
         }
     }
 
@@ -2058,14 +2248,15 @@ mod tests {
         ) -> Result<sootie_core::selector::ResolvedTarget, PerceptionError> {
             self.selectors.lock().unwrap().push(selector.clone());
 
-            if selector.element.role.as_deref() == Some("textfield")
+            let matches_textfield = selector.element.role.as_deref() == Some("textfield")
                 && selector
                     .element
                     .state
                     .as_ref()
                     .and_then(|state| state.focused)
-                    == Some(true)
-            {
+                    .is_none_or(|focused| focused);
+
+            if matches_textfield {
                 return Ok(sootie_core::selector::ResolvedTarget {
                     status: MatchStatus::Unique,
                     total_matches: 1,
@@ -2211,6 +2402,16 @@ mod tests {
         )
     }
 
+    fn make_server_with_recording_perception_and_action(
+        selectors: Arc<Mutex<Vec<Selector>>>,
+        calls: Arc<Mutex<Vec<String>>>,
+    ) -> SootieServer {
+        SootieServer::new_in_memory(
+            Box::new(RecordingPerceptionProvider { selectors }),
+            Box::new(RecordingActionProvider { calls }),
+        )
+    }
+
     fn make_server_with_context(context: Context) -> SootieServer {
         SootieServer::new_in_memory(
             Box::new(ContextPerceptionProvider { context }),
@@ -2259,7 +2460,65 @@ mod tests {
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 18);
+        assert!(tools
+            .iter()
+            .any(|tool| tool["name"] == "sootie_capabilities"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_capabilities() {
+        let server = make_server();
+        let req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_capabilities",
+                "arguments": {}
+            })),
+        );
+        let resp = server.handle_request(req).await;
+
+        assert!(resp.error.is_none());
+        let content = &resp.result.unwrap()["content"][0]["text"];
+        let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(content["success"], true);
+        assert!(content["data"]["recommended_workflow"].is_array());
+        assert_eq!(content["data"]["tool_groups"][0]["name"], "orientation");
+        assert_eq!(content["report"]["tool"], "sootie_capabilities");
+        assert_eq!(content["report"]["success"], true);
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_last_report_returns_previous_execution_report() {
+        let server = make_server();
+        let context_req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_context",
+                "arguments": {}
+            })),
+        );
+        let context_resp = server.handle_request(context_req).await;
+        assert!(context_resp.error.is_none());
+
+        let report_req = make_request(
+            "tools/call",
+            2,
+            Some(serde_json::json!({
+                "name": "sootie_last_report",
+                "arguments": {}
+            })),
+        );
+        let report_resp = server.handle_request(report_req).await;
+
+        assert!(report_resp.error.is_none());
+        let content = &report_resp.result.unwrap()["content"][0]["text"];
+        let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(content["success"], true);
+        assert_eq!(content["data"]["tool"], "sootie_context");
+        assert_eq!(content["data"]["success"], true);
+        assert_eq!(content["report"]["tool"], "sootie_last_report");
     }
 
     #[tokio::test]
@@ -2290,6 +2549,74 @@ mod tests {
         let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
         assert_eq!(content["success"], true);
         assert!(content["data"].to_string().contains("[]"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_find_uses_canonical_target() {
+        let selectors = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_perception(selectors.clone());
+        let req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_find",
+                "arguments": {
+                    "target": {
+                        "app": "Safari",
+                        "selector": { "role": "textfield" }
+                    }
+                }
+            })),
+        );
+        let resp = server.handle_request(req).await;
+
+        assert!(resp.error.is_none());
+        let content = &resp.result.unwrap()["content"][0]["text"];
+        let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(content["success"], true);
+        assert_eq!(content["data"]["status"], "unique");
+        assert_eq!(
+            content["data"]["elements"][0]["name"],
+            "Address and search bar"
+        );
+        assert_eq!(
+            selectors.lock().unwrap()[0]
+                .app
+                .as_ref()
+                .and_then(|app| app.name.as_deref()),
+            Some("Safari")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_click_uses_canonical_target_and_reports_coordinate() {
+        let selectors = Arc::new(Mutex::new(Vec::new()));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server =
+            make_server_with_recording_perception_and_action(selectors.clone(), calls.clone());
+        let req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_click",
+                "arguments": {
+                    "target": {
+                        "selector": { "role": "textfield" }
+                    },
+                    "button": "left"
+                }
+            })),
+        );
+        let resp = server.handle_request(req).await;
+
+        assert!(resp.error.is_none());
+        assert_eq!(calls.lock().unwrap()[0], "click x=110.0 y=35.0");
+        let content = &resp.result.unwrap()["content"][0]["text"];
+        let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(content["success"], true);
+        assert_eq!(content["data"]["target"]["backend"], "at_tree");
+        assert_eq!(content["data"]["target"]["coordinate"]["x"], 110.0);
+        assert_eq!(content["report"]["tool"], "sootie_click");
     }
 
     #[tokio::test]
@@ -2395,7 +2722,7 @@ mod tests {
                             { "name": "to", "type": "string", "required": true }
                         ],
                         "steps": [
-                            { "action": "click", "target": { "role": "button", "name": "Compose" } },
+                            { "action": "click", "target": { "selector": { "role": "button", "name": "Compose" } } },
                             { "action": "type", "text": "${to}" }
                         ]
                     }
@@ -2440,7 +2767,7 @@ mod tests {
                     "recipe": {
                         "schema_version": 3,
                         "name": "persisted-recipe",
-                        "steps": [{ "action": "click", "target": { "role": "button", "name": "Compose" } }]
+                        "steps": [{ "action": "click", "target": { "selector": { "role": "button", "name": "Compose" } } }]
                     }
                 }
             })),
@@ -2493,8 +2820,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_call_type_without_field() {
-        let server = make_server();
+    async fn test_tool_call_type_without_target() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_action(calls.clone());
         let req = make_request(
             "tools/call",
             1,
@@ -2508,6 +2836,7 @@ mod tests {
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
+        assert_eq!(calls.lock().unwrap().as_slice(), ["type focused"]);
     }
 
     #[tokio::test]
@@ -2835,19 +3164,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_call_tap_by_name_does_not_focus_before_find() {
+    async fn test_tool_call_click_structured_target_does_not_focus_before_find() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let server = make_server_with_recording_action(calls.clone());
+        let selectors = Arc::new(Mutex::new(Vec::new()));
+        let server =
+            make_server_with_recording_perception_and_action(selectors.clone(), calls.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_tap_by_name",
+                "name": "sootie_click",
                 "arguments": {
-                    "el_description": "Submit",
-                    "window": {
+                    "target": {
                         "app": "Safari",
-                        "windowId": "win_42"
+                        "window": { "id": "win_42" },
+                        "selector": { "role": "textfield" }
                     }
                 }
             })),
@@ -2856,57 +3187,56 @@ mod tests {
 
         assert!(resp.error.is_none());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_tool_call_tap_by_name() {
-        let server = make_server();
-        let req = make_request(
-            "tools/call",
-            1,
-            Some(serde_json::json!({
-                "name": "sootie_tap_by_name",
-                "arguments": {
-                    "el_description": "Submit",
-                    "button": "left",
-                    "count": 1
-                }
-            })),
+        assert_eq!(calls.as_slice(), ["click x=110.0 y=35.0"]);
+        assert_eq!(
+            selectors.lock().unwrap()[0]
+                .window
+                .as_ref()
+                .and_then(|window| window.id.as_deref()),
+            Some("win_42")
         );
-        let resp = server.handle_request(req).await;
-        assert!(resp.error.is_none());
     }
 
     #[tokio::test]
-    async fn test_tool_call_tap_by_position() {
-        let server = make_server();
+    async fn test_tool_call_click_uses_coordinate_target() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_action(calls.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_tap_by_position",
+                "name": "sootie_click",
                 "arguments": {
-                    "x": 100.0,
-                    "y": 200.0,
+                    "target": { "coordinate": { "x": 100.0, "y": 200.0 } },
                     "button": "right"
                 }
             })),
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
+        assert_eq!(calls.lock().unwrap().as_slice(), ["click x=100.0 y=200.0"]);
+
+        let content = &resp.result.unwrap()["content"][0]["text"];
+        let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(content["success"], true);
+        assert_eq!(content["data"]["target"]["backend"], "coordinate");
     }
 
     #[tokio::test]
-    async fn test_tool_call_type_with_field() {
-        let server = make_server();
+    async fn test_tool_call_type_with_canonical_target() {
+        let selectors = Arc::new(Mutex::new(Vec::new()));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server =
+            make_server_with_recording_perception_and_action(selectors.clone(), calls.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
                 "name": "sootie_type",
                 "arguments": {
-                    "field": "Email",
+                    "target": {
+                        "selector": { "role": "textfield" }
+                    },
                     "text": "user@example.com",
                     "clear_first": true
                 }
@@ -2914,10 +3244,15 @@ mod tests {
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
+        assert_eq!(calls.lock().unwrap().as_slice(), ["type x=110.0 y=35.0"]);
+        assert_eq!(
+            selectors.lock().unwrap()[0].element.role.as_deref(),
+            Some("textfield")
+        );
     }
 
     #[tokio::test]
-    async fn test_tool_call_type_with_field_does_not_focus_before_find() {
+    async fn test_tool_call_type_uses_coordinate_target() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let server = make_server_with_recording_action(calls.clone());
         let req = make_request(
@@ -2926,12 +3261,8 @@ mod tests {
             Some(serde_json::json!({
                 "name": "sootie_type",
                 "arguments": {
-                    "field": "Email",
-                    "text": "user@example.com",
-                    "window": {
-                        "app": "Safari",
-                        "windowId": "win_42"
-                    }
+                    "target": { "coordinate": { "x": 100.0, "y": 200.0 } },
+                    "text": "user@example.com"
                 }
             })),
         );
@@ -2939,43 +3270,51 @@ mod tests {
 
         assert!(resp.error.is_none());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 0);
+        assert_eq!(calls.as_slice(), ["type x=100.0 y=200.0"]);
     }
 
     #[tokio::test]
-    async fn test_tool_call_press_by_name() {
-        let server = make_server();
+    async fn test_tool_call_press_uses_canonical_target() {
+        let selectors = Arc::new(Mutex::new(Vec::new()));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server =
+            make_server_with_recording_perception_and_action(selectors.clone(), calls.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_press_by_name",
+                "name": "sootie_press",
                 "arguments": {
-                    "el_description": "Submit",
+                    "target": {
+                        "selector": { "role": "textfield" }
+                    },
                     "key": "Return"
                 }
             })),
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            ["click x=110.0 y=35.0", "press key=Return"]
+        );
+        assert_eq!(
+            selectors.lock().unwrap()[0].element.role.as_deref(),
+            Some("textfield")
+        );
     }
 
     #[tokio::test]
-    async fn test_tool_call_press_by_name_does_not_focus_before_find() {
+    async fn test_tool_call_press_without_target() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let server = make_server_with_recording_action(calls.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_press_by_name",
+                "name": "sootie_press",
                 "arguments": {
-                    "el_description": "Submit",
-                    "key": "Return",
-                    "window": {
-                        "app": "Safari",
-                        "windowId": "win_42"
-                    }
+                    "key": "Return"
                 }
             })),
         );
@@ -2983,18 +3322,20 @@ mod tests {
 
         assert!(resp.error.is_none());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 0);
+        assert_eq!(calls.as_slice(), ["press key=Return"]);
     }
 
     #[tokio::test]
     async fn test_tool_call_scroll() {
-        let server = make_server();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_recording_action(calls.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
                 "name": "sootie_scroll",
                 "arguments": {
+                    "target": { "coordinate": { "x": 100.0, "y": 200.0 } },
                     "direction": "down",
                     "amount": 5
                 }
@@ -3002,6 +3343,7 @@ mod tests {
         );
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_none());
+        assert_eq!(calls.lock().unwrap().as_slice(), ["scroll x=100.0 y=200.0"]);
     }
 
     #[tokio::test]

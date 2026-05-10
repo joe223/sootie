@@ -10,7 +10,7 @@ pub mod windows;
 use crate::action::ActionProvider;
 use crate::perception::PerceptionProvider;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum CapabilityLevel {
     Full,
     Basic,
@@ -31,7 +31,7 @@ impl CapabilityLevel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct PlatformCapabilities {
     pub platform: &'static str,
     pub native_tree: CapabilityLevel,
