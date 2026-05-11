@@ -1,10 +1,12 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSString;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
@@ -17,9 +19,9 @@ use sootie_core::cascade::{get_fallback_priority, Cascade};
 use sootie_core::logging::{
     create_duration_ms, sanitize_tool_call_args, LogConfig, SootieLogger, ToolCallLog,
 };
-use sootie_core::perception::{PerceptionProvider, WaitCondition};
+use sootie_core::perception::{Context, PerceptionProvider, WaitCondition};
 use sootie_core::platform::current_capabilities;
-use sootie_core::recipe::{Recipe, RecipeEngine, StepTarget};
+use sootie_core::recipe::{Recipe, RecipeEngine, RecipeWindow, StepTarget};
 use sootie_core::selector::{
     AppSelector, Bounds, Coordinate, ElementState, FindTargetResult, MatchStatus, ResolvedElement,
     ResolvedTarget, Selector, Target, WindowSelector, WindowState,
@@ -37,6 +39,7 @@ use crate::types::{
 
 const WINDOW_CONTEXT_ATTEMPTS: usize = 3;
 const WINDOW_CONTEXT_RETRY_DELAY: Duration = Duration::from_millis(150);
+const RECIPE_WINDOW_CONTEXT_TIMEOUT: Duration = Duration::from_secs(5);
 const SESSION_FOCUS_CACHE_TTL: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
@@ -54,7 +57,7 @@ struct FindElementWindowScope {
     window_id: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct ResolvedDescriptionWindowScope {
     app: Option<String>,
     window_id: Option<String>,
@@ -63,6 +66,8 @@ struct ResolvedDescriptionWindowScope {
     display_id: Option<u32>,
     bounds: Option<Bounds>,
 }
+
+type RecipeWindowBindings = HashMap<String, ResolvedDescriptionWindowScope>;
 
 #[derive(Debug, Clone)]
 struct SessionWindowContext {
@@ -477,6 +482,7 @@ impl SootieServer {
                     coordinate,
                     index: Some(element.index),
                     confidence: None,
+                    source_region: None,
                 }
             })
             .collect();
@@ -531,15 +537,39 @@ impl SootieServer {
 
             if let Some(window) = app_context
                 .windows
-                .into_iter()
+                .iter()
                 .find(|window| window.id == window_id)
             {
                 resolved.app.get_or_insert(app_context.app.name);
-                resolved.window_title = Some(window.title);
+                resolved.window_id = Some(window.id.clone());
+                resolved.window_title = Some(window.title.clone());
                 resolved.window_index = Some(window.index);
                 resolved.display_id = window.display_id;
-                resolved.bounds = Some(window.bounds);
+                resolved.bounds = Some(window.bounds.clone());
                 return Ok(Some(resolved));
+            }
+
+            if scope.app.is_some() {
+                let fallback_window = app_context
+                    .windows
+                    .iter()
+                    .find(|window| window.focused)
+                    .or_else(|| app_context.windows.first());
+                if let Some(window) = fallback_window {
+                    debug!(
+                        requested_window_id = window_id,
+                        fallback_window_id = %window.id,
+                        app = %app_context.app.name,
+                        "Falling back from stale find_element windowId to current app window"
+                    );
+                    resolved.app.get_or_insert(app_context.app.name);
+                    resolved.window_id = Some(window.id.clone());
+                    resolved.window_title = Some(window.title.clone());
+                    resolved.window_index = Some(window.index);
+                    resolved.display_id = window.display_id;
+                    resolved.bounds = Some(window.bounds.clone());
+                    return Ok(Some(resolved));
+                }
             }
         }
 
@@ -623,6 +653,274 @@ impl SootieServer {
         }
 
         Ok(None)
+    }
+
+    async fn resolve_recipe_window_spec_scope(
+        &self,
+        window: &RecipeWindow,
+    ) -> Result<Option<ResolvedDescriptionWindowScope>, ToolInvocationError> {
+        let Some(app_selector) = window.app.as_ref() else {
+            return Ok(None);
+        };
+
+        let context = self.get_recipe_window_context("resolve").await?;
+
+        for app_context in context.apps {
+            let matches_name = app_selector
+                .name
+                .as_ref()
+                .is_some_and(|name| app_context.app.name == *name);
+            let matches_bundle = app_selector
+                .bundle_id
+                .as_ref()
+                .is_some_and(|bundle_id| app_context.app.bundle_id == *bundle_id);
+            if !matches_name && !matches_bundle {
+                continue;
+            }
+
+            let window_match = app_context
+                .windows
+                .iter()
+                .find(|candidate| {
+                    window.window.as_ref().is_some_and(|selector| {
+                        selector.id.as_ref().is_some_and(|id| candidate.id == *id)
+                            || selector
+                                .title
+                                .as_ref()
+                                .is_some_and(|title| candidate.title.contains(title))
+                            || selector.index.is_some_and(|index| candidate.index == index)
+                            || selector
+                                .focused
+                                .is_some_and(|focused| candidate.focused == focused)
+                    })
+                })
+                .or_else(|| {
+                    window.title_hint.as_ref().and_then(|title_hint| {
+                        app_context
+                            .windows
+                            .iter()
+                            .find(|candidate| candidate.title.contains(title_hint))
+                    })
+                })
+                .or_else(|| {
+                    app_context
+                        .windows
+                        .iter()
+                        .find(|candidate| candidate.focused)
+                })
+                .or_else(|| app_context.windows.first())
+                .cloned();
+
+            return Ok(Some(ResolvedDescriptionWindowScope {
+                app: Some(app_context.app.name),
+                window_id: window_match.as_ref().map(|window| window.id.clone()),
+                window_title: window_match.as_ref().map(|window| window.title.clone()),
+                window_index: window_match.as_ref().map(|window| window.index),
+                display_id: window_match.as_ref().and_then(|window| window.display_id),
+                bounds: window_match
+                    .as_ref()
+                    .map(|window| window.bounds.clone())
+                    .or_else(|| window.recorded_bounds.clone()),
+            }));
+        }
+
+        Ok(None)
+    }
+
+    async fn get_recipe_window_context(
+        &self,
+        operation: &str,
+    ) -> Result<Context, ToolInvocationError> {
+        match tokio::time::timeout(RECIPE_WINDOW_CONTEXT_TIMEOUT, self.perception.get_context())
+            .await
+        {
+            Ok(Ok(context)) => Ok(context),
+            Ok(Err(error)) => Err(ToolInvocationError::execution(format!(
+                "Failed to {} recipe window context: {}",
+                operation, error
+            ))),
+            Err(_) => Err(ToolInvocationError::execution(format!(
+                "Timed out after {} ms while trying to {} recipe window context",
+                RECIPE_WINDOW_CONTEXT_TIMEOUT.as_millis(),
+                operation
+            ))),
+        }
+    }
+
+    async fn focus_window_scope(
+        &self,
+        scope: &ResolvedDescriptionWindowScope,
+    ) -> Result<(), ToolInvocationError> {
+        let mut selector = Selector::new();
+        if let Some(app) = scope.app.as_deref() {
+            selector = selector.with_app(AppSelector::from_name(app));
+        }
+        if let Some(window) = Self::build_description_window_selector(scope) {
+            selector = selector.with_window(window);
+        }
+
+        if selector.app.is_none() && selector.window.is_none() {
+            return Ok(());
+        }
+
+        self.action
+            .focus(&FocusAction { selector })
+            .await
+            .map_err(|e| ToolInvocationError::execution(format!("Focus failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn set_session_window_scope(&self, scope: ResolvedDescriptionWindowScope) {
+        let app_selector = scope
+            .app
+            .as_deref()
+            .map(AppSelector::from_name)
+            .unwrap_or_else(|| AppSelector {
+                name: None,
+                bundle_id: None,
+                is_frontmost: Some(true),
+            });
+        *self.session_window_context.lock().await = Some(SessionWindowContext {
+            app_selector,
+            scope,
+            last_focused_at: Instant::now(),
+        });
+    }
+
+    async fn prepare_recipe_windows(
+        &self,
+        recipe: &Recipe,
+    ) -> Result<RecipeWindowBindings, sootie_core::recipe::RecipeError> {
+        use sootie_core::recipe::RecipeError;
+
+        let mut bindings = RecipeWindowBindings::new();
+        for (name, window) in &recipe.windows {
+            let app = window.app.clone().ok_or_else(|| {
+                RecipeError::InvalidRecipe(format!("window {} requires app", name))
+            })?;
+            let restore_mode = window.restore.as_deref().unwrap_or("best_effort");
+
+            self.action
+                .launch(&LaunchAction {
+                    app: app.clone(),
+                    args: Vec::new(),
+                })
+                .await
+                .map_err(|e| RecipeError::StepFailed {
+                    step: 0,
+                    error: format!("recipe window '{}' launch failed: {}", name, e),
+                })?;
+
+            let fallback_scope = || ResolvedDescriptionWindowScope {
+                app: app.name.clone(),
+                window_id: None,
+                window_title: None,
+                window_index: None,
+                display_id: None,
+                bounds: window.recorded_bounds.clone(),
+            };
+            let mut scope = match self.resolve_recipe_window_spec_scope(window).await {
+                Ok(Some(scope)) => scope,
+                Ok(None) => fallback_scope(),
+                Err(error) if restore_mode == "strict" => {
+                    return Err(RecipeError::StepFailed {
+                        step: 0,
+                        error: error.message,
+                    });
+                }
+                Err(error) => {
+                    warn!(
+                        recipe = %recipe.name,
+                        window = %name,
+                        error = %error.message,
+                        "recipe window resolve failed in best-effort mode; using recorded bounds"
+                    );
+                    fallback_scope()
+                }
+            };
+
+            if let Err(error) = self.focus_window_scope(&scope).await {
+                if restore_mode == "strict" {
+                    return Err(RecipeError::StepFailed {
+                        step: 0,
+                        error: format!("recipe window '{}' focus failed: {}", name, error.message),
+                    });
+                }
+                warn!(
+                    recipe = %recipe.name,
+                    window = %name,
+                    error = %error.message,
+                    "recipe window focus failed in best-effort mode"
+                );
+            }
+
+            if restore_mode != "none" {
+                if let Some(bounds) = window.recorded_bounds.as_ref() {
+                    let mut selector = Selector::new().with_app(app.clone());
+                    if let Some(window_selector) = window.window.clone() {
+                        selector = selector.with_window(window_selector);
+                    } else if let Some(scope_window) =
+                        Self::build_description_window_selector(&scope)
+                    {
+                        selector = selector.with_window(scope_window);
+                    }
+
+                    let mut restored = true;
+                    for operation in [
+                        WindowOperation::Move {
+                            x: bounds.x,
+                            y: bounds.y,
+                        },
+                        WindowOperation::Resize {
+                            width: bounds.width,
+                            height: bounds.height,
+                        },
+                    ] {
+                        if let Err(error) = self
+                            .action
+                            .window_op(&WindowAction {
+                                selector: selector.clone(),
+                                operation,
+                            })
+                            .await
+                        {
+                            restored = false;
+                            if restore_mode == "strict" {
+                                return Err(RecipeError::StepFailed {
+                                    step: 0,
+                                    error: format!(
+                                        "recipe window '{}' restore failed: {}",
+                                        name, error
+                                    ),
+                                });
+                            }
+                            warn!(
+                                recipe = %recipe.name,
+                                window = %name,
+                                error = %error,
+                                "recipe window restore failed in best-effort mode"
+                            );
+                        }
+                    }
+
+                    if restored {
+                        scope.bounds = Some(bounds.clone());
+                    }
+                }
+            }
+
+            if scope.bounds.is_none() {
+                return Err(RecipeError::StepFailed {
+                    step: 0,
+                    error: format!("recipe window '{}' has no resolvable bounds", name),
+                });
+            }
+
+            self.set_session_window_scope(scope.clone()).await;
+            bindings.insert(name.clone(), scope);
+        }
+
+        Ok(bindings)
     }
 
     async fn set_session_app_context(&self, app_selector: AppSelector) {
@@ -894,7 +1192,7 @@ impl SootieServer {
                             "backend_errors": [["vision", e.to_string()]],
                             "recovery": [
                                 "Narrow the window-scoped region and retry.",
-                                "Use sootie_context or sootie_find when an accessibility target is available.",
+                                "Use sootie_context or sootie_find_element with a structured target when an accessibility target is available.",
                                 "Increase SOOTIE_VISION_TIMEOUT_MS for slow local models."
                             ]
                         }),
@@ -907,23 +1205,26 @@ impl SootieServer {
                 )
             })?;
 
-        Ok(FindTargetResult {
-            status: MatchStatus::Unique,
-            backend: "vision".to_string(),
-            backend_attempts: Some(vec!["vision".to_string()]),
-            app: None,
-            window: None,
-            elements: vec![ResolvedElement {
+        let mut candidates = result.candidates.clone();
+        if candidates.is_empty() {
+            candidates.push(sootie_core::vision::VisionCandidate {
+                label: description.to_string(),
+                coordinate: result.coordinate.clone(),
+                bounds: result.bounds.clone(),
+                confidence: result.confidence,
+                source_region: None,
+            });
+        }
+        let elements = candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| ResolvedElement {
                 role: selector
                     .element
                     .role
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string()),
-                name: selector
-                    .element
-                    .name
-                    .clone()
-                    .or_else(|| Some(description.to_string())),
+                name: Some(candidate.label.clone()),
                 text: selector.element.text.clone(),
                 id: None,
                 state: ElementState {
@@ -931,20 +1232,36 @@ impl SootieServer {
                     focused: None,
                     enabled: None,
                 },
-                bounds: result.bounds.clone().unwrap_or(Bounds {
-                    x: result.coordinate.x - 50.0,
-                    y: result.coordinate.y - 25.0,
+                bounds: candidate.bounds.clone().unwrap_or(Bounds {
+                    x: candidate.coordinate.x - 50.0,
+                    y: candidate.coordinate.y - 25.0,
                     width: 100.0,
                     height: 50.0,
                 }),
-                coordinate: result.coordinate,
-                index: Some(0),
-                confidence: Some(result.confidence),
-            }],
+                coordinate: candidate.coordinate.clone(),
+                index: Some(index as u32),
+                confidence: Some(candidate.confidence),
+                source_region: candidate.source_region.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(FindTargetResult {
+            status: if elements.len() == 1 {
+                MatchStatus::Unique
+            } else {
+                MatchStatus::Multiple
+            },
+            backend: "vision".to_string(),
+            backend_attempts: Some(vec!["vision".to_string()]),
+            app: None,
+            window: None,
+            elements,
             confidence: Some(serde_json::json!({
                 "top_match_score": result.confidence,
                 "model": result.model_used,
-                "region": region
+                "region": region,
+                "candidate_count": candidates.len(),
+                "candidates": candidates
             })),
             backend_errors: None,
         })
@@ -1144,7 +1461,6 @@ impl SootieServer {
             "sootie_last_report" => self.tool_last_report().await,
             "sootie_context" => self.tool_context().await,
             "sootie_find_apps" => self.tool_find_apps(&args).await,
-            "sootie_find" => self.tool_find(&args).await,
             "sootie_find_element" => self.tool_find_element(&args).await,
             "sootie_click" => self.tool_click(&args).await,
             "sootie_type" => self.tool_type(&args).await,
@@ -1275,7 +1591,7 @@ impl SootieServer {
                 "Call sootie_recipes before multi-step workflows; recipes encode learned reliable flows.",
                 "Call sootie_context before acting so app/window focus and coordinates are grounded.",
                 "Prefer structured targets from sootie_find_element or sootie_context before coordinate actions.",
-                "Use canonical sootie_find and sootie_click targets when you can express app, window, role, name, text, or id explicitly.",
+                "Use canonical sootie_find_element and sootie_click targets when you can express app, window, role, name, text, or id explicitly.",
                 "Use sootie_paste_text for multi-line or long text instead of typing character-by-character.",
                 "Use coordinates as a fallback and read report, backend_attempts, and backend_errors when a target is not found."
             ],
@@ -1305,7 +1621,7 @@ impl SootieServer {
             "tool_groups": [
                 {
                     "name": "orientation",
-                    "tools": ["sootie_capabilities", "sootie_last_report", "sootie_context", "sootie_find_apps", "sootie_find", "sootie_find_element", "sootie_save_screenshot"]
+                    "tools": ["sootie_capabilities", "sootie_last_report", "sootie_context", "sootie_find_apps", "sootie_find_element", "sootie_save_screenshot"]
                 },
                 {
                     "name": "actions",
@@ -1359,37 +1675,58 @@ impl SootieServer {
         to_json_value(result)
     }
 
-    async fn tool_find(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, ToolInvocationError> {
-        let target = parse_target(args)?;
-        let result = self.run_find_target(&target).await?;
-        to_json_value(result)
-    }
-
     async fn tool_find_element(
         &self,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        let el_description = args
-            .get("el_description")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ToolInvocationError::invalid_arguments("Missing required field: el_description")
-            })?
-            .to_string();
+        let tool_start = Instant::now();
+        let find_result = if args.get("target").is_some() {
+            let target = parse_target(args)?;
+            info!(target = ?target, "sootie_find_element resolving canonical target");
+            self.run_find_target(&target).await?
+        } else {
+            let el_description = args
+                .get("el_description")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ToolInvocationError::invalid_arguments(
+                        "Missing required field: el_description or target",
+                    )
+                })?
+                .to_string();
 
-        let window_scope = self.resolve_description_window_scope(args).await?;
-        let region = parse_region_arg(args)?;
-        let find_result = self
-            .resolve_description_target_or_error(
-                &el_description,
-                window_scope,
-                region,
-                "No element matched the requested element description",
-            )
-            .await?;
+            let scope_start = Instant::now();
+            let window_scope = self.resolve_description_window_scope(args).await?;
+            let scope_ms = scope_start.elapsed().as_millis();
+            let region = parse_region_arg(args)?;
+            info!(
+                el_description = %el_description,
+                scope_ms,
+                window_scope = ?window_scope,
+                region = ?region,
+                "sootie_find_element resolved description scope"
+            );
+            let resolve_start = Instant::now();
+            let result = self
+                .resolve_description_target_or_error(
+                    &el_description,
+                    window_scope,
+                    region,
+                    "No element matched the requested element description",
+                )
+                .await?;
+            info!(
+                el_description = %el_description,
+                scope_ms,
+                resolve_ms = resolve_start.elapsed().as_millis(),
+                total_ms = tool_start.elapsed().as_millis(),
+                backend = %result.backend,
+                candidate_count = result.elements.len(),
+                status = ?result.status,
+                "sootie_find_element description resolution completed"
+            );
+            result
+        };
 
         let elements = find_result
             .elements
@@ -1406,16 +1743,29 @@ impl SootieServer {
                         "width": elem.bounds.width,
                         "height": elem.bounds.height
                     },
+                    "bbox": {
+                        "x": elem.bounds.x,
+                        "y": elem.bounds.y,
+                        "width": elem.bounds.width,
+                        "height": elem.bounds.height
+                    },
                     "coordinate": {
                         "x": elem.coordinate.x,
                         "y": elem.coordinate.y
                     },
+                    "center": {
+                        "x": elem.coordinate.x,
+                        "y": elem.coordinate.y
+                    },
+                    "source_region": elem.source_region,
                     "state": {
                         "visible": elem.state.visible,
                         "focused": elem.state.focused,
                         "enabled": elem.state.enabled
                     },
-                    "index": elem.index
+                    "index": elem.index,
+                    "confidence": elem.confidence,
+                    "backend": find_result.backend
                 })
             })
             .collect::<Vec<_>>();
@@ -2109,17 +2459,25 @@ impl SootieServer {
             (recipe, steps)
         };
 
+        let window_bindings = self.prepare_recipe_windows(&recipe).await.map_err(|e| {
+            ToolInvocationError::execution(format!("Recipe window preparation failed: {}", e))
+        })?;
+
         let mut results = Vec::with_capacity(substituted_steps.len());
         for (index, step) in substituted_steps.iter().enumerate() {
-            let result = self.execute_recipe_step(index, step).await.map_err(|e| {
-                ToolInvocationError::execution(format!("Recipe execution failed: {}", e))
-            })?;
+            let result = self
+                .execute_recipe_step(index, step, &window_bindings)
+                .await
+                .map_err(|e| {
+                    ToolInvocationError::execution(format!("Recipe execution failed: {}", e))
+                })?;
             results.push(result);
         }
 
         Ok(serde_json::json!({
             "recipe": recipe.name,
             "status": "completed",
+            "window_bindings": window_bindings,
             "results": results,
         }))
     }
@@ -2170,6 +2528,7 @@ impl SootieServer {
         &self,
         index: usize,
         step: &sootie_core::recipe::RecipeStep,
+        window_bindings: &RecipeWindowBindings,
     ) -> Result<serde_json::Value, sootie_core::recipe::RecipeError> {
         use sootie_core::recipe::RecipeError;
 
@@ -2183,6 +2542,35 @@ impl SootieServer {
                     })?,
                     args: Vec::new(),
                 };
+                if let Some(bound) =
+                    resolve_step_window_binding(step.window.as_deref(), window_bindings)
+                {
+                    let matches_bound_app = action.app.name.as_ref().is_some_and(|name| {
+                        bound
+                            .app
+                            .as_ref()
+                            .is_some_and(|bound_app| bound_app == name)
+                    });
+                    if matches_bound_app {
+                        self.focus_window_scope(bound).await.map_err(|e| {
+                            RecipeError::StepFailed {
+                                step: index,
+                                error: e.message,
+                            }
+                        })?;
+                        self.set_session_window_scope(bound.clone()).await;
+                        return Ok(serde_json::json!({
+                            "step": index,
+                            "action": step.action,
+                            "duration_ms": create_duration_ms(started),
+                            "result": {
+                                "success": true,
+                                "backend_used": "recipe_window_binding",
+                                "skipped": "app already launched while preparing recipe window"
+                            }
+                        }));
+                    }
+                }
                 let launch_result =
                     self.action
                         .launch(&action)
@@ -2208,8 +2596,13 @@ impl SootieServer {
             "click" => {
                 let target = match step.target.as_ref() {
                     Some(target) => {
-                        self.recipe_step_target_to_action_target(index, target)
-                            .await?
+                        self.recipe_step_target_to_action_target(
+                            index,
+                            step.window.as_deref(),
+                            target,
+                            window_bindings,
+                        )
+                        .await?
                     }
                     None => {
                         return Err(RecipeError::StepFailed {
@@ -2238,11 +2631,24 @@ impl SootieServer {
                 })?
             }
             "type" => {
+                if step.target.is_none() {
+                    self.refocus_recipe_step_window_or_session(
+                        index,
+                        step.window.as_deref(),
+                        window_bindings,
+                    )
+                    .await?;
+                }
                 let action = TypeAction {
                     target: match step.target.as_ref() {
                         Some(target) => Some(
-                            self.recipe_step_target_to_action_target(index, target)
-                                .await?,
+                            self.recipe_step_target_to_action_target(
+                                index,
+                                step.window.as_deref(),
+                                target,
+                                window_bindings,
+                            )
+                            .await?,
                         ),
                         None => None,
                     },
@@ -2269,7 +2675,12 @@ impl SootieServer {
                 if let Some(target) = step.target.as_ref() {
                     let click_action = ClickAction {
                         target: self
-                            .recipe_step_target_to_action_target(index, target)
+                            .recipe_step_target_to_action_target(
+                                index,
+                                step.window.as_deref(),
+                                target,
+                                window_bindings,
+                            )
                             .await?,
                         button: Some(MouseButton::Left),
                         count: Some(1),
@@ -2281,12 +2692,12 @@ impl SootieServer {
                         }
                     })?;
                 } else {
-                    self.refocus_session_app()
-                        .await
-                        .map_err(|e| RecipeError::StepFailed {
-                            step: index,
-                            error: e.message,
-                        })?;
+                    self.refocus_recipe_step_window_or_session(
+                        index,
+                        step.window.as_deref(),
+                        window_bindings,
+                    )
+                    .await?;
                 }
 
                 let text = step
@@ -2318,12 +2729,12 @@ impl SootieServer {
                 })
             }
             "press" => {
-                self.refocus_session_app()
-                    .await
-                    .map_err(|e| RecipeError::StepFailed {
-                        step: index,
-                        error: e.message,
-                    })?;
+                self.refocus_recipe_step_window_or_session(
+                    index,
+                    step.window.as_deref(),
+                    window_bindings,
+                )
+                .await?;
                 let action = PressAction {
                     key: step.key.clone().ok_or_else(|| RecipeError::StepFailed {
                         step: index,
@@ -2344,12 +2755,12 @@ impl SootieServer {
                 })?
             }
             "hotkey" => {
-                self.refocus_session_app()
-                    .await
-                    .map_err(|e| RecipeError::StepFailed {
-                        step: index,
-                        error: e.message,
-                    })?;
+                self.refocus_recipe_step_window_or_session(
+                    index,
+                    step.window.as_deref(),
+                    window_bindings,
+                )
+                .await?;
                 let action = HotkeyAction {
                     keys: step.keys.clone().ok_or_else(|| RecipeError::StepFailed {
                         step: index,
@@ -2380,8 +2791,13 @@ impl SootieServer {
                 let action = ScrollAction {
                     target: match step.target.as_ref() {
                         Some(target) => Some(
-                            self.recipe_step_target_to_action_target(index, target)
-                                .await?,
+                            self.recipe_step_target_to_action_target(
+                                index,
+                                step.window.as_deref(),
+                                target,
+                                window_bindings,
+                            )
+                            .await?,
                         ),
                         None => None,
                     },
@@ -2404,8 +2820,13 @@ impl SootieServer {
             "hover" => {
                 let target = match step.target.as_ref() {
                     Some(target) => {
-                        self.recipe_step_target_to_action_target(index, target)
-                            .await?
+                        self.recipe_step_target_to_action_target(
+                            index,
+                            step.window.as_deref(),
+                            target,
+                            window_bindings,
+                        )
+                        .await?
                     }
                     None => {
                         return Err(RecipeError::StepFailed {
@@ -2431,8 +2852,13 @@ impl SootieServer {
             "drag" => {
                 let from = match step.target.as_ref() {
                     Some(target) => {
-                        self.recipe_step_target_to_action_target(index, target)
-                            .await?
+                        self.recipe_step_target_to_action_target(
+                            index,
+                            step.window.as_deref(),
+                            target,
+                            window_bindings,
+                        )
+                        .await?
                     }
                     None => {
                         return Err(RecipeError::StepFailed {
@@ -2443,8 +2869,13 @@ impl SootieServer {
                 };
                 let to = match step.to_target.as_ref() {
                     Some(target) => {
-                        self.recipe_step_target_to_action_target(index, target)
-                            .await?
+                        self.recipe_step_target_to_action_target(
+                            index,
+                            step.window.as_deref(),
+                            target,
+                            window_bindings,
+                        )
+                        .await?
                     }
                     None => {
                         return Err(RecipeError::StepFailed {
@@ -2519,6 +2950,24 @@ impl SootieServer {
                 let has_explicit_target = step.target.is_some();
                 let selector = if step.target.is_some() {
                     step_target_to_selector(step.target.as_ref())
+                } else if let Some(bound) =
+                    resolve_step_window_binding(step.window.as_deref(), window_bindings)
+                {
+                    self.focus_window_scope(bound)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.message,
+                        })?;
+                    self.set_session_window_scope(bound.clone()).await;
+                    let mut selector = Selector::new();
+                    if let Some(app) = bound.app.as_deref() {
+                        selector = selector.with_app(AppSelector::from_name(app));
+                    }
+                    if let Some(window) = Self::build_description_window_selector(bound) {
+                        selector = selector.with_window(window);
+                    }
+                    Some(selector)
                 } else {
                     self.resolve_session_window_scope()
                         .await
@@ -2537,7 +2986,10 @@ impl SootieServer {
                             selector
                         })
                 };
-                let result = match self.perception.screenshot(selector.as_ref(), None, None).await
+                let result = match self
+                    .perception
+                    .screenshot(selector.as_ref(), None, None)
+                    .await
                 {
                     Ok(result) => result,
                     Err(error) if !has_explicit_target => {
@@ -2556,7 +3008,8 @@ impl SootieServer {
                                 if let Some(app) = scope.app.as_deref() {
                                     selector = selector.with_app(AppSelector::from_name(app));
                                 }
-                                if let Some(window) = Self::build_description_window_selector(&scope)
+                                if let Some(window) =
+                                    Self::build_description_window_selector(&scope)
                                 {
                                     selector = selector.with_window(window);
                                 }
@@ -2648,23 +3101,38 @@ impl SootieServer {
     async fn recipe_step_target_to_action_target(
         &self,
         index: usize,
+        step_window: Option<&str>,
         target: &StepTarget,
+        window_bindings: &RecipeWindowBindings,
     ) -> Result<ActionTarget, sootie_core::recipe::RecipeError> {
         use sootie_core::recipe::RecipeError;
 
         match target {
             StepTarget::WindowCoordinate(coord) => {
-                let scope = self
-                    .resolve_session_window_scope()
-                    .await
-                    .map_err(|e| RecipeError::StepFailed {
-                        step: index,
-                        error: e.message,
-                    })?
-                    .ok_or_else(|| RecipeError::StepFailed {
-                        step: index,
-                        error: "window_coordinate requires a focused session window".to_string(),
-                    })?;
+                let scope = if let Some(bound) =
+                    resolve_step_window_binding(step_window, window_bindings)
+                {
+                    self.focus_window_scope(bound)
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.message,
+                        })?;
+                    self.set_session_window_scope(bound.clone()).await;
+                    bound.clone()
+                } else {
+                    self.resolve_session_window_scope()
+                        .await
+                        .map_err(|e| RecipeError::StepFailed {
+                            step: index,
+                            error: e.message,
+                        })?
+                        .ok_or_else(|| RecipeError::StepFailed {
+                            step: index,
+                            error: "window_coordinate requires a focused session window"
+                                .to_string(),
+                        })?
+                };
                 let bounds = scope.bounds.ok_or_else(|| RecipeError::StepFailed {
                     step: index,
                     error: "window_coordinate requires known session window bounds".to_string(),
@@ -2679,6 +3147,47 @@ impl SootieServer {
             StepTarget::Target(target) => Ok(ActionTarget::Selector(Selector::from(target))),
         }
     }
+
+    async fn refocus_recipe_step_window_or_session(
+        &self,
+        index: usize,
+        step_window: Option<&str>,
+        window_bindings: &RecipeWindowBindings,
+    ) -> Result<(), sootie_core::recipe::RecipeError> {
+        use sootie_core::recipe::RecipeError;
+
+        if let Some(bound) = resolve_step_window_binding(step_window, window_bindings) {
+            self.focus_window_scope(bound)
+                .await
+                .map_err(|e| RecipeError::StepFailed {
+                    step: index,
+                    error: e.message,
+                })?;
+            self.set_session_window_scope(bound.clone()).await;
+            return Ok(());
+        }
+
+        self.refocus_session_app()
+            .await
+            .map(|_| ())
+            .map_err(|e| RecipeError::StepFailed {
+                step: index,
+                error: e.message,
+            })
+    }
+}
+
+fn resolve_step_window_binding<'a>(
+    step_window: Option<&str>,
+    bindings: &'a RecipeWindowBindings,
+) -> Option<&'a ResolvedDescriptionWindowScope> {
+    if let Some(name) = step_window {
+        return bindings.get(name);
+    }
+    if bindings.len() == 1 {
+        return bindings.values().next();
+    }
+    None
 }
 
 fn window_operation_error(error: ActionError) -> ToolInvocationError {
@@ -2712,30 +3221,19 @@ fn is_macos_system_events_authorization_error(message: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 fn set_system_clipboard_text(text: &str) -> Result<(), ToolInvocationError> {
-    let mut child = Command::new("pbcopy")
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| ToolInvocationError::execution(format!("Failed to start pbcopy: {}", e)))?;
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
+    let string = NSString::from_str(text);
 
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| ToolInvocationError::execution("Failed to open pbcopy stdin"))?;
-    stdin
-        .write_all(text.as_bytes())
-        .map_err(|e| ToolInvocationError::execution(format!("Failed to write clipboard: {}", e)))?;
-    drop(stdin);
+    unsafe {
+        pasteboard.clearContents();
+    }
 
-    let status = child
-        .wait()
-        .map_err(|e| ToolInvocationError::execution(format!("Failed to wait for pbcopy: {}", e)))?;
-    if status.success() {
+    if unsafe { pasteboard.setString_forType(&string, NSPasteboardTypeString) } {
         Ok(())
     } else {
-        Err(ToolInvocationError::execution(format!(
-            "pbcopy exited with status {}",
-            status
-        )))
+        Err(ToolInvocationError::execution(
+            "Failed to write text to the macOS pasteboard",
+        ))
     }
 }
 
@@ -2914,7 +3412,20 @@ mod tests {
         async fn launch(&self, _action: &LaunchAction) -> Result<ActionResult, ActionError> {
             Ok(ActionResult::success(None, "recording"))
         }
-        async fn window_op(&self, _action: &WindowAction) -> Result<ActionResult, ActionError> {
+        async fn window_op(&self, action: &WindowAction) -> Result<ActionResult, ActionError> {
+            let mut calls = self.calls.lock().unwrap();
+            match &action.operation {
+                WindowOperation::Move { x, y } => {
+                    calls.push(format!("window move x={:.1} y={:.1}", x, y))
+                }
+                WindowOperation::Resize { width, height } => calls.push(format!(
+                    "window resize width={:.1} height={:.1}",
+                    width, height
+                )),
+                WindowOperation::Minimize => calls.push("window minimize".to_string()),
+                WindowOperation::Maximize => calls.push("window maximize".to_string()),
+                WindowOperation::Close => calls.push("window close".to_string()),
+            }
             Ok(ActionResult::success(None, "recording"))
         }
     }
@@ -3175,6 +3686,16 @@ mod tests {
         )
     }
 
+    fn make_server_with_context_and_recording_action(
+        context: Context,
+        calls: Arc<Mutex<Vec<String>>>,
+    ) -> SootieServer {
+        SootieServer::new_in_memory(
+            Box::new(ContextPerceptionProvider { context }),
+            Box::new(RecordingActionProvider { calls }),
+        )
+    }
+
     fn unique_temp_recipe_dir() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3310,14 +3831,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_call_find_uses_canonical_target() {
+    async fn test_tool_call_find_element_uses_canonical_target() {
         let selectors = Arc::new(Mutex::new(Vec::new()));
         let server = make_server_with_recording_perception(selectors.clone());
         let req = make_request(
             "tools/call",
             1,
             Some(serde_json::json!({
-                "name": "sootie_find",
+                "name": "sootie_find_element",
                 "arguments": {
                     "target": {
                         "app": "Safari",
@@ -3332,11 +3853,8 @@ mod tests {
         let content = &resp.result.unwrap()["content"][0]["text"];
         let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap()).unwrap();
         assert_eq!(content["success"], true);
-        assert_eq!(content["data"]["status"], "unique");
-        assert_eq!(
-            content["data"]["elements"][0]["name"],
-            "Address and search bar"
-        );
+        assert_eq!(content["data"][0]["name"], "Address and search bar");
+        assert_eq!(content["data"][0]["backend"], "at_tree");
         assert_eq!(
             selectors.lock().unwrap()[0]
                 .app
@@ -3565,6 +4083,92 @@ mod tests {
                 "hotkey keys=cmd+l"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_recipe_run_binds_window_coordinates_to_runtime_bounds() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let server = make_server_with_context_and_recording_action(
+            Context {
+                apps: vec![AppContext {
+                    app: App {
+                        name: "Safari".to_string(),
+                        bundle_id: "com.apple.Safari".to_string(),
+                        is_frontmost: true,
+                    },
+                    windows: vec![Window {
+                        id: "win_7".to_string(),
+                        title: "excalidraw.com".to_string(),
+                        index: 1,
+                        bounds: Bounds {
+                            x: 300.0,
+                            y: 100.0,
+                            width: 900.0,
+                            height: 700.0,
+                        },
+                        focused: true,
+                        display_id: Some(1),
+                    }],
+                }],
+            },
+            calls.clone(),
+        );
+
+        let save_req = make_request(
+            "tools/call",
+            1,
+            Some(serde_json::json!({
+                "name": "sootie_recipe_save",
+                "arguments": {
+                    "recipe": {
+                        "schema_version": 4,
+                        "name": "window-bound-recipe",
+                        "windows": {
+                            "main": {
+                                "app": { "name": "Safari", "bundle_id": "com.apple.Safari" },
+                                "window": { "title": "excalidraw.com" },
+                                "restore": "none",
+                                "coordinate_space": "window"
+                            }
+                        },
+                        "steps": [
+                            {
+                                "action": "click",
+                                "window": "main",
+                                "target": { "window_coordinate": { "x": 50.0, "y": 60.0 } }
+                            }
+                        ]
+                    }
+                }
+            })),
+        );
+        let save_resp = server.handle_request(save_req).await;
+        assert!(save_resp.error.is_none());
+
+        let run_req = make_request(
+            "tools/call",
+            2,
+            Some(serde_json::json!({
+                "name": "sootie_run",
+                "arguments": { "name": "window-bound-recipe" }
+            })),
+        );
+        let resp = server.handle_request(run_req).await;
+        assert!(resp.error.is_none());
+        let content = &resp.result.unwrap()["content"][0]["text"];
+        let run_result: serde_json::Value =
+            serde_json::from_str(content.as_str().unwrap()).unwrap();
+        assert_eq!(run_result["success"], true, "run_result={}", run_result);
+        assert_eq!(
+            run_result["data"]["window_bindings"]["main"]["bounds"]["x"],
+            300.0
+        );
+
+        let calls = calls.lock().unwrap();
+        assert!(calls
+            .iter()
+            .any(|call| call == "focus app=Some(\"Safari\") window_id=Some(\"win_7\")"));
+        assert!(calls.iter().any(|call| call == "click x=350.0 y=160.0"));
     }
 
     #[tokio::test]
@@ -3855,6 +4459,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_find_element_window_scope_recovers_from_stale_window_id() {
+        let server = make_server_with_context(Context {
+            apps: vec![AppContext {
+                app: App {
+                    name: "Safari".to_string(),
+                    bundle_id: "com.apple.Safari".to_string(),
+                    is_frontmost: false,
+                },
+                windows: vec![Window {
+                    id: "win_0".to_string(),
+                    title: "Excalidraw Whiteboard".to_string(),
+                    index: 0,
+                    focused: false,
+                    bounds: Bounds {
+                        x: -735.0,
+                        y: 149.0,
+                        width: 702.0,
+                        height: 729.0,
+                    },
+                    display_id: Some(2),
+                }],
+            }],
+        });
+
+        let scope = server
+            .resolve_description_window_scope(&serde_json::json!({
+                "window": {
+                    "app": "Safari",
+                    "windowId": "win_1"
+                }
+            }))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(scope.app.as_deref(), Some("Safari"));
+        assert_eq!(scope.window_id.as_deref(), Some("win_0"));
+        assert_eq!(scope.window_title.as_deref(), Some("Excalidraw Whiteboard"));
+        assert_eq!(scope.bounds.as_ref().unwrap().x, -735.0);
+    }
+
+    #[tokio::test]
     async fn test_find_element_defaults_to_session_window_context_before_frontmost() {
         let server = make_server_with_context(Context {
             apps: vec![
@@ -4137,6 +4783,14 @@ mod tests {
         assert!(resp.error.is_none());
         let calls = calls.lock().unwrap();
         assert_eq!(calls.as_slice(), ["press key=Return"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_macos_clipboard_text_uses_native_unicode_string() {
+        let text = "中国象棋 在线 游戏";
+        let string = NSString::from_str(text);
+        assert_eq!(string.to_string(), text);
     }
 
     #[tokio::test]

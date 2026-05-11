@@ -10,8 +10,8 @@ pub(crate) use context::{get_bundle_id_for_app_name, get_pid_for_app_name};
 
 use async_trait::async_trait;
 use std::process::Command;
-use std::time::Duration;
-use tracing::debug;
+use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
 
 use crate::cdp::try_find_via_cdp;
 use crate::perception::{
@@ -107,6 +107,7 @@ struct ScreenshotCaptureTarget {
     region: Option<Bounds>,
     display_id: Option<u32>,
     window_id: Option<u32>,
+    fallback_region: Option<Bounds>,
 }
 
 fn screenshot_capture_target(
@@ -126,6 +127,7 @@ fn screenshot_capture_target(
                 region: Some(window_relative_region(&bounds, region)),
                 display_id: display_id.or(window_display_id),
                 window_id: None,
+                fallback_region: None,
             };
         }
 
@@ -135,6 +137,7 @@ fn screenshot_capture_target(
                     region: None,
                     display_id: display_id.or(window_display_id),
                     window_id: Some(window_id),
+                    fallback_region: Some(bounds),
                 };
             }
 
@@ -142,6 +145,7 @@ fn screenshot_capture_target(
                 region: Some(bounds),
                 display_id: display_id.or(window_display_id),
                 window_id: None,
+                fallback_region: None,
             };
         }
 
@@ -149,6 +153,7 @@ fn screenshot_capture_target(
             region: None,
             display_id: display_id.or(window_display_id),
             window_id,
+            fallback_region: None,
         };
     }
 
@@ -157,6 +162,7 @@ fn screenshot_capture_target(
             region: Some(region.clone()),
             display_id,
             window_id: None,
+            fallback_region: None,
         };
     }
 
@@ -164,6 +170,7 @@ fn screenshot_capture_target(
         region: None,
         display_id,
         window_id: None,
+        fallback_region: None,
     }
 }
 
@@ -234,6 +241,11 @@ impl PerceptionProvider for MacPerceptionProvider {
     ) -> Result<ScreenshotData, PerceptionError> {
         debug!("Taking screenshot");
 
+        if target.is_some() {
+            info!("Activating macOS screenshot target app before capture");
+            activate_screenshot_target_app(target);
+        }
+
         let ctx = if target.is_some() {
             selector_context(target).or_else(|| Some(context::get_running_apps()))
         } else {
@@ -247,8 +259,7 @@ impl PerceptionProvider for MacPerceptionProvider {
             && display_id.is_none()
             && capture_target.region.is_none()
         {
-            debug!("Screenshot target had no window bounds, activating target app and retrying");
-            activate_screenshot_target_app(target);
+            debug!("Screenshot target had no window bounds after activation; retrying context");
             for attempt in 1..=SCREENSHOT_TARGET_ATTEMPTS {
                 let retry_ctx = selector_context(target).unwrap_or_else(context::get_running_apps);
                 capture_target =
@@ -275,18 +286,60 @@ impl PerceptionProvider for MacPerceptionProvider {
             ));
         }
 
-        debug!(
+        info!(
+            target_present = target.is_some(),
             region = ?capture_target.region,
             display_id = ?capture_target.display_id,
             window_id = ?capture_target.window_id,
+            fallback_region = ?capture_target.fallback_region,
             "Resolved macOS screenshot capture target"
         );
 
-        screenshot::take_screenshot(
+        let capture_start = Instant::now();
+        let result = screenshot::take_screenshot(
             capture_target.region.as_ref(),
             capture_target.display_id,
             capture_target.window_id,
-        )
+        );
+
+        match (
+            result,
+            capture_target.window_id,
+            capture_target.fallback_region.as_ref(),
+        ) {
+            (Ok(screenshot), _, _) => {
+                info!(
+                    duration_ms = capture_start.elapsed().as_millis(),
+                    bytes = screenshot.data.len(),
+                    bounds = ?screenshot.bounds,
+                    "macOS screenshot capture completed"
+                );
+                Ok(screenshot)
+            }
+            (Err(error), Some(window_id), Some(fallback_region)) => {
+                warn!(
+                    window_id,
+                    error = %error,
+                    fallback_region = ?fallback_region,
+                    "macOS CG window screenshot failed; retrying with window bounds region"
+                );
+                let fallback_start = Instant::now();
+                let screenshot = screenshot::take_screenshot(
+                    Some(fallback_region),
+                    capture_target.display_id,
+                    None,
+                )?;
+                info!(
+                    duration_ms = fallback_start.elapsed().as_millis(),
+                    total_duration_ms = capture_start.elapsed().as_millis(),
+                    bytes = screenshot.data.len(),
+                    bounds = ?screenshot.bounds,
+                    "macOS fallback region screenshot capture completed"
+                );
+                Ok(screenshot)
+            }
+            (Err(error), _, _) => Err(error),
+        }
     }
 
     async fn find_apps(

@@ -6,7 +6,8 @@ use image::{ColorType, GenericImageView, ImageEncoder, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tracing::info;
 
 use crate::perception::ScreenshotData;
 use crate::selector::{Bounds, Coordinate};
@@ -15,7 +16,7 @@ const GROUNDING_IMAGE_DIR: &str = "/tmp/sootie";
 const MAX_GROUNDING_IMAGE_WIDTH: u32 = 1600;
 const GROUNDING_IMAGE_SAVE_ATTEMPTS: usize = 10;
 const GROUNDING_IMAGE_SAVE_WAIT: Duration = Duration::from_millis(10);
-const DEFAULT_VISION_TIMEOUT: Duration = Duration::from_secs(12);
+const DEFAULT_VISION_TIMEOUT: Duration = Duration::from_secs(60);
 const SIDECAR_CLIENT_TIMEOUT_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,12 +27,25 @@ pub struct VisionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VisionCandidate {
+    pub label: String,
+    pub coordinate: Coordinate,
+    #[serde(default)]
+    pub bounds: Option<Bounds>,
+    pub confidence: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_region: Option<Bounds>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VisionResult {
     pub coordinate: Coordinate,
     #[serde(default)]
     pub bounds: Option<Bounds>,
     pub confidence: f64,
     pub model_used: String,
+    #[serde(default)]
+    pub candidates: Vec<VisionCandidate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +108,28 @@ struct SidecarResponse {
     matches: Vec<SidecarGroundingMatch>,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    timings: Option<SidecarTimings>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+struct SidecarTimings {
+    #[serde(default)]
+    model_load_ms: Option<f64>,
+    #[serde(default)]
+    request_read_ms: Option<f64>,
+    #[serde(default)]
+    image_open_validate_ms: Option<f64>,
+    #[serde(default)]
+    prompt_ms: Option<f64>,
+    #[serde(default)]
+    infer_ms: Option<f64>,
+    #[serde(default)]
+    decode_ms: Option<f64>,
+    #[serde(default)]
+    parse_ms: Option<f64>,
+    #[serde(default)]
+    total_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -156,6 +192,14 @@ fn save_rgba_png_stripped(path: &PathBuf, canvas: &RgbaImage) -> Result<(), Visi
 }
 
 static UI_ELEMENT_PROMPTS: &[(&str, &str)] = &[
+    ("ellipse tool", "the Excalidraw ellipse/oval shape tool button in the drawing toolbar"),
+    ("oval tool", "the Excalidraw ellipse/oval shape tool button in the drawing toolbar"),
+    ("circle tool", "the Excalidraw ellipse/oval shape tool button in the drawing toolbar"),
+    ("rectangle tool", "the Excalidraw rectangle shape tool button in the drawing toolbar"),
+    ("diamond tool", "the Excalidraw diamond shape tool button in the drawing toolbar"),
+    ("arrow tool", "the Excalidraw arrow tool button in the drawing toolbar"),
+    ("line tool", "the Excalidraw line tool button in the drawing toolbar"),
+    ("draw tool", "the Excalidraw free draw/pencil tool button in the drawing toolbar"),
     ("address bar", "the browser URL/address input field at the top of the window, showing the current webpage URL"),
     ("url bar", "the browser URL/address input field at the top of the window"),
     ("search box", "the search input field, typically with a magnifying glass icon or placeholder text like 'Search'"),
@@ -403,6 +447,60 @@ fn bounds_from_match(
         width: bbox.width * image.coordinate_width,
         height: bbox.height * image.coordinate_height,
     })
+}
+
+fn source_region_from_image(image: &PreparedGroundingImage) -> Bounds {
+    Bounds {
+        x: image.offset_x,
+        y: image.offset_y,
+        width: image.coordinate_width,
+        height: image.coordinate_height,
+    }
+}
+
+fn candidate_from_match(
+    grounding_match: &SidecarGroundingMatch,
+    image: &PreparedGroundingImage,
+) -> VisionCandidate {
+    VisionCandidate {
+        label: grounding_match.label.clone(),
+        coordinate: coordinate_from_match(grounding_match, image),
+        bounds: bounds_from_match(grounding_match, image),
+        confidence: grounding_match.confidence,
+        source_region: Some(source_region_from_image(image)),
+    }
+}
+
+fn bounds_nearly_equal(left: &Option<Bounds>, right: &Option<Bounds>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            (left.x - right.x).abs() < 1.0
+                && (left.y - right.y).abs() < 1.0
+                && (left.width - right.width).abs() < 1.0
+                && (left.height - right.height).abs() < 1.0
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn candidates_overlap(left: &VisionCandidate, right: &VisionCandidate) -> bool {
+    (left.coordinate.x - right.coordinate.x).abs() < 1.0
+        && (left.coordinate.y - right.coordinate.y).abs() < 1.0
+        && bounds_nearly_equal(&left.bounds, &right.bounds)
+}
+
+fn dedupe_candidates(candidates: Vec<VisionCandidate>) -> Vec<VisionCandidate> {
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        if !deduped
+            .iter()
+            .any(|existing| candidates_overlap(existing, &candidate))
+        {
+            deduped.push(candidate);
+        }
+    }
+    deduped
 }
 
 fn prepared_bbox_pixels(
@@ -661,13 +759,6 @@ fn annotate_grounding_image(
     save_annotated_image(&image.path, canvas)
 }
 
-fn map_sidecar_coordinate(
-    grounding_match: &SidecarGroundingMatch,
-    image: &PreparedGroundingImage,
-) -> Coordinate {
-    coordinate_from_match(grounding_match, image)
-}
-
 pub struct SidecarVisionProvider {
     base_url: String,
     client: reqwest::Client,
@@ -721,7 +812,10 @@ fn vision_timeout_from_env() -> Duration {
 #[async_trait]
 impl VisionProvider for SidecarVisionProvider {
     async fn detect(&self, request: &VisionRequest) -> Result<VisionResult, VisionError> {
+        let total_start = Instant::now();
+        let prepare_start = Instant::now();
         let grounding_image = prepare_grounding_image(&request.screenshot)?;
+        let prepare_ms = prepare_start.elapsed().as_millis();
 
         let body = SidecarRequest {
             task_desc: build_task_desc(request),
@@ -741,6 +835,7 @@ impl VisionProvider for SidecarVisionProvider {
                 request.target_description
             )
         };
+        let send_start = Instant::now();
         let resp = match tokio::time::timeout(self.timeout, request_builder.send()).await {
             Ok(Ok(resp)) => resp,
             Ok(Err(e)) if e.is_timeout() => {
@@ -758,6 +853,7 @@ impl VisionProvider for SidecarVisionProvider {
             }
             Err(_) => return Err(VisionError::Timeout(timeout_message())),
         };
+        let send_ms = send_start.elapsed().as_millis();
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
@@ -774,9 +870,40 @@ impl VisionProvider for SidecarVisionProvider {
             )));
         }
 
+        let json_start = Instant::now();
         let result: SidecarResponse = resp.json().await.map_err(|e| {
             VisionError::InferenceFailed(format!("Failed to parse sidecar response: {}", e))
         })?;
+        let json_ms = json_start.elapsed().as_millis();
+        let total_ms = total_start.elapsed().as_millis();
+
+        if let Some(timings) = &result.timings {
+            info!(
+                target = %request.target_description,
+                prepare_ms,
+                send_ms,
+                json_ms,
+                total_ms,
+                sidecar_model_load_ms = timings.model_load_ms,
+                sidecar_request_read_ms = timings.request_read_ms,
+                sidecar_image_open_validate_ms = timings.image_open_validate_ms,
+                sidecar_prompt_ms = timings.prompt_ms,
+                sidecar_infer_ms = timings.infer_ms,
+                sidecar_decode_ms = timings.decode_ms,
+                sidecar_parse_ms = timings.parse_ms,
+                sidecar_total_ms = timings.total_ms,
+                "Vision sidecar grounding timing"
+            );
+        } else {
+            info!(
+                target = %request.target_description,
+                prepare_ms,
+                send_ms,
+                json_ms,
+                total_ms,
+                "Vision sidecar grounding timing"
+            );
+        }
 
         if let Some(err) = result.error {
             return Err(VisionError::InferenceFailed(err));
@@ -788,59 +915,35 @@ impl VisionProvider for SidecarVisionProvider {
                 request.target_description
             )));
         }
-        let primary_match = result
+        let mut candidates = result
             .matches
             .iter()
-            .find(|grounding_match| {
-                label_matches_target(&grounding_match.label, &request.target_description)
-            })
-            .ok_or_else(|| {
-                VisionError::NotDetected(format!(
-                    "Sidecar returned no label matching '{}'",
-                    request.target_description
-                ))
-            })?;
+            .map(|grounding_match| candidate_from_match(grounding_match, &grounding_image))
+            .collect::<Vec<_>>();
+        candidates.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let candidates = dedupe_candidates(candidates);
 
         annotate_grounding_image(&grounding_image, &result, &request.target_description)?;
 
-        let coordinate = map_sidecar_coordinate(primary_match, &grounding_image);
-        let bounds = bounds_from_match(primary_match, &grounding_image);
+        let primary_candidate = candidates.first().ok_or_else(|| {
+            VisionError::NotDetected(format!(
+                "Sidecar returned no grounding candidates for '{}'",
+                request.target_description
+            ))
+        })?;
 
         Ok(VisionResult {
-            coordinate,
-            bounds,
-            confidence: primary_match.confidence,
+            coordinate: primary_candidate.coordinate.clone(),
+            bounds: primary_candidate.bounds.clone(),
+            confidence: primary_candidate.confidence,
             model_used: "showui-2b".to_string(),
+            candidates,
         })
     }
-}
-
-fn label_matches_target(label: &str, target_description: &str) -> bool {
-    let label = label.trim().to_lowercase();
-    if label.is_empty()
-        || matches!(
-            label.as_str(),
-            "target" | "match" | "vision match" | "target element" | "element"
-        )
-    {
-        return true;
-    }
-
-    let label_tokens = tokenize_grounding_text(&label);
-    let target_tokens = tokenize_grounding_text(target_description);
-    label_tokens
-        .iter()
-        .any(|token| target_tokens.iter().any(|target| target == token))
-}
-
-fn tokenize_grounding_text(value: &str) -> Vec<String> {
-    value
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter_map(|token| {
-            let token = token.trim().to_lowercase();
-            (token.len() >= 3).then_some(token)
-        })
-        .collect()
 }
 
 pub struct StubVisionProvider;
@@ -915,9 +1018,26 @@ mod tests {
 
     #[test]
     fn test_vision_timeout_error_is_explicit() {
-        let error = VisionError::Timeout("grounding exceeded 12000ms".to_string());
+        let error = VisionError::Timeout("grounding exceeded 60000ms".to_string());
         assert!(error.to_string().contains("vision timeout"));
-        assert!(error.to_string().contains("12000ms"));
+        assert!(error.to_string().contains("60000ms"));
+    }
+
+    #[test]
+    fn test_default_vision_timeout_covers_local_model_startup() {
+        let previous_ms = std::env::var_os("SOOTIE_VISION_TIMEOUT_MS");
+        let previous_secs = std::env::var_os("SOOTIE_VISION_TIMEOUT_SECS");
+        std::env::remove_var("SOOTIE_VISION_TIMEOUT_MS");
+        std::env::remove_var("SOOTIE_VISION_TIMEOUT_SECS");
+
+        assert_eq!(vision_timeout_from_env(), Duration::from_secs(60));
+
+        if let Some(value) = previous_ms {
+            std::env::set_var("SOOTIE_VISION_TIMEOUT_MS", value);
+        }
+        if let Some(value) = previous_secs {
+            std::env::set_var("SOOTIE_VISION_TIMEOUT_SECS", value);
+        }
     }
 
     #[test]
@@ -982,6 +1102,13 @@ mod tests {
     fn test_apply_prompt_template_with_partial_match() {
         let result = apply_prompt_template("the submit button for the form");
         assert!(result.contains("submit/send button"));
+    }
+
+    #[test]
+    fn test_apply_prompt_template_prefers_shape_tool_over_toolbar() {
+        let result = apply_prompt_template("ellipse tool button in the Excalidraw toolbar");
+        assert!(result.contains("ellipse/oval shape tool"));
+        assert!(!result.eq("the toolbar at the top of the window"));
     }
 
     #[test]
@@ -1134,7 +1261,7 @@ mod tests {
             prepared_height: 675.0,
         };
 
-        let coordinate = map_sidecar_coordinate(&response, &image);
+        let coordinate = coordinate_from_match(&response, &image);
         assert_eq!(coordinate.x, 730.0);
         assert_eq!(coordinate.y, 245.0);
     }
@@ -1151,6 +1278,23 @@ mod tests {
             }),
             confidence: 0.95,
             model_used: "showui-2b".to_string(),
+            candidates: vec![VisionCandidate {
+                label: "submit button".to_string(),
+                coordinate: Coordinate { x: 150.0, y: 300.0 },
+                bounds: Some(Bounds {
+                    x: 100.0,
+                    y: 275.0,
+                    width: 100.0,
+                    height: 50.0,
+                }),
+                confidence: 0.95,
+                source_region: Some(Bounds {
+                    x: 0.0,
+                    y: 25.0,
+                    width: 1440.0,
+                    height: 875.0,
+                }),
+            }],
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -1216,27 +1360,75 @@ mod tests {
     }
 
     #[test]
-    fn test_label_matching_accepts_generic_and_overlapping_labels() {
-        assert!(label_matches_target(
-            "vision match",
-            "old smiley face drawing"
-        ));
-        assert!(label_matches_target(
-            "primary compose button",
-            "compose button"
-        ));
-        assert!(label_matches_target(
-            "pink flower",
-            "colorful small flower drawing"
-        ));
+    fn test_sidecar_response_deserializes_optional_timings() {
+        let json = r#"{
+            "matches": [
+                {
+                    "label": "compose",
+                    "confidence": 0.95,
+                    "point": { "x": 0.4, "y": 0.6 },
+                    "bbox": { "x": 0.3, "y": 0.5, "width": 0.2, "height": 0.1 }
+                }
+            ],
+            "timings": {
+                "model_load_ms": 0.01,
+                "prompt_ms": 2.5,
+                "infer_ms": 1200.75,
+                "parse_ms": 0.4,
+                "total_ms": 1205.0
+            }
+        }"#;
+
+        let resp: SidecarResponse = serde_json::from_str(json).unwrap();
+        let timings = resp.timings.unwrap();
+        assert_eq!(timings.model_load_ms, Some(0.01));
+        assert_eq!(timings.prompt_ms, Some(2.5));
+        assert_eq!(timings.infer_ms, Some(1200.75));
+        assert_eq!(timings.parse_ms, Some(0.4));
+        assert_eq!(timings.total_ms, Some(1205.0));
     }
 
     #[test]
-    fn test_label_matching_rejects_unrelated_specific_labels() {
-        assert!(!label_matches_target(
-            "Safari",
-            "old smiley face drawing in the Excalidraw canvas"
-        ));
+    fn test_dedupe_candidates_keeps_distinct_locations() {
+        let candidates = vec![
+            VisionCandidate {
+                label: "vision match".to_string(),
+                coordinate: Coordinate { x: 100.0, y: 200.0 },
+                bounds: Some(Bounds {
+                    x: 90.0,
+                    y: 190.0,
+                    width: 20.0,
+                    height: 20.0,
+                }),
+                confidence: 0.9,
+                source_region: None,
+            },
+            VisionCandidate {
+                label: "same spot".to_string(),
+                coordinate: Coordinate { x: 100.3, y: 200.4 },
+                bounds: Some(Bounds {
+                    x: 90.2,
+                    y: 190.2,
+                    width: 20.2,
+                    height: 20.2,
+                }),
+                confidence: 0.7,
+                source_region: None,
+            },
+            VisionCandidate {
+                label: "other spot".to_string(),
+                coordinate: Coordinate { x: 180.0, y: 220.0 },
+                bounds: None,
+                confidence: 0.6,
+                source_region: None,
+            },
+        ];
+
+        let deduped = dedupe_candidates(candidates);
+
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].confidence, 0.9);
+        assert_eq!(deduped[1].label, "other spot");
     }
 
     #[test]
@@ -1261,6 +1453,7 @@ mod tests {
         let prepared = prepare_grounding_image(&screenshot).unwrap();
         let response = SidecarResponse {
             error: None,
+            timings: None,
             matches: vec![
                 SidecarGroundingMatch {
                     label: "primary".to_string(),

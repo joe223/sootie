@@ -1,5 +1,6 @@
 use std::str::FromStr;
-use tracing::{debug, warn};
+use std::time::Instant;
+use tracing::{debug, info, warn};
 
 use crate::action::{ActionError, ActionTarget};
 use crate::cdp::try_find_via_cdp;
@@ -327,6 +328,7 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                         },
                         index: Some(i as u32),
                         confidence: None,
+                        source_region: None,
                     })
                     .collect();
 
@@ -384,6 +386,7 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                         },
                         index: Some(i as u32),
                         confidence: None,
+                        source_region: None,
                     })
                     .collect();
 
@@ -429,11 +432,20 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
 
         debug!("Attempting vision find_target for selector");
 
+        let screenshot_start = Instant::now();
         let screenshot = self
             .perception
             .screenshot(Some(selector), selector_region(selector).as_ref(), None)
             .await
             .map_err(|e| ActionError::ActionFailed(format!("Screenshot failed: {}", e)))?;
+        let screenshot_ms = screenshot_start.elapsed().as_millis();
+        info!(
+            duration_ms = screenshot_ms,
+            bytes = screenshot.data.len(),
+            bounds = ?screenshot.bounds,
+            selector = ?selector,
+            "Cascade vision find_target screenshot completed"
+        );
 
         let request = VisionRequest {
             screenshot,
@@ -450,46 +462,85 @@ impl<'a, P: PerceptionProvider + ?Sized, V: VisionProvider + ?Sized> Cascade<'a,
                 }),
         };
 
+        let detect_start = Instant::now();
         let result = vision
             .detect(&request)
             .await
             .map_err(|e| ActionError::ActionFailed(format!("Vision failed: {}", e)))?;
+        let detect_ms = detect_start.elapsed().as_millis();
 
-        let element = ResolvedElement {
-            role: selector
-                .element
-                .role
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            name: selector.element.name.clone(),
-            text: selector.element.text.clone(),
-            id: None,
-            state: crate::selector::ElementState {
-                visible: true,
-                focused: None,
-                enabled: None,
-            },
-            bounds: result.bounds.clone().unwrap_or(Bounds {
-                x: result.coordinate.x - 50.0,
-                y: result.coordinate.y - 25.0,
-                width: 100.0,
-                height: 50.0,
-            }),
-            coordinate: result.coordinate.clone(),
-            index: Some(0),
-            confidence: Some(result.confidence),
+        let mut candidates = result.candidates.clone();
+        if candidates.is_empty() {
+            candidates.push(crate::vision::VisionCandidate {
+                label: selector
+                    .element
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "vision match".to_string()),
+                coordinate: result.coordinate.clone(),
+                bounds: result.bounds.clone(),
+                confidence: result.confidence,
+                source_region: None,
+            });
+        }
+
+        let elements = candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| ResolvedElement {
+                role: selector
+                    .element
+                    .role
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                name: Some(candidate.label.clone()),
+                text: selector.element.text.clone(),
+                id: None,
+                state: crate::selector::ElementState {
+                    visible: true,
+                    focused: None,
+                    enabled: None,
+                },
+                bounds: candidate.bounds.clone().unwrap_or(Bounds {
+                    x: candidate.coordinate.x - 50.0,
+                    y: candidate.coordinate.y - 25.0,
+                    width: 100.0,
+                    height: 50.0,
+                }),
+                coordinate: candidate.coordinate.clone(),
+                index: Some(index as u32),
+                confidence: Some(candidate.confidence),
+                source_region: candidate.source_region.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let status = if elements.len() == 1 {
+            MatchStatus::Unique
+        } else {
+            MatchStatus::Multiple
         };
+        info!(
+            screenshot_ms,
+            detect_ms,
+            total_ms = screenshot_ms + detect_ms,
+            candidate_count = candidates.len(),
+            status = ?status,
+            backend = %Backend::Vision,
+            "Cascade vision find_target completed"
+        );
 
         Ok(FindTargetResult {
-            status: MatchStatus::Unique,
+            status,
             backend: Backend::Vision.to_string(),
             backend_attempts: None,
             app: None,
             window: None,
-            elements: vec![element],
+            elements,
             confidence: Some(serde_json::json!({
                 "top_match_score": result.confidence,
-                "model": result.model_used
+                "model": result.model_used,
+                "candidate_count": candidates.len(),
+                "candidates": candidates
             })),
             backend_errors: None,
         })
@@ -553,7 +604,7 @@ mod tests {
     use super::*;
     use crate::perception::{Context, FindAppsResult, ScreenshotData, WaitCondition, WaitResult};
     use crate::selector::*;
-    use crate::vision::{VisionError, VisionResult};
+    use crate::vision::{VisionCandidate, VisionError, VisionResult};
 
     struct MockPerceptionProvider {
         find_result: Option<ResolvedTarget>,
@@ -625,6 +676,7 @@ mod tests {
 
     struct MockVisionProvider {
         coordinate: Coordinate,
+        candidates: Vec<VisionCandidate>,
     }
 
     #[async_trait::async_trait]
@@ -635,6 +687,7 @@ mod tests {
                 bounds: None,
                 confidence: 0.9,
                 model_used: "mock".to_string(),
+                candidates: self.candidates.clone(),
             })
         }
     }
@@ -700,6 +753,7 @@ mod tests {
         let provider = MockPerceptionProvider::empty();
         let vision = MockVisionProvider {
             coordinate: Coordinate { x: 11.0, y: 22.0 },
+            candidates: Vec::new(),
         };
         let cascade = Cascade::with_priority(
             &provider,
@@ -724,6 +778,7 @@ mod tests {
         let provider = MockPerceptionProvider::with_find_result(target);
         let vision = MockVisionProvider {
             coordinate: Coordinate { x: 0.0, y: 0.0 },
+            candidates: Vec::new(),
         };
         let cascade = Cascade::with_priority(
             &provider,
@@ -761,6 +816,7 @@ mod tests {
         let provider = MockPerceptionProvider::empty();
         let vision = MockVisionProvider {
             coordinate: Coordinate { x: 0.0, y: 0.0 },
+            candidates: Vec::new(),
         };
         let cascade = Cascade::new(&provider, Some(&vision));
         let action_target = ActionTarget::Coordinate(Coordinate { x: 10.0, y: 20.0 });
@@ -776,6 +832,7 @@ mod tests {
         let provider = MockPerceptionProvider::empty();
         let vision = MockVisionProvider {
             coordinate: Coordinate { x: 13.0, y: 14.0 },
+            candidates: Vec::new(),
         };
         let cascade = Cascade::new(&provider, Some(&vision));
 
@@ -814,6 +871,75 @@ mod tests {
         assert_eq!(result.elements[0].coordinate.y, 210.0);
         assert_eq!(result.elements[0].index, Some(0));
         assert!(result.backend_attempts.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_find_target_vision_returns_all_grounding_candidates() {
+        let provider = MockPerceptionProvider::empty();
+        let vision = MockVisionProvider {
+            coordinate: Coordinate { x: 150.0, y: 200.0 },
+            candidates: vec![
+                VisionCandidate {
+                    label: "ellipse tool".to_string(),
+                    coordinate: Coordinate { x: 150.0, y: 200.0 },
+                    bounds: Some(Bounds {
+                        x: 130.0,
+                        y: 180.0,
+                        width: 40.0,
+                        height: 40.0,
+                    }),
+                    confidence: 0.91,
+                    source_region: Some(Bounds {
+                        x: 10.0,
+                        y: 20.0,
+                        width: 700.0,
+                        height: 500.0,
+                    }),
+                },
+                VisionCandidate {
+                    label: "circle icon".to_string(),
+                    coordinate: Coordinate { x: 220.0, y: 200.0 },
+                    bounds: Some(Bounds {
+                        x: 200.0,
+                        y: 180.0,
+                        width: 40.0,
+                        height: 40.0,
+                    }),
+                    confidence: 0.76,
+                    source_region: Some(Bounds {
+                        x: 10.0,
+                        y: 20.0,
+                        width: 700.0,
+                        height: 500.0,
+                    }),
+                },
+            ],
+        };
+        let cascade = Cascade::with_priority(&provider, Some(&vision), vec![Backend::Vision]);
+
+        let target = Target {
+            app: None,
+            window: None,
+            selector: TargetSelector {
+                role: Some("button".to_string()),
+                name: Some("ellipse tool button".to_string()),
+                id: None,
+                text: None,
+            },
+        };
+
+        let result = cascade.find_target(&target).await;
+
+        assert_eq!(result.status, MatchStatus::Multiple);
+        assert_eq!(result.backend, Backend::Vision.to_string());
+        assert_eq!(result.elements.len(), 2);
+        assert_eq!(result.elements[0].name.as_deref(), Some("ellipse tool"));
+        assert_eq!(result.elements[0].coordinate.x, 150.0);
+        assert_eq!(result.elements[0].source_region.as_ref().unwrap().x, 10.0);
+        assert_eq!(
+            result.confidence.as_ref().unwrap()["candidate_count"],
+            serde_json::json!(2)
+        );
     }
 
     #[tokio::test]

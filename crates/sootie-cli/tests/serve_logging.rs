@@ -70,3 +70,40 @@ fn serve_creates_default_log_file() {
 
     std::fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn serve_log_level_overrides_rust_log_env() {
+    let home = unique_temp_home();
+    std::fs::create_dir_all(&home).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sootie"))
+        .arg("serve")
+        .arg("--log-level")
+        .arg("info")
+        .env("HOME", &home)
+        .env("RUST_LOG", "error")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "sootie serve exited with {:?}",
+        output.status.code()
+    );
+
+    let log_path = find_log_file(&home).expect("default log file was not created");
+
+    let contents = std::fs::read_to_string(&log_path).unwrap();
+    assert!(
+        contents.contains("Sootie MCP server starting"),
+        "--log-level info should not be suppressed by RUST_LOG=error in {}",
+        log_path.display()
+    );
+
+    std::fs::remove_dir_all(&home).unwrap();
+}

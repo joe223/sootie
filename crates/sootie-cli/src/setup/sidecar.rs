@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 
 use crate::setup::python_env::sootie_venv_python;
 
+const MANAGED_SIDECAR_IDLE_TIMEOUT_SECS: u64 = 0;
+
 /// Find bundled vision-sidecar directory
 pub fn find_bundled_sidecar_dir() -> Result<PathBuf> {
     // Installed paths
@@ -124,6 +126,19 @@ pub async fn is_sidecar_running(port: u16) -> bool {
         .unwrap_or(false)
 }
 
+async fn warm_up_sidecar(port: u16, timeout_secs: u64) -> bool {
+    let url = format!("http://127.0.0.1:{}/warmup", port);
+    let client = reqwest::Client::new();
+
+    client
+        .get(&url)
+        .timeout(Duration::from_secs(timeout_secs))
+        .send()
+        .await
+        .map(|resp| resp.status().is_success())
+        .unwrap_or(false)
+}
+
 /// Launch sidecar with crash recovery
 pub async fn launch_sidecar(port: u16) -> Result<SidecarGuard> {
     // Check if already running
@@ -162,7 +177,7 @@ pub async fn launch_sidecar(port: u16) -> Result<SidecarGuard> {
             .arg("--port")
             .arg(port.to_string())
             .arg("--idle-timeout")
-            .arg("600")
+            .arg(MANAGED_SIDECAR_IDLE_TIMEOUT_SECS.to_string())
             .stderr(Stdio::piped())
             .stdout(Stdio::null())
             .spawn()
@@ -173,6 +188,14 @@ pub async fn launch_sidecar(port: u16) -> Result<SidecarGuard> {
 
         if healthy {
             eprintln!("✓ Sidecar started successfully");
+            eprintln!("Warming vision model on sidecar thread...");
+            if warm_up_sidecar(port, 180).await {
+                eprintln!("✓ Vision model warmed");
+            } else {
+                eprintln!(
+                    "Warning: vision model warmup failed or timed out; first grounding may be slow"
+                );
+            }
             return Ok(SidecarGuard::new(child));
         }
 
@@ -230,11 +253,11 @@ impl SidecarGuard {
 
 impl Drop for SidecarGuard {
     fn drop(&mut self) {
-        if let Some(ref mut child) = self.child {
-            // Don't kill sidecar - let it run with idle timeout
-            // Sidecar will auto-exit after idle_timeout seconds
-            // Just detach from the process
-            let _ = child.wait(); // Wait for graceful shutdown
+        if let Some(mut child) = self.child.take() {
+            // The CLI owns this process. Keep it alive for the server lifetime,
+            // then stop it explicitly instead of relying on sidecar idle exit.
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
@@ -248,6 +271,11 @@ mod tests {
     fn test_sidecar_install_dir_contains_sootie() {
         let dir = sidecar_install_dir();
         assert!(dir.to_string_lossy().contains("sootie"));
+    }
+
+    #[test]
+    fn test_managed_sidecar_disables_idle_exit() {
+        assert_eq!(MANAGED_SIDECAR_IDLE_TIMEOUT_SECS, 0);
     }
 
     #[test]

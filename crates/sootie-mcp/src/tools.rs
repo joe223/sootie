@@ -9,7 +9,6 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         system_last_report(),
         perception_context(),
         perception_find_apps(),
-        perception_find(),
         perception_find_element(),
         action_click(),
         action_type(),
@@ -66,7 +65,7 @@ fn perception_context() -> ToolDefinition {
 fn perception_find_element() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_find_element".to_string(),
-        description: "Find UI elements from a short element description. Returns element positions and metadata."
+        description: "Find UI elements from a short natural-language description or canonical structured target. Returns element positions and metadata."
             .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -74,6 +73,12 @@ fn perception_find_element() -> ToolDefinition {
                 "el_description": {
                     "type": "string",
                     "description": "Short element description for locating the target element"
+                },
+                "target": {
+                    "description": "Canonical structured target for locating an element by app, window, role, name, text, or id",
+                    "type": "object",
+                    "properties": target_schema()["properties"].clone(),
+                    "required": target_schema()["required"].clone()
                 },
                 "window": {
                     "type": "object",
@@ -102,26 +107,10 @@ fn perception_find_element() -> ToolDefinition {
                     "description": "Optional region to constrain vision grounding. With a window scope, the region is relative to that window and Sootie converts it to screen coordinates internally; without a window scope it is an absolute screen region."
                 }
             },
-            "required": ["el_description"]
-        }),
-    }
-}
-
-fn perception_find() -> ToolDefinition {
-    ToolDefinition {
-        name: "sootie_find".to_string(),
-        description: "Find UI elements with the canonical structured target object. Prefer this over natural-language element descriptions when you have app, window, role, name, text, or id fields.".to_string(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "description": "Canonical target object",
-                    "type": "object",
-                    "properties": target_schema()["properties"].clone(),
-                    "required": target_schema()["required"].clone()
-                }
-            },
-            "required": ["target"]
+            "anyOf": [
+                { "required": ["el_description"] },
+                { "required": ["target"] }
+            ]
         }),
     }
 }
@@ -259,6 +248,20 @@ fn action_target_schema() -> serde_json::Value {
     })
 }
 
+fn action_target_property(description: &str) -> serde_json::Value {
+    let mut schema = action_target_schema();
+    if let Some(object) = schema.as_object_mut() {
+        object.insert(
+            "description".to_string(),
+            serde_json::json!(format!(
+                "{}. Use {{\"selector\":{{...}}}} for structured elements or {{\"coordinate\":{{\"x\":100,\"y\":200}}}} for absolute screen coordinates.",
+                description
+            )),
+        );
+    }
+    schema
+}
+
 fn action_click() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_click".to_string(),
@@ -266,10 +269,7 @@ fn action_click() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
-                    "description": "Canonical action target: structured element target or coordinate fallback",
-                    "allOf": [action_target_schema()]
-                },
+                "target": action_target_property("Canonical action target: structured element target or coordinate fallback"),
                 "button": {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
@@ -292,10 +292,7 @@ fn action_type() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
-                    "description": "Optional canonical action target to type into",
-                    "allOf": [action_target_schema()]
-                },
+                "target": action_target_property("Optional canonical action target to type into"),
                 "text": {
                     "type": "string",
                     "description": "Text to type"
@@ -318,10 +315,7 @@ fn action_press() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
-                    "description": "Optional canonical action target to focus before pressing",
-                    "allOf": [action_target_schema()]
-                },
+                "target": action_target_property("Optional canonical action target to focus before pressing"),
                 "key": {
                     "type": "string",
                     "description": "Key to press (e.g. Return, Tab, Escape)"
@@ -359,10 +353,7 @@ fn action_paste_text() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
-                    "description": "Optional canonical action target to focus before pasting",
-                    "allOf": [action_target_schema()]
-                },
+                "target": action_target_property("Optional canonical action target to focus before pasting"),
                 "text": {
                     "type": "string",
                     "description": "Text to place on the clipboard and paste"
@@ -380,12 +371,7 @@ fn action_scroll() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
-                    "description": "Canonical target object",
-                    "type": "object",
-                    "properties": target_schema()["properties"].clone(),
-                    "required": target_schema()["required"].clone()
-                },
+                "target": action_target_property("Canonical target object or coordinate fallback"),
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down", "left", "right"]
@@ -407,14 +393,8 @@ fn action_drag() -> ToolDefinition {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "from_target": {
-                    "description": "Source canonical action target",
-                    "allOf": [action_target_schema()]
-                },
-                "to_target": {
-                    "description": "Destination canonical action target",
-                    "allOf": [action_target_schema()]
-                }
+                "from_target": action_target_property("Source canonical action target"),
+                "to_target": action_target_property("Destination canonical action target")
             },
             "required": ["from_target", "to_target"]
         }),
@@ -560,13 +540,13 @@ fn workflow_run() -> ToolDefinition {
 fn workflow_recipe_save() -> ToolDefinition {
     ToolDefinition {
         name: "sootie_recipe_save".to_string(),
-        description: "Save a new workflow".to_string(),
+        description: "Save a new workflow. For coordinate-heavy workflows, prefer schema_version 4 with recipe.windows bindings and step.window plus window_coordinate targets so replay uses the actual target window bounds instead of raw screen coordinates.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "recipe": {
                     "type": "object",
-                    "description": "Recipe JSON to save"
+                    "description": "Recipe JSON to save. Supports optional windows: { name: { app, window, title_hint, recorded_bounds, restore, coordinate_space } }; steps may set window to bind window_coordinate targets to that recorded window."
                 }
             },
             "required": ["recipe"]
@@ -639,7 +619,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 20);
     }
 
     #[test]
@@ -650,7 +630,6 @@ mod tests {
         assert!(names.contains(&"sootie_last_report"));
         assert!(names.contains(&"sootie_context"));
         assert!(names.contains(&"sootie_find_apps"));
-        assert!(names.contains(&"sootie_find"));
         assert!(names.contains(&"sootie_find_element"));
         assert!(names.contains(&"sootie_click"));
         assert!(names.contains(&"sootie_type"));
@@ -669,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn test_description_based_tools_require_el_description() {
+    fn test_find_element_accepts_description_or_structured_target() {
         let tools = all_tools();
 
         let tool = tools
@@ -677,13 +656,19 @@ mod tests {
             .find(|tool| tool.name == "sootie_find_element")
             .unwrap();
         assert!(tool.input_schema["properties"]["el_description"].is_object());
+        assert!(tool.input_schema["properties"]["target"].is_object());
         assert!(tool.input_schema["properties"]["window"].is_object());
         assert!(tool.input_schema["properties"].get("name").is_none());
-        assert!(tool.input_schema["required"]
+        assert!(tool.input_schema["anyOf"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|value| value == "el_description"));
+            .any(|value| value["required"][0] == "el_description"));
+        assert!(tool.input_schema["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value["required"][0] == "target"));
     }
 
     #[test]
@@ -742,8 +727,7 @@ mod tests {
             .iter()
             .all(|value| value != "target"));
         assert!(
-            r#type.input_schema["properties"]["target"]["allOf"][0]["oneOf"][0]["properties"]
-                ["selector"]
+            r#type.input_schema["properties"]["target"]["oneOf"][0]["properties"]["selector"]
                 .is_object()
         );
         assert!(r#type.input_schema["properties"].get("field").is_none());
@@ -767,23 +751,23 @@ mod tests {
             .unwrap();
 
         assert!(
-            click.input_schema["properties"]["target"]["allOf"][0]["oneOf"][0]["properties"]
-                ["selector"]
+            click.input_schema["properties"]["target"]["oneOf"][0]["properties"]["selector"]
                 .is_object()
         );
         assert!(
-            click.input_schema["properties"]["target"]["allOf"][0]["oneOf"][1]["properties"]
-                ["coordinate"]
+            click.input_schema["properties"]["target"]["oneOf"][1]["properties"]["coordinate"]
+                .is_object()
+        );
+        assert!(click.input_schema["properties"]["target"]["description"]
+            .as_str()
+            .unwrap()
+            .contains(r#"{"coordinate":{"x":100,"y":200}}"#));
+        assert!(
+            press.input_schema["properties"]["target"]["oneOf"][0]["properties"]["selector"]
                 .is_object()
         );
         assert!(
-            press.input_schema["properties"]["target"]["allOf"][0]["oneOf"][0]["properties"]
-                ["selector"]
-                .is_object()
-        );
-        assert!(
-            drag.input_schema["properties"]["from_target"]["allOf"][0]["oneOf"][1]["properties"]
-                ["coordinate"]
+            drag.input_schema["properties"]["from_target"]["oneOf"][1]["properties"]["coordinate"]
                 .is_object()
         );
     }

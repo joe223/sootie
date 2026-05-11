@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::selector::{AppSelector, Coordinate, Target};
+use crate::selector::{AppSelector, Bounds, Coordinate, Target, WindowSelector};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Recipe {
@@ -16,7 +16,25 @@ pub struct Recipe {
     pub platforms: Vec<String>,
     #[serde(default)]
     pub params: Vec<RecipeParam>,
+    #[serde(default)]
+    pub windows: HashMap<String, RecipeWindow>,
     pub steps: Vec<RecipeStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecipeWindow {
+    #[serde(default, deserialize_with = "deserialize_optional_app_selector")]
+    pub app: Option<AppSelector>,
+    #[serde(default, deserialize_with = "deserialize_optional_window_selector")]
+    pub window: Option<WindowSelector>,
+    #[serde(default)]
+    pub title_hint: Option<String>,
+    #[serde(default)]
+    pub recorded_bounds: Option<Bounds>,
+    #[serde(default)]
+    pub restore: Option<String>,
+    #[serde(default)]
+    pub coordinate_space: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -33,6 +51,8 @@ pub struct RecipeParam {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecipeStep {
     pub action: String,
+    #[serde(default)]
+    pub window: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_app_selector")]
     pub app: Option<AppSelector>,
     #[serde(default)]
@@ -79,6 +99,26 @@ where
     }
 
     serde_json::from_value::<AppSelector>(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+fn deserialize_optional_window_selector<'de, D>(
+    deserializer: D,
+) -> Result<Option<WindowSelector>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    if let Some(title) = value.as_str() {
+        return Ok(Some(WindowSelector::from_title(title)));
+    }
+
+    serde_json::from_value::<WindowSelector>(value)
         .map(Some)
         .map_err(serde::de::Error::custom)
 }
@@ -444,12 +484,66 @@ pub fn validate_recipe(recipe: &Recipe) -> Result<(), RecipeError> {
         )));
     }
 
+    for (name, window) in &recipe.windows {
+        validate_recipe_window(name, window)
+            .map_err(|e| RecipeError::InvalidRecipe(format!("window {}: {}", name, e)))?;
+    }
+
     for (i, step) in recipe.steps.iter().enumerate() {
         validate_step(step)
             .map_err(|e| RecipeError::InvalidRecipe(format!("step {}: {}", i, e)))?;
+        if let Some(window_name) = step.window.as_deref() {
+            if !recipe.windows.contains_key(window_name) {
+                return Err(RecipeError::InvalidRecipe(format!(
+                    "step {}: window '{}' is not defined",
+                    i, window_name
+                )));
+            }
+        }
+        if step_requires_window_disambiguation(step)
+            && step.window.is_none()
+            && recipe.windows.len() > 1
+        {
+            return Err(RecipeError::InvalidRecipe(format!(
+                "step {}: action requires 'window' when recipe defines multiple windows",
+                i
+            )));
+        }
     }
 
     Ok(())
+}
+
+fn validate_recipe_window(name: &str, window: &RecipeWindow) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("window name cannot be empty".to_string());
+    }
+    if window.app.is_none() {
+        return Err("window requires 'app'".to_string());
+    }
+    if let Some(restore) = window.restore.as_deref() {
+        if !matches!(restore, "none" | "best_effort" | "strict") {
+            return Err("restore must be one of: none, best_effort, strict".to_string());
+        }
+    }
+    if let Some(space) = window.coordinate_space.as_deref() {
+        if !matches!(space, "window" | "screen") {
+            return Err("coordinate_space must be either 'window' or 'screen'".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn step_uses_window_coordinate(step: &RecipeStep) -> bool {
+    matches!(step.target, Some(StepTarget::WindowCoordinate(_)))
+        || matches!(step.to_target, Some(StepTarget::WindowCoordinate(_)))
+}
+
+fn step_requires_window_disambiguation(step: &RecipeStep) -> bool {
+    step_uses_window_coordinate(step)
+        || matches!(step.action.as_str(), "press" | "hotkey")
+        || matches!(step.action.as_str(), "type" | "paste_text" | "screenshot")
+            && step.target.is_none()
 }
 
 fn validate_step(step: &RecipeStep) -> Result<(), String> {
@@ -534,6 +628,7 @@ mod tests {
                 "linux".to_string(),
             ],
             params: vec![],
+            windows: HashMap::new(),
             steps,
         }
     }
@@ -541,6 +636,7 @@ mod tests {
     fn make_step(action: &str) -> RecipeStep {
         RecipeStep {
             action: action.to_string(),
+            window: None,
             app: None,
             target: None,
             text: None,
@@ -649,6 +745,101 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_recipe_window_binding() {
+        let recipe: Recipe = serde_json::from_value(serde_json::json!({
+            "schema_version": 4,
+            "name": "window-bound-click",
+            "windows": {
+                "main": {
+                    "app": "Safari",
+                    "window": { "title": "excalidraw.com" },
+                    "recorded_bounds": { "x": 10.0, "y": 20.0, "width": 1000.0, "height": 700.0 },
+                    "restore": "best_effort",
+                    "coordinate_space": "window"
+                }
+            },
+            "steps": [
+                {
+                    "action": "click",
+                    "window": "main",
+                    "target": { "window_coordinate": { "x": 50.0, "y": 60.0 } }
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert!(validate_recipe(&recipe).is_ok());
+        assert_eq!(
+            recipe.windows["main"].app,
+            Some(AppSelector::from_name("Safari"))
+        );
+        assert_eq!(recipe.steps[0].window.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn test_validate_window_coordinate_requires_disambiguation_for_multiple_windows() {
+        let recipe: Recipe = serde_json::from_value(serde_json::json!({
+            "schema_version": 4,
+            "name": "ambiguous-window-coordinate",
+            "windows": {
+                "left": { "app": "Safari" },
+                "right": { "app": "Chrome" }
+            },
+            "steps": [
+                {
+                    "action": "click",
+                    "target": { "window_coordinate": { "x": 50.0, "y": 60.0 } }
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert!(validate_recipe(&recipe).is_err());
+    }
+
+    #[test]
+    fn test_validate_targetless_hotkey_requires_disambiguation_for_multiple_windows() {
+        let recipe: Recipe = serde_json::from_value(serde_json::json!({
+            "schema_version": 4,
+            "name": "ambiguous-hotkey",
+            "windows": {
+                "left": { "app": "Safari" },
+                "right": { "app": "Chrome" }
+            },
+            "steps": [
+                {
+                    "action": "hotkey",
+                    "keys": ["cmd", "l"]
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert!(validate_recipe(&recipe).is_err());
+    }
+
+    #[test]
+    fn test_validate_step_window_must_exist() {
+        let recipe: Recipe = serde_json::from_value(serde_json::json!({
+            "schema_version": 4,
+            "name": "missing-window-ref",
+            "windows": {
+                "main": { "app": "Safari" }
+            },
+            "steps": [
+                {
+                    "action": "click",
+                    "window": "missing",
+                    "target": { "window_coordinate": { "x": 50.0, "y": 60.0 } }
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert!(validate_recipe(&recipe).is_err());
+    }
+
+    #[test]
     fn test_recipe_engine_load_and_get() {
         let mut engine = RecipeEngine::new_in_memory();
         let recipe = make_recipe("my_recipe", vec![make_step("click")]);
@@ -703,6 +894,7 @@ mod tests {
                 required: true,
                 default: None,
             }],
+            windows: HashMap::new(),
             steps: vec![make_step("click")],
         };
 
@@ -732,6 +924,7 @@ mod tests {
                 required: true,
                 default: None,
             }],
+            windows: HashMap::new(),
             steps: vec![make_step("click")],
         };
 
@@ -752,6 +945,7 @@ mod tests {
                 required: false,
                 default: Some(serde_json::Value::String("default body".to_string())),
             }],
+            windows: HashMap::new(),
             steps: vec![make_step("click")],
         };
 
@@ -768,6 +962,7 @@ mod tests {
         let engine = RecipeEngine::new_in_memory();
         let step = RecipeStep {
             action: "type".to_string(),
+            window: None,
             app: None,
             target: None,
             text: Some("Hello ${name}, welcome to ${app}".to_string()),
@@ -806,6 +1001,7 @@ mod tests {
         let engine = RecipeEngine::new_in_memory();
         let step = RecipeStep {
             action: "click".to_string(),
+            window: None,
             app: None,
             target: Some(StepTarget::Target(
                 serde_json::from_value(serde_json::json!({
@@ -894,9 +1090,11 @@ mod tests {
                     default: None,
                 },
             ],
+            windows: HashMap::new(),
             steps: vec![
                 RecipeStep {
                     action: "click".to_string(),
+                    window: None,
                     app: None,
                     target: Some(StepTarget::Target(
                         serde_json::from_str(r#"{"app": "Chrome", "window": "Gmail", "selector": {"name": "Compose", "role": "button"}}"#).unwrap(),
@@ -916,6 +1114,7 @@ mod tests {
                 },
                 RecipeStep {
                     action: "type".to_string(),
+                    window: None,
                     app: None,
                     target: Some(StepTarget::Target(
                         serde_json::from_str(r#"{"selector": {"role": "textfield", "name": "To"}}"#).unwrap(),

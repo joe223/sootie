@@ -833,7 +833,7 @@ mod tests {
         let config = LogConfig::default();
         let logger = SootieLogger::new(config);
         let log = ToolCallLog {
-            tool_name: "sootie_find".to_string(),
+            tool_name: "sootie_find_element".to_string(),
             request_id: Some(serde_json::Value::Number(2.into())),
             arguments: serde_json::json!({"role": "button"}),
             success: false,

@@ -18,5 +18,9 @@ thiserror.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.2", features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.2", features = ["NSString"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

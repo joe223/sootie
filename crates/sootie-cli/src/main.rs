@@ -132,8 +132,7 @@ fn resolve_log_file_path(log_file: Option<String>) -> PathBuf {
 }
 
 fn init_logging(log_level: &str, log_path: &Path) -> Result<()> {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+    let env_filter = EnvFilter::new(log_level);
 
     let log_dir = log_path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(log_dir)?;

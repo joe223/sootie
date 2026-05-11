@@ -402,6 +402,8 @@ pub struct ResolvedElement {
     pub index: Option<u32>,
     #[serde(default)]
     pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_region: Option<Bounds>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1443,6 +1445,7 @@ mod tests {
             coordinate: Coordinate { x: 350.0, y: 420.0 },
             index: Some(0),
             confidence: Some(0.92),
+            source_region: None,
         };
         let json = serde_json::to_string(&element).unwrap();
         let deserialized: ResolvedElement = serde_json::from_str(&json).unwrap();
@@ -1496,6 +1499,7 @@ mod tests {
                     coordinate: Coordinate { x: 350.0, y: 420.0 },
                     index: Some(0),
                     confidence: Some(0.92),
+                    source_region: None,
                 },
                 ResolvedElement {
                     role: "button".to_string(),
@@ -1516,6 +1520,7 @@ mod tests {
                     coordinate: Coordinate { x: 460.0, y: 420.0 },
                     index: Some(1),
                     confidence: Some(0.78),
+                    source_region: None,
                 },
             ],
             confidence: Some(serde_json::json!({

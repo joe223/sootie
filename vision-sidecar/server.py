@@ -37,6 +37,7 @@ class ServerState:
     def __init__(self):
         self.model = None
         self.processor = None
+        self.tokenizer = None
         self.auth_token = None
         self.load_lock = threading.Lock()
         self.load_condition = threading.Condition(self.load_lock)
@@ -52,18 +53,36 @@ class ServerState:
 state = ServerState()
 
 GROUNDING_SYSTEM_PROMPT = (
-    "Based on the screenshot of the page, I give a text description and you "
-    "return its corresponding location only if the described target is visible. "
-    "Coordinates are relative to the screenshot and scaled from 0 to 1. "
-    "Return only JSON in this shape: "
-    "{\"matches\":[{\"label\":\"target\",\"point\":[x,y],\"confidence\":0.9}]}. "
-    "If the target is not visible, return {\"matches\":[]}. Do not guess."
+    "Based on the screenshot of the window, I give a text description of a target. "
+    "Return at most 5 likely visible target candidates, sorted from most likely to least likely. "
+    "The target may be any UI object or visual element, such as a button, switch, field, icon, "
+    "canvas item, color swatch, or another screen target. Coordinates and bounding boxes are "
+    "relative to the screenshot and scaled from 0 to 1. Return compact JSON only in this shape: "
+    "{\"matches\":[{\"label\":\"short description\",\"point\":[x,y],\"bbox\":{\"x\":x,\"y\":y,\"width\":w,\"height\":h},\"confidence\":0.9}]}. "
+    "Do not repeat candidates. If no likely target is visible, return {\"matches\":[]}. Do not guess."
 )
+
+def now_ms():
+    return time.perf_counter() * 1000.0
+
+def elapsed_ms(start_ms):
+    return round(now_ms() - start_ms, 2)
+
+def grounding_max_tokens():
+    raw = os.environ.get("SOOTIE_GROUNDING_MAX_TOKENS", "96")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 160
+    return max(32, min(value, 512))
 
 def reset_idle_timer():
     """Reset idle timeout timer on each request."""
     if state.idle_timer:
         state.idle_timer.cancel()
+        state.idle_timer = None
+    if state.idle_timeout <= 0:
+        return
     state.last_request_time = time.time()
     state.idle_timer = threading.Timer(state.idle_timeout, idle_exit)
     state.idle_timer.start()
@@ -511,8 +530,10 @@ def load_vlm():
                 # macOS: MLX VLM
                 from mlx_vlm import load, generate
                 from mlx_vlm.utils import load_config
+                from transformers import AutoTokenizer
 
                 state.model, state.processor = load(state.model_path)
+                state.tokenizer = AutoTokenizer.from_pretrained(state.model_path)
                 state.model_loaded = True
                 print("MLX VLM model loaded successfully")
             else:
@@ -599,6 +620,21 @@ class VisionHandler(BaseHTTPRequestHandler):
             }
             
             self.send_json_response(200, health_data)
+        elif self.path == "/warmup":
+            reset_idle_timer()
+            started = now_ms()
+            if load_vlm():
+                self.send_json_response(200, {
+                    "status": "ready",
+                    "models_loaded": state.model_loaded,
+                    "duration_ms": elapsed_ms(started),
+                })
+            else:
+                self.send_error_response(503, {
+                    "status": "error",
+                    "error": state.load_error or "Model preload failed",
+                    "duration_ms": elapsed_ms(started),
+                })
         else:
             self.send_error_response(404, {"error": "Not found"})
     
@@ -624,22 +660,27 @@ class VisionHandler(BaseHTTPRequestHandler):
     
     def handle_ground(self):
         """Handle /ground endpoint for coordinate grounding."""
+        total_start = now_ms()
+        timings = {}
         debug_log = "/tmp/vision_flow.txt"
         with open(debug_log, "a") as df:
             df.write(f"\n=== handle_ground called ===\n")
         
         # Load model if needed
+        load_start = now_ms()
         if not load_vlm():
             with open(debug_log, "a") as df:
                 df.write(f"Model load failed: {state.load_error}\n")
             self.send_error_response(503, {"error": f"Model load failed: {state.load_error}"})
             return
+        timings["model_load_ms"] = elapsed_ms(load_start)
         
         with open(debug_log, "a") as df:
             df.write(f"Model loaded successfully\n")
         
         try:
             # Read request
+            request_start = now_ms()
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length == 0:
                 self.send_error_response(400, {"error": "Empty request body"})
@@ -647,6 +688,7 @@ class VisionHandler(BaseHTTPRequestHandler):
             
             body = self.rfile.read(content_length)
             data = json.loads(body)
+            timings["request_read_ms"] = elapsed_ms(request_start)
             
             # Extract params
             task_desc = data.get("task_desc", "")
@@ -661,12 +703,14 @@ class VisionHandler(BaseHTTPRequestHandler):
                 self.send_error_response(400, {"error": f"Image file not found: {local_image_path}"})
                 return
 
+            image_start = now_ms()
             img = Image.open(image_path)
             if img.format not in ["JPEG", "PNG"]:
                 self.send_error_response(400, {"error": f"Invalid image format {img.format}, only JPEG/PNG allowed"})
                 return
 
             validate_image_input(image_path.read_bytes(), max_size_mb=10)
+            timings["image_open_validate_ms"] = elapsed_ms(image_start)
             
             # Debug log file
             debug_log = "/tmp/vision_debug.txt"
@@ -678,14 +722,19 @@ class VisionHandler(BaseHTTPRequestHandler):
             
             if sys.platform == "darwin":
                 # macOS: MLX VLM
-                from transformers import AutoTokenizer
-                tokenizer = AutoTokenizer.from_pretrained(state.model_path)
+                prompt_start = now_ms()
+                tokenizer = state.tokenizer
+                if tokenizer is None:
+                    from transformers import AutoTokenizer
+                    tokenizer = AutoTokenizer.from_pretrained(state.model_path)
+                    state.tokenizer = tokenizer
                 chat = [{"role": "user", "content": [
                     {"type": "text", "text": GROUNDING_SYSTEM_PROMPT},
                     {"type": "image", "image": local_image_path},
                     {"type": "text", "text": task_desc}
                 ]}]
                 formatted = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
+                timings["prompt_ms"] = elapsed_ms(prompt_start)
                 
                 with open(debug_log, "a") as df:
                     df.write(f"Formatted prompt: {formatted[:200]}\n")
@@ -695,17 +744,19 @@ class VisionHandler(BaseHTTPRequestHandler):
                     with open(debug_log, "a") as df:
                         df.write("Using non-streaming API...\n")
                     
+                    infer_start = now_ms()
                     result_text = extract_generation_text(
                         generate(
                             state.model,
                             state.processor,
                             formatted,
                             image=local_image_path,
-                            max_tokens=128,
+                            max_tokens=grounding_max_tokens(),
                             temp=0.0,
                             verbose=False,
                         )
                     )
+                    timings["infer_ms"] = elapsed_ms(infer_start)
                     
                     with open(debug_log, "a") as df:
                         df.write(f"Non-streaming result: '{result_text}'\n")
@@ -719,15 +770,26 @@ class VisionHandler(BaseHTTPRequestHandler):
                     return
             else:
                 # Linux: Transformers
+                prompt_start = now_ms()
                 prompt = f"{GROUNDING_SYSTEM_PROMPT}\n{task_desc}"
                 inputs = state.processor(images=[img], text=[prompt], return_tensors="pt")
-                output_ids = state.model.generate(**inputs, max_new_tokens=128)
+                timings["prompt_ms"] = elapsed_ms(prompt_start)
+                infer_start = now_ms()
+                output_ids = state.model.generate(**inputs, max_new_tokens=grounding_max_tokens())
+                timings["infer_ms"] = elapsed_ms(infer_start)
+                decode_start = now_ms()
                 result_text = state.processor.decode(output_ids[0], skip_special_tokens=True)
+                timings["decode_ms"] = elapsed_ms(decode_start)
 
             # Log raw response for debugging
             print(f"[Vision] Raw model response: {result_text[:500]}")
 
+            parse_start = now_ms()
             result = parse_grounding_response(result_text, img.width, img.height, task_desc)
+            timings["parse_ms"] = elapsed_ms(parse_start)
+            timings["total_ms"] = elapsed_ms(total_start)
+            result["timings"] = timings
+            print(f"[Vision] Timings: {timings}")
             print(f"[Vision] Final result: {result}")
             
             self.send_json_response(200, result)
@@ -755,7 +817,7 @@ def main():
     parser = argparse.ArgumentParser(description="Vision sidecar server")
     parser.add_argument("--port", type=int, default=9876, help="HTTP port")
     parser.add_argument("--model-path", type=str, default=None, help="Model directory path")
-    parser.add_argument("--idle-timeout", type=int, default=600, help="Idle timeout in seconds")
+    parser.add_argument("--idle-timeout", type=int, default=600, help="Idle timeout in seconds; 0 disables auto-exit")
     parser.add_argument("--health-check", action="store_true", help="Run health check and exit")
     parser.add_argument("--preload", action="store_true", help="Preload model at startup")
     parser.add_argument("--version", action="store_true", help="Print version and exit")
@@ -808,7 +870,7 @@ def main():
     
     # Start idle timer
     reset_idle_timer()
-    
+
     server.serve_forever()
 
 if __name__ == "__main__":
