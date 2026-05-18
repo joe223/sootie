@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${SOOTIE_VERSION:-$(awk -F'"' '/^version = / { print $2; exit }' "$ROOT/Cargo.toml")}"
 REPO="${SOOTIE_REPO:-joe223/sootie}"
-RELEASE_BASE="${SOOTIE_RELEASE_BASE_URL:-https://github.com/$REPO/releases/download/v$VERSION}"
+RELEASE_BASE="${SOOTIE_RELEASE_BASE_URL:-https://raw.githubusercontent.com/$REPO/release-assets-v$VERSION}"
 HOMEBREW_FORMULA_URL="${SOOTIE_HOMEBREW_FORMULA_URL:-https://raw.githubusercontent.com/joe223/homebrew-sootie/HEAD/Formula/sootie.rb}"
 APT_BASE_URL="${SOOTIE_APT_BASE_URL:-https://raw.githubusercontent.com/$REPO/apt}"
 
