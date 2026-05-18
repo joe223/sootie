@@ -1,15 +1,16 @@
 # Distribution
 
 Sootie has one package-manager install path per supported desktop platform.
-The release workflow must publish every package entrypoint before a release is
-considered installable.
+The canonical release path is manual and does not depend on GitHub Actions.
+Every published release must make the Homebrew tap, static release assets, and
+apt repository reachable before the release is considered installable.
 
 ## User Install Targets
 
 | Platform | User command | Published by |
 | --- | --- | --- |
-| macOS | `brew install joe223/sootie/sootie` | `.github/workflows/release.yml` updates `joe223/homebrew-sootie` |
-| Linux | `sudo apt-get install sootie` after adding the Sootie apt source | `.github/workflows/release.yml` publishes the `apt` branch |
+| macOS | `brew install joe223/sootie/sootie` | `scripts/release.sh --push` updates `joe223/homebrew-sootie` |
+| Linux | `sudo apt-get install sootie` after adding the Sootie apt source | `scripts/release.sh --push` updates the `apt` branch |
 | Windows | To be decided | No public package-manager promise yet |
 
 Linux users add the apt source once:
@@ -31,30 +32,39 @@ sootie doctor --check
 The default CLI output is human-readable. Automation that needs the structured
 payload must add `--raw`, for example `sootie doctor --check --raw`.
 
-## Release Workflow
+## Manual Release Workflow
 
-Publishing a tag such as `v0.1.0` runs `.github/workflows/release.yml`. The tag
-version must match the workspace version in `Cargo.toml`.
+Run the release script from a clean Sootie checkout:
 
-The workflow publishes these release artifacts:
-
-```text
-sootie-0.1.0-macos-arm64.tar.gz
-sootie-0.1.0-macos-x64.tar.gz
-sootie_0.1.0_amd64.deb
-sootie.rb
+```bash
+scripts/release.sh 0.1.0 --push
 ```
 
-It also updates:
+The version must match the workspace version in `Cargo.toml`. The script builds
+and publishes:
 
-- `joe223/homebrew-sootie` with a checksum-pinned formula for macOS arm64 and
-  x64.
-- The `apt` branch in this repository with `dists/`, `pool/`, `Release`,
-  `Packages`, `Packages.gz`, `sootie.list`, and `sootie.sources`.
+```text
+release-assets/v0.1.0/sootie-0.1.0-macos-arm64.tar.gz
+release-assets/v0.1.0/sootie-0.1.0-macos-x64.tar.gz
+release-assets/v0.1.0/sootie_0.1.0_amd64.deb
+apt/dists/stable/Release
+apt/dists/stable/main/binary-amd64/Packages.gz
+apt/sootie.list
+```
 
-Set the `HOMEBREW_TAP_TOKEN` repository secret before publishing. The workflow
-fails the release if it cannot update the Homebrew tap, because a GitHub release
-without a working `brew install` path is not considered publishable.
+It also updates `joe223/homebrew-sootie` with a checksum-pinned formula for
+macOS arm64 and x64, then runs `scripts/check-distribution-entrypoints.sh`
+against the public URLs.
+
+The `release-assets` branch is versioned by directory. Do not create a new
+asset branch for every version. Release assets are immutable: never overwrite
+files under an existing `vX.Y.Z/` directory. Publish a new patch version instead.
+
+The `apt` branch is the live apt repository. It can be replaced on every release
+because apt clients use the current `stable` metadata.
+
+The GitHub Actions workflow is optional. If account billing or runner capacity
+prevents Actions from running, continue using the manual release script.
 
 ## Local Package Builds
 
@@ -77,9 +87,9 @@ Generate a Homebrew formula after both macOS tarballs exist:
 ```bash
 scripts/render-homebrew-formula.sh \
   0.1.0 \
-  https://github.com/joe223/sootie/releases/download/v0.1.0/sootie-0.1.0-macos-arm64.tar.gz \
+  https://raw.githubusercontent.com/joe223/sootie/release-assets/v0.1.0/sootie-0.1.0-macos-arm64.tar.gz \
   dist/sootie-0.1.0-macos-arm64.tar.gz \
-  https://github.com/joe223/sootie/releases/download/v0.1.0/sootie-0.1.0-macos-x64.tar.gz \
+  https://raw.githubusercontent.com/joe223/sootie/release-assets/v0.1.0/sootie-0.1.0-macos-x64.tar.gz \
   dist/sootie-0.1.0-macos-x64.tar.gz
 ```
 
@@ -115,7 +125,7 @@ scripts/build-macos-tarball.sh
 bash -n scripts/build-deb.sh scripts/build-apt-repo.sh scripts/render-homebrew-formula.sh scripts/check-distribution-entrypoints.sh
 ```
 
-After the release workflow finishes, verify the public installation entrypoints:
+After publishing, verify the public installation entrypoints:
 
 ```bash
 scripts/check-distribution-entrypoints.sh

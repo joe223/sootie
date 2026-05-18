@@ -17,9 +17,14 @@ DIST="$ROOT/dist"
 STAGE="$DIST/deb/sootie_${VERSION}_${DEB_ARCH}"
 DEB="$DIST/sootie_${VERSION}_${DEB_ARCH}.deb"
 
-if ! command -v dpkg-deb >/dev/null 2>&1; then
-  echo "dpkg-deb is required to build the Debian package" >&2
-  exit 1
+if [[ -z "$TARGET" && "$(uname -s)" == "Darwin" ]]; then
+  case "$DEB_ARCH" in
+    amd64) TARGET="x86_64-unknown-linux-musl" ;;
+    arm64) TARGET="aarch64-unknown-linux-musl" ;;
+  esac
+  if [[ -z "${RUSTFLAGS:-}" ]]; then
+    export RUSTFLAGS="-C linker=rust-lld"
+  fi
 fi
 
 if [[ "$BUILD" == "1" ]]; then
@@ -62,8 +67,28 @@ cp "$ROOT/vision-sidecar/requirements.txt" "$STAGE/usr/share/sootie/vision-sidec
 cp "$ROOT/vision-sidecar/download_model.py" "$STAGE/usr/share/sootie/vision-sidecar/download_model.py"
 chmod 0755 "$STAGE/usr/share/sootie/vision-sidecar/server.py" "$STAGE/usr/share/sootie/vision-sidecar/download_model.py"
 
-dpkg-deb --build --root-owner-group "$STAGE" "$DEB"
-SHA256="$(sha256sum "$DEB" | awk '{ print $1 }')"
+if command -v dpkg-deb >/dev/null 2>&1; then
+  dpkg-deb --build --root-owner-group "$STAGE" "$DEB"
+else
+  BUILD_DIR="$DIST/deb/build-${VERSION}-${DEB_ARCH}"
+  rm -rf "$BUILD_DIR"
+  mkdir -p "$BUILD_DIR"
+  printf '2.0\n' > "$BUILD_DIR/debian-binary"
+  (cd "$STAGE/DEBIAN" && tar -czf "$BUILD_DIR/control.tar.gz" .)
+  (cd "$STAGE" && tar -czf "$BUILD_DIR/data.tar.gz" ./usr)
+  rm -f "$DEB"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    (cd "$BUILD_DIR" && ar -qSc "$DEB" debian-binary control.tar.gz data.tar.gz)
+  else
+    (cd "$BUILD_DIR" && ar -qc "$DEB" debian-binary control.tar.gz data.tar.gz)
+  fi
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA256="$(sha256sum "$DEB" | awk '{ print $1 }')"
+else
+  SHA256="$(shasum -a 256 "$DEB" | awk '{ print $1 }')"
+fi
 
 cat <<EOF
 deb=$DEB
