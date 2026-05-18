@@ -1,0 +1,17 @@
+Origin: Sootie
+Label: Sootie
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: Sootie apt repository
+Date: Mon, 18 May 2026 10:51:28 +0000
+MD5Sum:
+ 4a399d81cd171c4f5a9533e0712a151c 820 main/binary-amd64/Packages
+ 3c14c139346baf1208c46a65af8d4f34 554 main/binary-amd64/Packages.gz
+SHA1:
+ 93dbb4d5e18520e2dbf8e0ecd97fda66f2599719 820 main/binary-amd64/Packages
+ 59e495f2e7ed2d868f0c4ceba52b464010b8d2db 554 main/binary-amd64/Packages.gz
+SHA256:
+ 37d1236a69dbdf4034cb38dd1fe97e3240d3fe317e3759d42827e3333f6c0820 820 main/binary-amd64/Packages
+ 2989a7131a4c6cb948e3d39fc60f2b9a909b10299bfde1a616ae56f2904d4f04 554 main/binary-amd64/Packages.gz
