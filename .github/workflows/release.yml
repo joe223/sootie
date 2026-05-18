@@ -1,148 +1,276 @@
-name: Release
+name: Release distribution
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  macos-package:
+    name: macOS ${{ matrix.package_arch }} package
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: sootie-macos-x64
-          - os: macos-latest
+          - os: macos-14
             target: aarch64-apple-darwin
-            artifact: sootie-macos-arm64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: sootie-linux-x64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: sootie-windows-x64.exe
-
-    runs-on: ${{ matrix.os }}
+            package_arch: arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            package_arch: x64
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Prepare binary
+      - name: Verify tag version matches Cargo workspace
         shell: bash
         run: |
-          mkdir -p release
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp target/${{ matrix.target }}/release/sootie.exe release/${{ matrix.artifact }}
-          else
-            cp target/${{ matrix.target }}/release/sootie release/${{ matrix.artifact }}
-            chmod +x release/${{ matrix.artifact }}
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            cargo_version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+            test "$tag_version" = "$cargo_version"
           fi
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: release/${{ matrix.artifact }}
+      - name: Build tarball
+        shell: bash
+        run: |
+          SOOTIE_TARGET="${{ matrix.target }}" \
+          SOOTIE_PACKAGE_ARCH="${{ matrix.package_arch }}" \
+          scripts/build-macos-tarball.sh
 
-  create-release:
-    needs: build-and-release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.package_arch }}
+          path: dist/sootie-*-macos-${{ matrix.package_arch }}.tar.gz
+          if-no-files-found: error
+
+  linux-deb:
+    name: Linux deb and apt repo
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
 
-      - name: Calculate checksums
-        id: checksums
+      - name: Verify tag version matches Cargo workspace
+        shell: bash
         run: |
-          cd artifacts
-          echo "## Checksums" > ../CHECKSUMS.txt
-          echo "" >> ../CHECKSUMS.txt
-          for file in */*; do
-            if [ -f "$file" ]; then
-              sha256sum "$file" >> ../CHECKSUMS.txt
-            fi
-          done
-          cat ../CHECKSUMS.txt
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            cargo_version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+            test "$tag_version" = "$cargo_version"
+          fi
 
-      - name: Create release
-        uses: softprops/action-gh-release@v1
+      - name: Build Debian package
+        shell: bash
+        run: SOOTIE_DEB_ARCH=amd64 scripts/build-deb.sh
+
+      - name: Build apt repository
+        shell: bash
+        run: |
+          version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          SOOTIE_APT_BASE_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/apt" \
+            scripts/build-apt-repo.sh "dist/sootie_${version}_amd64.deb"
+
+      - name: Verify local apt-get install
+        shell: bash
+        run: |
+          echo "deb [trusted=yes] file:${PWD}/dist/apt stable main" \
+            | sudo tee /etc/apt/sources.list.d/sootie-local.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y sootie
+          sootie tools | grep sootie_context
+
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.ref }}
-          name: Release v${{ steps.get_version.outputs.VERSION }}
-          body: |
-            ## Sootie v${{ steps.get_version.outputs.VERSION }}
+          name: debian-package
+          path: dist/sootie_*_amd64.deb
+          if-no-files-found: error
 
-            ### Quick Install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo
+          path: dist/apt
+          if-no-files-found: error
 
-            **macOS / Linux:**
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/joe223/sootie/main/install.sh | bash
-            ```
+  homebrew-formula:
+    name: Render Homebrew formula
+    runs-on: ubuntu-22.04
+    needs:
+      - macos-package
 
-            **Windows (PowerShell):**
-            ```powershell
-            iwr -useb https://raw.githubusercontent.com/joe223/sootie/main/install.ps1 | iex
-            ```
+    steps:
+      - uses: actions/checkout@v4
 
-            ### Manual Installation
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          path: dist
+          merge-multiple: true
 
-            **macOS (Intel):**
-            ```bash
-            curl -L https://github.com/joe223/sootie/releases/download/v${{ steps.get_version.outputs.VERSION }}/sootie-macos-x64 -o sootie
-            chmod +x sootie
-            ./sootie setup
-            ```
+      - name: Render formula
+        shell: bash
+        run: |
+          version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}"
+          scripts/render-homebrew-formula.sh "$version" \
+            "${release_base}/sootie-${version}-macos-arm64.tar.gz" \
+            "dist/sootie-${version}-macos-arm64.tar.gz" \
+            "${release_base}/sootie-${version}-macos-x64.tar.gz" \
+            "dist/sootie-${version}-macos-x64.tar.gz"
 
-            **macOS (ARM/M1/M2):**
-            ```bash
-            curl -L https://github.com/joe223/sootie/releases/download/v${{ steps.get_version.outputs.VERSION }}/sootie-macos-arm64 -o sootie
-            chmod +x sootie
-            ./sootie setup
-            ```
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: dist/homebrew/sootie.rb
+          if-no-files-found: error
 
-            **Linux:**
-            ```bash
-            curl -L https://github.com/joe223/sootie/releases/download/v${{ steps.get_version.outputs.VERSION }}/sootie-linux-x64 -o sootie
-            chmod +x sootie
-            ./sootie setup
-            ```
+  github-release:
+    name: Publish GitHub release assets
+    runs-on: ubuntu-22.04
+    needs:
+      - macos-package
+      - linux-deb
+      - homebrew-formula
 
-            **Windows:**
-            Download `sootie-windows-x64.exe` and run `sootie setup`.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          path: release
+          merge-multiple: true
 
-            ### Package Managers
-
-            - **macOS**: `brew tap joe223/sootie && brew install sootie`
-            - **Windows**: `scoop bucket add sootie https://github.com/joe223/sootie && scoop install sootie`
-
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
           files: |
-            artifacts/sootie-macos-x64/*
-            artifacts/sootie-macos-arm64/*
-            artifacts/sootie-linux-x64/*
-            artifacts/sootie-windows-x64.exe/*
-            CHECKSUMS.txt
-          draft: false
-          prerelease: false
+            release/sootie-*.tar.gz
+            release/sootie_*.deb
+            release/sootie.rb
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  publish-homebrew-tap:
+    name: Publish Homebrew tap
+    runs-on: ubuntu-22.04
+    needs:
+      - github-release
+      - homebrew-formula
+
+    steps:
+      - name: Check Homebrew tap token
+        id: tap-token
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "$HOMEBREW_TAP_TOKEN" ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN is not set; expecting the tap to be updated outside this workflow."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.tap-token.outputs.available == 'true'
+        with:
+          name: homebrew-formula
+          path: formula
+
+      - uses: actions/checkout@v4
+        if: steps.tap-token.outputs.available == 'true'
+        with:
+          repository: joe223/homebrew-sootie
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Commit formula to tap
+        if: steps.tap-token.outputs.available == 'true'
+        shell: bash
+        run: |
+          mkdir -p tap/Formula
+          cp formula/sootie.rb tap/Formula/sootie.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/sootie.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula already up to date."
+          else
+            version="$(awk -F'"' '/version "/ { print $2; exit }' Formula/sootie.rb)"
+            git commit -m "Publish sootie ${version}"
+            git push
+          fi
+
+  publish-apt-branch:
+    name: Publish apt branch
+    runs-on: ubuntu-22.04
+    needs:
+      - github-release
+      - linux-deb
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: apt-repo
+          path: apt-repo
+
+      - name: Push apt repository branch
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git init publish
+          cd publish
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch origin apt --depth=1; then
+            git checkout apt
+          else
+            git checkout --orphan apt
+          fi
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R ../apt-repo/. .
+          touch .nojekyll
+          git add --all
+          if git diff --cached --quiet; then
+            echo "apt branch already up to date."
+          else
+            git commit -m "Publish apt repository for ${GITHUB_REF_NAME}"
+            git push origin HEAD:apt
+          fi
+
+  verify-public-entrypoints:
+    name: Verify public install entrypoints
+    runs-on: ubuntu-22.04
+    needs:
+      - publish-homebrew-tap
+      - publish-apt-branch
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Homebrew, release, and apt URLs
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if scripts/check-distribution-entrypoints.sh; then
+              exit 0
+            fi
+            sleep 20
+          done
+          scripts/check-distribution-entrypoints.sh

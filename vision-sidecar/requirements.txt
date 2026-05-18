@@ -1,5 +1,9 @@
-mlx>=0.21.0,<1.0.0
-mlx-lm>=0.21.5,<0.30.0
-transformers>=4.38.0,<4.49.0
-numpy>=1.23.4
 Pillow>=10.0.0,<12.0.0
+accelerate>=0.30.0
+huggingface-hub>=0.23.0,<1.0.0
+numpy>=1.23.4
+qwen-vl-utils>=0.0.8
+safetensors>=0.4.0
+torch>=2.2.0
+torchvision>=0.17.0
+transformers>=4.49.0,<5.0.0

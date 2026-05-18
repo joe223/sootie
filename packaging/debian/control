@@ -1,0 +1,13 @@
+Package: sootie
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Sootie maintainers <maintainers@example.invalid>
+Homepage: https://github.com/joe223/sootie
+License: MIT OR Apache-2.0
+Depends: ca-certificates, python3 (>= 3.10), python3 (<< 3.14), python3-venv, python3-pip
+Recommends: xdotool, wmctrl, x11-utils, python3-pyatspi, gnome-screenshot | imagemagick
+Description: Rust computer-use MCP runtime for desktop apps and browsers
+ Sootie gives AI agents one portable MCP tool surface for desktop apps,
+ browser pages, screenshots, recipes, and vision grounding.

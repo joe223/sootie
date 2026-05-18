@@ -1,83 +1,123 @@
-<div align="center">
-<img src="./sootie.png" alt="Sootie Logo" width="200">
-</div>
-<h1 align="center">Sootie</h1>
-<p align="center"><em>Cross-platform computer-use for AI agents.</em></p>
-
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-black.svg" alt="Platforms">
-  <img src="https://img.shields.io/badge/language-Rust-orange.svg" alt="Rust">
-  <img src="https://img.shields.io/badge/MCP-compatible-green.svg" alt="MCP Compatible">
+  <img src="logo.png" alt="Sootie logo" width="128">
 </p>
 
----
+<h1 align="center">Sootie</h1>
 
-Your AI agent can write code, run tests, search files. But it can't click a button, send an email, or fill out a form. It lives inside a chat box.
+<p align="center">
+  A Rust computer-use runtime that gives AI agents one portable MCP tool surface
+  for desktop apps, browser pages, screenshots, recipes, and vision grounding.
+</p>
 
-Sootie changes that. One install, and any AI agent can see and operate every app on your Mac, Windows, or Linux desktop.
+<p align="center">
+  <a href="docs/api/mcp-tools-reference.md">Tools</a>
+  ·
+  <a href="docs/guides/browser-cdp.md">CDP guide</a>
+  ·
+  <a href="docs/api/recipe-schema.md">Recipes</a>
+  ·
+  <a href="docs/development/runtime-smoke-runbook.md">Runtime checks</a>
+</p>
+
+## Why Sootie
+
+Sootie is built for agents that need to operate real computers through a stable
+tool contract instead of one-off UI scripts. It runs as an MCP server over
+stdio, exposes `sootie_*` tools, and keeps the public argument and response
+shapes portable across macOS, Linux, and Windows.
+
+The current runtime resolves targets through the strongest available signal:
+browser CDP for DOM-backed pages, the native desktop backend for app and window
+state, and vision grounding as the final fallback. A `vision-only` mode is also
+available when you want to test or force the visual grounding path directly.
+
+## What It Can Do
+
+- Inspect the current desktop: apps, windows, URLs, focused elements, visible
+  text, screenshots, and interactive elements.
+- Act on apps and pages: click, type, press keys, hotkeys, scroll, hover,
+  long-press, drag, focus windows, and manage window geometry.
+- Use CDP for browser content when Chrome or Edge exposes a remote debugging
+  endpoint, without adding a separate browser-only tool family.
+- Fall back to vision grounding for described targets, including annotated JPG
+  history under `/tmp/sootie/vision_history/grounding/`.
+- Save and run JSON recipes, and record successful actions through learning
+  mode.
+- Report runtime readiness with `sootie doctor` before an MCP client depends on
+  the desktop session.
+
+## Install
+
+macOS:
+
+```bash
+brew install joe223/sootie/sootie
+sootie setup
+```
+
+Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joe223/sootie/apt/sootie.list \
+  | sudo tee /etc/apt/sources.list.d/sootie.list >/dev/null
+sudo apt-get update
+sudo apt-get install sootie
+sootie setup
+```
+
+Windows:
+
+The Windows package-manager path is not finalized yet. Until it is published,
+install from source with Cargo:
+
+```powershell
+git clone https://github.com/joe223/sootie.git
+cd sootie
+cargo install --locked --path crates/sootie-cli
+sootie setup
+```
+
+From an existing checkout on any platform, the development install path is:
+
+```bash
+cargo install --locked --path crates/sootie-cli
+```
 
 ## Quick Start
 
-### 1. Installation
-
-**macOS**
-
-```bash
-# Homebrew (recommended)
-brew tap joe223/sootie
-brew install sootie
-
-# Or use install script
-curl -fsSL https://raw.githubusercontent.com/joe223/sootie/main/install.sh | bash
-```
-
-**Linux**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/joe223/sootie/main/install.sh | bash
-```
-
-**Windows**
-
-```powershell
-# Scoop (recommended)
-scoop bucket add sootie https://github.com/joe223/sootie
-scoop install sootie
-
-# Or use PowerShell install script
-iwr -useb https://raw.githubusercontent.com/joe223/sootie/main/install.ps1 | iex
-```
-
-**Via Agent (Claude Code / OpenCode / etc.)**
-
-Copy and paste this to your AI agent:
-
-```text
-Install Sootie for me from https://github.com/joe223/sootie. Use Homebrew on macOS, the install script (https://raw.githubusercontent.com/joe223/sootie/main/install.sh) on Linux, or Scoop on Windows. After installation, run `sootie setup` to initialize.
-```
-
-The agent will detect your platform and execute the appropriate command.
-
-### 2. Initialization
-
-After installation, run:
+Create the user config:
 
 ```bash
 sootie setup
 ```
 
-This configures permissions, Chrome CDP, and optionally downloads the vision sidecar model (~2GB).
+This writes `~/.config/sootie.config.toml`, installs the bundled vision sidecar,
+creates the managed Python environment, downloads the default ShowUI-2B model
+when it is missing, and verifies that the sidecar can preload the model. Setup
+prints progress while it works. A successful setup means the next `sootie serve`
+and `sootie sidecar` runs are expected to work: Sootie verifies the desktop
+runtime, MCP initialization, tool listing, sidecar startup, and model preload
+before returning success.
 
-### 3. Usage (MCP Configuration)
+Vision setup needs a Python 3.10-3.13 interpreter. If your default `python3` is
+outside that range, install a compatible Python first.
 
-To use Sootie, configure your AI agent (like Claude Code, Cursor, or any MCP client) to start the Sootie server.
+CLI commands print a readable summary by default. Add `--raw` when a script
+needs the original JSON payload, for example `sootie setup --raw`.
 
-**Example: Claude Desktop Configuration** (`claude_desktop_config.json`):
+Check whether the current desktop session is usable:
+
+```bash
+sootie doctor --check
+```
+
+Then configure your MCP client to start Sootie:
+
 ```json
 {
   "mcpServers": {
     "sootie": {
+      "type": "stdio",
       "command": "sootie",
       "args": ["serve"]
     }
@@ -85,347 +125,176 @@ To use Sootie, configure your AI agent (like Claude Code, Cursor, or any MCP cli
 }
 ```
 
-**Example: Cursor Configuration**:
-Go to `Settings` -> `Features` -> `MCP Servers` and add:
-- Name: `sootie`
-- Type: `command`
-- Command: `sootie serve`
+For local development without installing the binary, run:
 
----
-
-## Why Sootie?
-
-Other computer-use tools are either platform-locked or rely on screenshots and pixel guessing. Sootie reads the native accessibility tree on each platform for structured, labeled data about every element in every app. When the accessibility tree isn't enough, it falls back to CDP for precise browser control, then to a vision model for visual grounding.
-
-- **Cross-platform** — macOS, Windows, Linux. One API, any OS.
-- **Accessibility-first** — Native AT tree (AX/UIA/AT-SPI2) for structured data. CDP for browsers. Vision fallback when needed.
-- **CDP-first for web** — Chrome DevTools Protocol bypasses the unreliable accessibility tree for web apps. No more AXGroup guessing.
-- **Local vision** — Isolated vision sidecar running locally for offline scenarios.
-- **Transparent workflows** — Recipes are JSON. Read every step before running. No black box.
-- **Open** — MCP protocol. Works with Claude Code, Cursor, VS Code, or any MCP client.
-
-| | | Sootie | Ghost OS | Browser-use | Anthropic Computer Use | OpenAI Operator |
-|:---:|------|:--:|:--:|:--:|:--:|:--:|
-| 🖥️ | **Platforms** | macOS, Windows, Linux | macOS only | Browser only | Linux (Docker env) | Browser only |
-| 👀 | **How it sees** | AT tree + CDP + Vision | AT tree + Vision | Playwright (DOM) | Screenshots only | Screenshots only |
-| 🌐 | **Web apps** | CDP-first (precise DOM) | AX fallback (unreliable) | Playwright (DOM) | Pixel guessing | Pixel guessing |
-| 🧠 | **Workflows** | JSON recipes | JSON recipes | Code/Scripts | No | No |
-| 🔒 | **Data stays local** | Yes (tool itself) | Yes (tool itself) | Yes (tool itself) | Depends | No (cloud) |
-| 📖 | **Open source** | Apache 2.0 | MIT | MIT | Reference only | No |
-
-## How It Works
-
-Sootie connects to your AI agent through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) and exposes tools to see and operate your desktop.
-
-```mermaid
-flowchart TD
-    classDef default fill:none,stroke:#000,stroke-width:1px,color:#000;
-    classDef external fill:none,stroke:#000,stroke-width:1px,stroke-dasharray: 3 3,color:#000;
-    classDef invisible fill:none,stroke:none,color:#000;
-
-    Agent["AI Agent (Claude Code, Cursor, any MCP client)"]:::external
-    
-    Sootie["Sootie (Rust Core)"]
-    
-    Agent -- "MCP Protocol (stdio / SSE)" --> Sootie
-
-    P["Perception (AT tree)"]
-    A["Actions (click, type, scroll)"]
-    C["CDP Bridge (browser control)"]
-    V["Vision (isolated sidecar)"]
-    R["Recipes (reusable workflows)"]
-
-    Sootie --- P
-    Sootie --- A
-    Sootie --- C
-    Sootie --- V
-    Sootie --- R
+```bash
+cargo run -p sootie-cli -- serve
 ```
 
-Built in Rust. The core is a single lightweight binary, with an optional isolated sidecar process for local vision fallback. By default, `sootie serve` writes runtime logs to a platform-local file under the Sootie data directory.
+## Runtime Check
 
-### The Action Cascade
+Before connecting an agent, check whether the current desktop session is usable:
 
-Sootie is designed around a reliable, multi-tier fallback architecture. It attempts to execute every action using the fastest, most precise method available, automatically degrading to visual models only when structured data fails.
-
-```mermaid
-flowchart LR
-    classDef default fill:none,stroke:#000,stroke-width:1px,color:#000;
-    classDef decision fill:none,stroke:#000,stroke-width:1px,stroke-dasharray: 5 5,color:#000;
-    
-    A[Action Request] --> B{Structured Available?}
-    B -->|Yes| C[AT / CDP API]
-    B -->|No| D[Visual Fallback]
-    
-    C -->|Success| E[Native Execution]
-    C -->|Failure| D
-    
-    D -->|GUI-Actor-2B| F[Coordinate Resolution]
-    F --> G[Synthetic Input]
-    
-    class B decision;
+```bash
+sootie doctor
+sootie doctor --check
+sootie tools
 ```
 
-**1. Structural First (AT / CDP)**
-Sootie always prefers exact, structural targets.
-- For desktop applications, it uses OS-level Accessibility APIs (macOS AXUIElement, Windows UIAutomation, Linux AT-SPI2).
-- For web applications, it connects directly via the Chrome DevTools Protocol (CDP) to parse the DOM tree.
-- *Why?* It's instantaneous, exact, unaffected by screen resolution, and supports background execution or off-screen elements.
+`sootie doctor` prints a readable readiness summary. `sootie doctor --check`
+exits non-zero when the current session is not ready, which makes it suitable
+for scripts and smoke runs. Use `sootie doctor --raw` or
+`sootie doctor --check --raw` for the full diagnostic JSON. `sootie tools`
+prints a compact tool list; use `sootie tools --raw` for the MCP tool schema.
 
-**2. Visual Fallback (GUI-Actor-2B)**
-When an application uses custom rendering (e.g., Canvas, Flutter, older Qt apps) and does not expose proper accessibility trees, structured parsing fails.
-- Sootie captures the current window or screen state.
-- It passes the screenshot and the requested UI `Selector` (e.g., `role: button, name: Compose`) to **GUI-Actor-2B**, a lightweight vision model running locally in an isolated **Sidecar process**.
-- The sidecar architecture ensures that heavy ML inference environments don't bloat the main Rust binary and prevents GPU/inference crashes from taking down the MCP server.
-- The model visually parses the UI and returns the exact `(x, y)` coordinates of the target element.
+Default serve logs are written under the platform data directory. On macOS this
+is:
 
-**3. Synthetic Execution**
-If structural execution is unavailable or fails, Sootie uses the coordinates resolved by the Visual Fallback to simulate hardware-level input events.
-- It injects low-level OS mouse clicks (e.g., macOS `CGEvent`, Windows `SendInput`) at the calculated `(x, y)` location.
-- Keyboard input is similarly simulated to ensure the application reacts exactly as if a human user interacted with it.
-
-## Platform Support
-
-| Capability | macOS | Windows | Linux |
-|-----------|-------|---------|-------|
-| Accessibility tree | AX API (AXUIElement) | UI Automation (UIA) | AT-SPI2 |
-| Input simulation | CGEvent | SendInput | XTest / libei |
-| Screen capture | CGWindowListCreateImage | GDI / DXGI | XCB / PipeWire |
-| Browser control | CDP | CDP | CDP |
-| Visual fallback | GUI-Actor-2B (Sidecar) | GUI-Actor-2B (Sidecar) | GUI-Actor-2B (Sidecar) |
-
-## Tools
-
-Core interaction tools are backend-agnostic. Sootie uses one normalized target contract across native apps and web apps. Target-driven tools accept a nested `target` object with optional `app` and `window` scopes plus a required `selector` object.
-
-### Selector Scheme
-
-Selectors describe the target element, not the backend used to reach it. The scheme defines both flexible inputs for querying and stable outputs for resolved targets.
-
-#### 1. Input (Target Selection)
-Query tools such as `sootie_find`, `sootie_inspect`, and `sootie_wait` accept the same nested
-`target` shape used by target-driven action tools.
-
-- **App Input**: Can be a string (`"Chrome"`) or a partial object (`{ "name": "Chrome", "is_frontmost": true }`).
-- **Window Input**: Can be a string (`"Gmail"`) or a partial object to resolve ambiguity (`{ "title": "Gmail", "index": 0 }`).
-- **Selector Input**: Matches based on provided constraints (`{ "role": "button", "name": "Compose" }`).
-
-*Example Input:*
-```json
-{
-  "target": {
-    "app": "Chrome",
-    "window": { "title": "Gmail", "focused": true },
-    "selector": {
-      "role": "button",
-      "name": "Compose"
-    }
-  }
-}
+```text
+~/Library/Application Support/sootie/logs/YYYY-MM-DD-HH-MM-SS.log
 ```
 
-#### 2. Output (Resolved Target)
-When tools like `sootie_context` or `sootie_find` return a target, they always use a stable,
-fully resolved object structure. Agents should lift the relevant selector fields from this output
-into a canonical action `target` object rather than passing the resolved payload back unchanged.
+## Tool Surface
 
-**App Object**
-- `name` (string): Full application name (e.g., `"Google Chrome"`)
-- `bundle_id` (string): Exact OS package identifier (e.g., `"com.google.Chrome"`)
-- `is_frontmost` (boolean): Whether this app currently has OS focus
+Sootie exposes 29 MCP tools.
 
-**Window Object**
-- `id` (string): Exact OS-level or browser-level window ID (e.g., `"win_42"`)
-- `title` (string): Full window or tab title
-- `index` (number): 0-based depth index (`0` is frontmost)
-- `focused` (boolean): Whether this window is active within its app
-- `bounds` (object): Window screen coordinates and size (`{ "x": 0, "y": 0, "width": 1440, "height": 900 }`)
+| Area | Tools |
+| --- | --- |
+| Orientation and perception | `sootie_context`, `sootie_state`, `sootie_find`, `sootie_read`, `sootie_inspect`, `sootie_element_at`, `sootie_screenshot`, `sootie_parse_screen`, `sootie_ground`, `sootie_annotate` |
+| Actions | `sootie_click`, `sootie_type`, `sootie_press`, `sootie_hotkey`, `sootie_scroll`, `sootie_hover`, `sootie_long_press`, `sootie_drag`, `sootie_focus`, `sootie_window`, `sootie_wait` |
+| Recipes and learning | `sootie_recipes`, `sootie_run`, `sootie_recipe_show`, `sootie_recipe_save`, `sootie_recipe_delete`, `sootie_learn_start`, `sootie_learn_stop`, `sootie_learn_status` |
 
-**Element Object**
-- `role` (string): Normalized UI role (e.g., `"button"`)
-- `name` (string): Accessible label or computed name
-- `text` (string): Visible text content (if applicable)
-- `id` (string): Backend-specific ID (e.g., DOM id or AXIdentifier)
-- `state` (object): Current states (`{ "visible": true, "focused": false, "enabled": true }`)
-- `bounds` (object): Screen coordinates and size (`{ "x": 100, "y": 200, "width": 50, "height": 20 }`)
-- `index` (number): 0-based index to disambiguate identical siblings
+Every tool returns MCP content plus structured content with `success`, `data`,
+`context`, `error`, `suggestion`, and a `report` that includes duration and
+tool-call status. `tools/list` includes MCP annotations so clients can
+distinguish read-only inspection from mutating desktop actions.
 
-> **Note on Deep Inspection:** While `sootie_find` returns a list of matching `Element Objects`, using `sootie_inspect` on a single target returns a deep inspection payload including its immediate `children`, the `backend` used, supported `actions`, and the backend-specific `raw_metadata` for advanced recipe authoring.
+See [MCP Tools Reference](docs/api/mcp-tools-reference.md) for accepted fields,
+input envelopes, response shapes, and compatibility behavior.
 
-*Example Output (`sootie_find`):*
-```json
-{
-  "status": "unique",
-  "backend": "at_tree",
-  "app": {
-    "name": "Google Chrome",
-    "bundle_id": "com.google.Chrome",
-    "is_frontmost": true
-  },
-  "window": {
-    "id": "win_1042",
-    "title": "Inbox - user@gmail.com - Gmail",
-    "index": 0,
-    "focused": true,
-    "bounds": { "x": 0, "y": 25, "width": 1440, "height": 875 }
-  },
-  "elements": [
-    {
-      "role": "button",
-      "name": "Compose",
-      "id": "dom_compose_btn",
-      "state": { "visible": true, "enabled": true },
-      "bounds": { "x": 120, "y": 85, "width": 100, "height": 36 },
-      "coordinate": { "x": 170, "y": 103 },
-      "index": 0
-    }
-  ],
-  "confidence": null
-}
+## Browser Automation
+
+Sootie uses CDP internally when a supported browser exposes a debugging
+endpoint:
+
+```bash
+SOOTIE_CDP_PORT=9222 sootie serve
 ```
 
-### Perception
+macOS Chrome example:
 
-| Tool | What it does |
-|------|-------------|
-| `sootie_context` | Get the macro environment state: a tree of running apps and their open windows (with titles, IDs, and focus state). Does not include UI elements. |
-| `sootie_find_element` | Find UI elements from a short element description. Returns element positions, bounds, and metadata. |
-| `sootie_find_apps` | Find installed applications by name pattern (supports wildcards like '*Chrome*') |
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/tmp/sootie-chrome-profile
+```
 
-### Action
+Linux Chrome example:
 
-Action tools publish the same nested v2 target shape through `tools/list`:
+```bash
+google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/sootie-chrome-profile
+```
 
-- `target.app` (optional): app scope
-- `target.window` (optional): window scope
-- `target.selector` (required): at least one of `role`, `name`, `text`, or `id`
-- `sootie_drag` uses `from_target` and `to_target`
+On Windows, launch Chrome or Edge with `--remote-debugging-port=9222`, then run
+Sootie with `SOOTIE_CDP_PORT=9222`.
 
-Every `tools/call` response now includes `structuredContent`:
+CDP is used through the existing `sootie_*` tools. If CDP is unavailable or the
+target is outside browser content, Sootie falls back to the native desktop
+backend and screenshots. See [Browser Automation with CDP](docs/guides/browser-cdp.md).
 
-- Success: `{ "success": true, "message": "", "data": ... }`
-- Tool-level failure: `{ "success": false, "message": "...", "data": { "code", "details" } }`
+## Vision Grounding
 
-JSON-RPC errors remain reserved for invalid MCP envelope/method dispatch.
+By default, Sootie tries CDP and the platform backend first, then uses vision as
+the final target-resolution fallback. `sootie setup` writes the default sidecar
+URL and model path into `~/.config/sootie.config.toml`; environment variables
+can override the sidecar URL:
 
-| Tool | What it does | Additional Parameters |
-|------|-------------|----------------------|
-| `sootie_launch` | Launch a desktop app | None |
-| `sootie_find` | Resolve a canonical structured target | `target` with `selector`, optional `app`/`window` |
-| `sootie_find_element` | Find UI elements from a short element description | `el_description` (string), optional `window` scope |
-| `sootie_click` | Click a canonical action target | `target` as either `{ "selector": ... }` or `{ "coordinate": { "x", "y" } }`, `button`, `count` |
-| `sootie_type` | Type text into the focused element, or into a canonical action target when provided | `text` (string), optional `target`, `clear_first` (boolean) |
-| `sootie_press` | Press a key, optionally focusing a canonical action target first | `key` (e.g., "Return", "Tab", "Escape"), optional `target` |
-| `sootie_hotkey` | Press key combinations | `keys` (array of strings, e.g., `["Cmd", "C"]`) |
-| `sootie_scroll` | Scroll at a canonical action target | `target`, `direction` ("up"/"down"/"left"/"right"), `amount` (integer) |
-| `sootie_drag` | Drag between two canonical action targets | `from_target`, `to_target` |
+```bash
+SOOTIE_VISION_URL=http://127.0.0.1:9876 sootie serve
+```
 
-### Window & Focus
+Default config shape:
 
-| Tool | What it does |
-|------|-------------|
-| `sootie_focus` | Bring any app or window to the front |
-| `sootie_window` | Minimize, maximize, close, move, or resize a window. `move` requires `x` and `y`; `resize` requires `width` and `height` |
+```toml
+[resolution]
+strategy = "platform-first"
 
-### Workflow
+[vision]
+url = "http://127.0.0.1:9876"
+enabled = true
+confidence_threshold = 0.5
+timeout_ms = 60000
+sidecar_dir = "/path/to/sootie/vision-sidecar"
+model_path = "/path/to/sootie/models/ShowUI-2B"
+```
 
-| Tool | What it does |
-|------|-------------|
-| `sootie_recipes` | List all installed workflows |
-| `sootie_run` | Execute a workflow with parameters |
-| `sootie_recipe_save` | Save a new workflow |
-| `sootie_recipe_delete` | Remove a workflow |
+The Rust MCP server talks to a local HTTP sidecar that implements `POST /ground`.
+`sootie setup` installs that sidecar, installs the Python dependencies listed in
+the bundled `requirements.txt` into a Sootie-managed virtual environment,
+downloads `showlab/ShowUI-2B` into Sootie's data directory when missing, and
+checks that the model can be preloaded. The first setup may take a while because
+the model download is large and requires network access. Start the sidecar
+before using vision-grounded targets:
+
+```bash
+sootie sidecar
+```
+
+Use `sootie sidecar --preload` when you want startup to load the model before
+the first grounding request.
+
+If you do not run a vision sidecar, CDP and native desktop automation still work.
+Disable vision with `SOOTIE_VISION_DISABLED=1` or set `enabled = false` in the
+config. Set `resolution.strategy = "vision-only"` in
+`~/.config/sootie.config.toml` when you want `sootie_ground`, `sootie_find`,
+`sootie_inspect`, and target-based pointer actions to go directly through the
+vision grounding path.
+
+Successful grounding calls write annotated JPG screenshots and JSON metadata to:
+
+```text
+/tmp/sootie/vision_history/grounding/
+```
+
+The JPG overlays the prompt, returned bounding boxes, prediction values, and
+numbered labels.
+
+## Platform Backends
+
+| Platform | Current backend surface |
+| --- | --- |
+| macOS | AppKit, Accessibility, CoreGraphics, browser Apple Events where needed, and `screencapture`. Grant Accessibility and Screen Recording permissions to the app or terminal that launches Sootie. |
+| Linux | X11-oriented helpers such as `xprop`, `wmctrl`, `xdotool`, AT-SPI bindings, and common screenshot utilities when installed. |
+| Windows | PowerShell, User32, UI Automation, Windows Forms, and System.Drawing from an interactive desktop session. |
+
+The public MCP contract stays portable while the Rust backend chooses the
+native mechanism available on the current host.
 
 ## Recipes
 
-When your agent figures out a workflow, it saves it as a recipe. A recipe is a JSON file with steps and normalized selectors. Sootie's internal Action Cascade automatically handles backend routing (AT/CDP/Vision) across different platforms.
+Recipes are JSON documents that can be saved, listed, inspected, deleted, and
+run through the MCP tool surface. A recipe can encode action steps, wait steps,
+parameter substitution, and legacy recorded step shapes.
 
-```json
-{
-  "schema_version": 3,
-  "name": "gmail-send",
-  "platforms": ["macos", "windows", "linux"],
-  "params": [
-    { "name": "to", "type": "string", "required": true },
-    { "name": "subject", "type": "string", "required": true },
-    { "name": "body", "type": "string", "required": false }
-  ],
-  "steps": [
-    {
-      "action": "click",
-      "target": {
-        "app": "Chrome",
-        "window": "Gmail",
-        "selector": {
-          "name": "Compose",
-          "role": "button"
-        }
-      }
-    },
-    {
-      "action": "wait",
-      "target": {
-        "selector": {
-          "role": "textfield",
-          "name": "To"
-        }
-      },
-      "timeout": 5000
-    },
-    {
-      "action": "type",
-      "target": {
-        "selector": {
-          "role": "textfield",
-          "name": "To"
-        }
-      },
-      "text": "${to}"
-    }
-  ]
-}
-```
+See [Recipe Schema](docs/api/recipe-schema.md) for the full format.
 
-- Recipes are just JSON. Read every step before running.
-- Share with your team. One person learns the workflow, everyone benefits.
-- Canonical targets stay portable even when backend choice differs by platform.
+## Verification
 
-## Development
-
-### Bootstrap Development Environment
-
-For contributors working on Sootie itself, we provide a bootstrap script that initializes the entire development environment:
+Run the local gates before trusting a binary:
 
 ```bash
-git clone https://github.com/joe223/sootie.git
-cd sootie
-./bootstrap.sh
+cargo fmt --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo build --release
 ```
 
-The bootstrap script will:
-- ✓ Check Rust toolchain (rustc, cargo)
-- ✓ Install development tools (cargo-commitlint)
-- ✓ Set up Git hooks (commit message validation)
-- ✓ Build the project
-- ✓ Run tests to verify setup
-- ✓ Validate commitlint configuration
+For runtime evidence, use:
 
-This one-command setup ensures all tools and hooks are properly configured without manual steps.
+- [Real Runtime Checklist](docs/development/real-runtime-checklist.md)
+- [Runtime Smoke Runbook](docs/development/runtime-smoke-runbook.md)
+- [Verification Matrix](docs/development/verification-matrix.md)
 
-### Manual Setup
-
-If you prefer manual setup:
-
-1. Install Rust: `rustup` (https://rustup.rs)
-2. Install cargo-commitlint: `cargo install cargo-commitlint`
-3. Set up Git hooks: `cargo commitlint install`
-4. Build: `cargo build --workspace`
-5. Test: `cargo test --workspace`
-
-## Contributing
-
-We follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages. See [Commit Guidelines](docs/development/commit-guidelines.md) for details.
-
-## License
-
-Apache 2.0
+The runtime checks are intentionally separate from compile-time checks: a
+successful MCP handshake or build does not prove that the active desktop
+session can actually click, type, see screenshots, or ground visual targets.

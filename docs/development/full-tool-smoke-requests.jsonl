@@ -1,0 +1,29 @@
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"sootie_context","arguments":{}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sootie_state","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sootie_find","arguments":{"query":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"sootie_read","arguments":{"query":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"sootie_inspect","arguments":{"query":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"sootie_element_at","arguments":{"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"sootie_screenshot","arguments":{"full_resolution":false}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"sootie_recipe_save","arguments":{"recipe_json":"{\"schema_version\":3,\"name\":\"smoke-delay\",\"params\":[],\"steps\":[{\"action\":\"wait\",\"timeout\":0,\"params\":null}]}"}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"sootie_recipe_show","arguments":{"name":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"sootie_recipes","arguments":{}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"sootie_run","arguments":{"recipe":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"sootie_recipe_delete","arguments":{"name":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"sootie_parse_screen","arguments":{"full_resolution":false}}}
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"sootie_ground","arguments":{"description":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"sootie_annotate","arguments":{"max_labels":5}}}
+{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"sootie_learn_start","arguments":{"task_description":"runtime smoke"}}}
+{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"sootie_focus","arguments":{"app":"<disposable app>"}}}
+{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"sootie_window","arguments":{"app":"<disposable app>","action":"list"}}}
+{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"sootie_learn_status","arguments":{}}}
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"sootie_learn_stop","arguments":{}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"sootie_hover","arguments":{"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"sootie_click","arguments":{"x":100,"y":100,"button":"left","count":1}}}
+{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"sootie_type","arguments":{"app":"<disposable app>","text":"sootie smoke"}}}
+{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"sootie_press","arguments":{"app":"<disposable app>","key":"Escape"}}}
+{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"sootie_hotkey","arguments":{"app":"<disposable app>","keys":["ctrl","a"]}}}
+{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"sootie_scroll","arguments":{"direction":"down","amount":1,"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"sootie_long_press","arguments":{"x":100,"y":100,"duration":0.05,"button":"left"}}}
+{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"sootie_drag","arguments":{"from_x":100,"from_y":100,"to_x":110,"to_y":110,"duration":0.05,"hold_duration":0}}}
+{"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"sootie_wait","arguments":{"app":"<disposable app>","condition":"titleContains","value":"<visible window title>","timeout":1}}}

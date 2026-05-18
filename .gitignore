@@ -1,44 +1,6 @@
-target/
-/docs/*
-!docs/development/
-*.log
-
-# Environment files with secrets
-.env
-.env.local
-.env.*.local
-*.env
-
-# Credentials and secrets
-*.pem
-*.key
-*.secret
-*credentials*
-*password*
-*token*
-
-# IDE and editor files
-.vscode/
-.idea/
+/target/
+/dist/
+.omx/
+.DS_Store
 *.swp
 *.swo
-*~
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Test artifacts
-test-results/
-coverage/
-.nyc_output/
-
-# Agents
-.omx/
-.deepseek/
-.claude/
-.opencode/
-scoop/
-
-
-__pycache__/

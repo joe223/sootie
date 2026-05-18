@@ -3,46 +3,21 @@ name = "sootie-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-authors = ["Joe Developer <joe@example.com>"]
-description = "Cross-platform computer-use for AI agents via MCP (Model Context Protocol)"
-repository = "https://github.com/joe223/sootie"
-homepage = "https://github.com/joe223/sootie"
-readme = "../README.md"
-keywords = ["mcp", "ai", "automation", "computer-use", "accessibility", "desktop", "agent"]
-categories = ["command-line-utilities", "development-tools::testing", "science::robotics"]
-
-[package.metadata.docs.rs]
-all-features = true
+repository.workspace = true
+description = "Sootie MCP server CLI"
 
 [[bin]]
 name = "sootie"
 path = "src/main.rs"
 
 [dependencies]
-sootie-core = { version = "0.1.0", path = "../sootie-core" }
-sootie-mcp = { version = "0.1.0", path = "../sootie-mcp" }
-serde.workspace = true
-serde_json.workspace = true
-clap = { version = "4", features = ["derive"] }
-dirs-next = "2"
-tokio.workspace = true
 anyhow.workspace = true
+clap.workspace = true
+dirs-next.workspace = true
+serde_json.workspace = true
+sootie-core = { path = "../sootie-core", version = "0.1.0" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
-chrono.workspace = true
-toml = "0.8"
-reqwest = { workspace = true, features = ["stream"] }
-indicatif = "0.17"
-regex.workspace = true
-futures-util = "0.3"
-dialoguer = "0.12"
-rand = "0.8"
-hex = "0.4"
-sha2 = "0.10"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-core-graphics = "0.24"
-reqwest = { workspace = true, features = ["rustls-tls"] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

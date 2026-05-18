@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+cat <<'EOF'
+Sootie installed.
+
+Next steps:
+  sootie setup
+  sootie serve          # MCP server command
+EOF
+
+exit 0

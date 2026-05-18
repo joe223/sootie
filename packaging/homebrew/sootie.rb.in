@@ -1,0 +1,40 @@
+class Sootie < Formula
+  desc "Rust computer-use MCP runtime for desktop apps, browsers, screenshots, and vision grounding"
+  homepage "https://github.com/joe223/sootie"
+  version "@VERSION@"
+  license "MIT OR Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "@MACOS_ARM64_URL@"
+      sha256 "@MACOS_ARM64_SHA256@"
+    end
+
+    on_intel do
+      url "@MACOS_X64_URL@"
+      sha256 "@MACOS_X64_SHA256@"
+    end
+  end
+
+  depends_on "python@3.12" => :recommended
+
+  def install
+    bin.install "bin/sootie"
+    pkgshare.install "share/sootie/vision-sidecar" if (buildpath/"share/sootie/vision-sidecar").exist?
+  end
+
+  def caveats
+    <<~EOS
+      Run setup after installation:
+        sootie setup
+
+      MCP server command:
+        sootie serve
+    EOS
+  end
+
+  test do
+    assert_match "sootie_context", shell_output("#{bin}/sootie tools")
+    assert_match "Create the user config", shell_output("#{bin}/sootie setup --help")
+  end
+end

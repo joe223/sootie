@@ -1,9 +1,11 @@
-pub mod action;
-pub mod cascade;
-pub mod cdp;
-pub mod logging;
-pub mod perception;
-pub mod platform;
+pub mod backend;
+mod config;
+pub mod mcp;
 pub mod recipe;
-pub mod selector;
-pub mod vision;
+pub mod tools;
+pub mod types;
+mod vision;
+
+pub use backend::{create_backend, DesktopBackend};
+pub use mcp::{JsonRpcRequest, JsonRpcResponse, McpServer};
+pub use types::{ActionResult, ElementInfo, RuntimeDiagnostic, SootieError, ToolResult};
