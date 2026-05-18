@@ -5,13 +5,13 @@ Codename: stable
 Architectures: amd64
 Components: main
 Description: Sootie apt repository
-Date: Mon, 18 May 2026 10:51:28 +0000
+Date: Mon, 18 May 2026 11:14:42 +0000
 MD5Sum:
- 4a399d81cd171c4f5a9533e0712a151c 820 main/binary-amd64/Packages
- 3c14c139346baf1208c46a65af8d4f34 554 main/binary-amd64/Packages.gz
+ 75e37746772730d0747c450a2c0301f5 826 main/binary-amd64/Packages
+ 2b4548c3bfa68345213d46e21f45d5cb 560 main/binary-amd64/Packages.gz
 SHA1:
- 93dbb4d5e18520e2dbf8e0ecd97fda66f2599719 820 main/binary-amd64/Packages
- 59e495f2e7ed2d868f0c4ceba52b464010b8d2db 554 main/binary-amd64/Packages.gz
+ 21914a56f1727251a9607e7118b142b15fedff55 826 main/binary-amd64/Packages
+ e5901ec6240fc9a5555e7beb2ea3a11924355649 560 main/binary-amd64/Packages.gz
 SHA256:
- 37d1236a69dbdf4034cb38dd1fe97e3240d3fe317e3759d42827e3333f6c0820 820 main/binary-amd64/Packages
- 2989a7131a4c6cb948e3d39fc60f2b9a909b10299bfde1a616ae56f2904d4f04 554 main/binary-amd64/Packages.gz
+ 6f4d72b42d2af2bac236f6a75ade5788b1c2a0a6104c404123a3b05262763ac9 826 main/binary-amd64/Packages
+ f8117f8bdbec523955de1ddf2e2d086fc96f83ffed1db7571f510f9f309c34cd 560 main/binary-amd64/Packages.gz
