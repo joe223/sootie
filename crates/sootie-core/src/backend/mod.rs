@@ -9,7 +9,7 @@ use crate::types::{
     Screenshot, SootieError, SootieResult, WindowCommand,
 };
 
-mod cdp;
+pub(crate) mod cdp;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -25,6 +25,12 @@ pub trait DesktopBackend: Send + Sync {
         Vec::new()
     }
     fn context(&self, app: Option<&str>) -> SootieResult<ContextSnapshot>;
+    fn browser_url(&self, app: Option<&str>) -> SootieResult<Option<String>> {
+        Ok(self.context(app)?.url)
+    }
+    fn screen_locked(&self) -> SootieResult<Option<bool>> {
+        Ok(None)
+    }
     fn state(&self, app: Option<&str>) -> SootieResult<Vec<AppInfo>>;
     fn find(&self, query: &FindQuery) -> SootieResult<Vec<ElementInfo>>;
     fn read(

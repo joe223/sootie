@@ -708,6 +708,13 @@ impl WindowsBackend {
                 }),
         }
     }
+
+    fn focus_query_app(&self, query: &FindQuery) -> SootieResult<()> {
+        if let Some(app) = query.app.as_deref() {
+            self.focus(app, None, None)?;
+        }
+        Ok(())
+    }
 }
 
 impl DesktopBackend for WindowsBackend {
@@ -786,6 +793,24 @@ impl DesktopBackend for WindowsBackend {
             focused_element,
             interactive_elements,
         })
+    }
+
+    fn browser_url(&self, app: Option<&str>) -> SootieResult<Option<String>> {
+        let apps = self.state(app)?;
+        let selected_app = apps
+            .iter()
+            .find(|app| app.is_frontmost)
+            .or_else(|| apps.first());
+        Ok(selected_app
+            .and_then(|app| current_browser_url(&app.name))
+            .or_else(|| {
+                if app.is_none() {
+                    first_browser_cdp_port().and_then(cdp::current_page_url)
+                } else {
+                    self.cdp_port_for_app_filter(app)
+                        .and_then(cdp::current_page_url)
+                }
+            }))
     }
 
     fn state(&self, app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
@@ -929,6 +954,7 @@ impl DesktopBackend for WindowsBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let (x, y) = self.resolve_point(x, y, query)?;
         let (down, up) = mouse_button_flags(button);
         let repetitions = count.max(1);
@@ -961,6 +987,7 @@ impl DesktopBackend for WindowsBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let (x, y) = self.resolve_point(x, y, query)?;
         let script = format!(
             "if (-not [Sootie.NativeInput]::SetCursorPos({}, {})) {{ throw 'SetCursorPos failed' }}",
@@ -990,6 +1017,7 @@ impl DesktopBackend for WindowsBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let (x, y) = self.resolve_point(x, y, query)?;
         let (down, up) = mouse_button_flags(button);
         let duration_ms = (duration_secs.max(0.0) * 1000.0).round() as u64;
@@ -1023,6 +1051,7 @@ impl DesktopBackend for WindowsBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let from = match from {
             Some(p) => p,
             None => self.resolve_point(None, None, query)?,

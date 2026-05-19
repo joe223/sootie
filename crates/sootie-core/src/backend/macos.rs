@@ -1,3 +1,5 @@
+use std::ffi::CString;
+use std::os::raw::{c_char, c_int, c_void};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,6 +28,37 @@ const FOCUS_CONFIRM_TIMEOUT_MS: u64 = 1_200;
 const BROWSER_URL_TIMEOUT_MS: u64 = 1_000;
 const POINTER_EVENT_TIMEOUT_MS: u64 = 1_000;
 const KEYBOARD_EVENT_TIMEOUT_MS: u64 = 1_000;
+const SCREEN_LOCK_KEY: &str = "CGSSessionScreenIsLocked";
+const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+const K_CF_NUMBER_INT_TYPE: i32 = 9;
+
+type CFTypeRef = *const c_void;
+type CFDictionaryRef = *const c_void;
+type CFStringRef = *const c_void;
+type CFNumberRef = *const c_void;
+type CFTypeID = usize;
+type Boolean = u8;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRelease(cf: CFTypeRef);
+    fn CFGetTypeID(cf: CFTypeRef) -> CFTypeID;
+    fn CFStringCreateWithCString(
+        alloc: *const c_void,
+        c_str: *const c_char,
+        encoding: u32,
+    ) -> CFStringRef;
+    fn CFDictionaryGetValue(the_dict: CFDictionaryRef, key: *const c_void) -> *const c_void;
+    fn CFBooleanGetTypeID() -> CFTypeID;
+    fn CFBooleanGetValue(boolean: CFTypeRef) -> Boolean;
+    fn CFNumberGetTypeID() -> CFTypeID;
+    fn CFNumberGetValue(number: CFNumberRef, the_type: c_int, value_ptr: *mut c_void) -> Boolean;
+}
 
 #[derive(Debug, Clone)]
 struct AccessibilityElement {
@@ -141,7 +174,7 @@ fn current_browser_url(app_name: &str) -> Option<String> {
 }
 
 fn cdp_browser_url(app_name: &str) -> Option<String> {
-    if app_name == "Safari" {
+    if app_cannot_use_cdp(app_name) {
         return None;
     }
     let port = browser_cdp_port(app_name)?;
@@ -149,8 +182,16 @@ fn cdp_browser_url(app_name: &str) -> Option<String> {
 }
 
 fn browser_cdp_port(app_name: &str) -> Option<u16> {
+    if app_cannot_use_cdp(app_name) {
+        return None;
+    }
     let output = browser_process_commands()?;
     parse_cdp_port_from_process_commands(&output, app_name)
+}
+
+fn app_cannot_use_cdp(app_name: &str) -> bool {
+    let normalized = app_name.trim().to_lowercase();
+    normalized == "safari" || normalized == "com.apple.safari"
 }
 
 fn first_browser_cdp_port() -> Option<u16> {
@@ -1164,6 +1205,107 @@ fn macos_window_result(
     }
 }
 
+fn screenshot_looks_blank_black(bytes: &[u8]) -> bool {
+    let Ok(image) = image::load_from_memory(bytes) else {
+        return false;
+    };
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 {
+        return false;
+    }
+
+    let stride = (width.min(height) / 160).max(1) as usize;
+    let mut visible_samples = 0usize;
+    let mut non_black_samples = 0usize;
+    for y in (0..height).step_by(stride) {
+        for x in (0..width).step_by(stride) {
+            let [red, green, blue, alpha] = rgba.get_pixel(x, y).0;
+            if alpha == 0 {
+                continue;
+            }
+            visible_samples += 1;
+            if red > 8 || green > 8 || blue > 8 {
+                non_black_samples += 1;
+            }
+        }
+    }
+
+    visible_samples > 0 && non_black_samples * 200 <= visible_samples
+}
+
+fn macos_screen_lock_status() -> SootieResult<Option<bool>> {
+    unsafe {
+        let session = CGSessionCopyCurrentDictionary();
+        if session.is_null() {
+            return Ok(None);
+        }
+
+        let key = CString::new(SCREEN_LOCK_KEY).map_err(|error| {
+            SootieError::Platform(format!("invalid macOS screen lock key: {error}"))
+        })?;
+        let key =
+            CFStringCreateWithCString(std::ptr::null(), key.as_ptr(), K_CF_STRING_ENCODING_UTF8);
+        if key.is_null() {
+            CFRelease(session as CFTypeRef);
+            return Ok(None);
+        }
+
+        let value = CFDictionaryGetValue(session, key as *const c_void);
+        let status = cf_value_to_bool(value);
+        CFRelease(key as CFTypeRef);
+        CFRelease(session as CFTypeRef);
+        Ok(status)
+    }
+}
+
+fn ensure_screen_unlocked_for_action(action: &str) -> SootieResult<()> {
+    if let Some(true) = macos_screen_lock_status()? {
+        return Err(SootieError::Platform(screen_locked_action_message(action)));
+    }
+    Ok(())
+}
+
+fn screen_locked_action_message(action: &str) -> String {
+    format!(
+        "macOS screen is locked; {action} would affect the lock screen instead of the target app"
+    )
+}
+
+fn focus_not_frontmost_error(app_name: &str, foreground_error: Option<SootieError>) -> SootieError {
+    let foreground_note = foreground_error
+        .map(|error| format!(" foreground fallback failed: {error}."))
+        .unwrap_or_default();
+    SootieError::Platform(format!(
+        "macOS did not make '{}' frontmost after activation;{} grant Accessibility and Automation permissions to the calling app, or bring the app forward manually and retry",
+        app_name, foreground_note
+    ))
+}
+
+unsafe fn cf_value_to_bool(value: CFTypeRef) -> Option<bool> {
+    if value.is_null() {
+        return None;
+    }
+
+    let type_id = CFGetTypeID(value);
+    if type_id == CFBooleanGetTypeID() {
+        return Some(CFBooleanGetValue(value) != 0);
+    }
+    if type_id == CFNumberGetTypeID() {
+        let mut number = 0_i32;
+        if CFNumberGetValue(
+            value as CFNumberRef,
+            K_CF_NUMBER_INT_TYPE,
+            (&mut number as *mut i32).cast::<c_void>(),
+        ) != 0
+        {
+            return Some(number != 0);
+        }
+    }
+
+    None
+}
+
 fn mouse_move_script(x: f64, y: f64) -> String {
     format!(
         r#"ObjC.import("CoreGraphics");
@@ -1262,15 +1404,27 @@ $.CGEventPost($.kCGHIDEventTap, event);
     ))
 }
 
-fn mouse_drag_script(from_x: f64, from_y: f64, to_x: f64, to_y: f64) -> String {
-    let steps = 12;
+fn nonnegative_seconds(value: f64) -> f64 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn mouse_drag_script(from_x: f64, from_y: f64, to_x: f64, to_y: f64, duration_secs: f64) -> String {
+    let steps = 24;
+    let duration_ms = (nonnegative_seconds(duration_secs) * 1000.0).round();
     format!(
         r#"ObjC.import("CoreGraphics");
+ObjC.import("Foundation");
 const button = $.kCGMouseButtonLeft;
 const fromX = {};
 const fromY = {};
 const toX = {};
 const toY = {};
+const steps = {};
+const stepDelay = Math.max(0.005, ({} / steps) / 1000);
 function point(x, y) {{
   return $.CGPointMake(Math.round(x), Math.round(y));
 }}
@@ -1278,12 +1432,19 @@ function post(type, x, y) {{
   const event = $.CGEventCreateMouseEvent(null, type, point(x, y), button);
   $.CGEventPost($.kCGHIDEventTap, event);
 }}
-post($.kCGEventMouseMoved, fromX, fromY);
-post($.kCGEventLeftMouseDown, fromX, fromY);
-for (let i = 1; i <= {}; i++) {{
-  const t = i / {};
-  post($.kCGEventLeftMouseDragged, fromX + ((toX - fromX) * t), fromY + ((toY - fromY) * t));
+function pause(seconds) {{
+  $.NSThread.sleepForTimeInterval(seconds);
 }}
+post($.kCGEventMouseMoved, fromX, fromY);
+pause(0.03);
+post($.kCGEventLeftMouseDown, fromX, fromY);
+pause(0.04);
+for (let i = 1; i <= steps; i++) {{
+  const t = i / steps;
+  post($.kCGEventLeftMouseDragged, fromX + ((toX - fromX) * t), fromY + ((toY - fromY) * t));
+  pause(stepDelay);
+}}
+pause(0.03);
 post($.kCGEventLeftMouseUp, toX, toY);
 "ok";"#,
         from_x.round(),
@@ -1291,7 +1452,7 @@ post($.kCGEventLeftMouseUp, toX, toY);
         to_x.round(),
         to_y.round(),
         steps,
-        steps
+        duration_ms
     )
 }
 
@@ -1882,6 +2043,9 @@ impl MacosBackend {
         if app_filter.is_none() {
             return first_browser_cdp_port();
         }
+        if app_filter.is_some_and(app_cannot_use_cdp) {
+            return None;
+        }
         let app = self.selected_app(app_filter)?;
         browser_cdp_port(&app.name)
     }
@@ -1899,6 +2063,22 @@ impl MacosBackend {
             .find(|window| window.focused)
             .cloned()
             .or_else(|| windows.into_iter().next())
+    }
+
+    fn app_scoped_screenshot_missing_window_error(app: &str) -> SootieError {
+        SootieError::NotFound(format!(
+            "no window bounds available for app-scoped screenshot of {app}; focus the app and retry, or omit app for a full-screen screenshot"
+        ))
+    }
+
+    fn app_scoped_screenshot_region_error(
+        app: &str,
+        region: &str,
+        error: &SootieError,
+    ) -> SootieError {
+        SootieError::Platform(format!(
+            "failed to capture app-scoped screenshot of {app} at region {region}; refusing to fall back to full-screen capture: {error}"
+        ))
     }
 
     fn capture_screenshot(&self, args: &[&str]) -> SootieResult<()> {
@@ -1944,6 +2124,13 @@ impl MacosBackend {
                     SootieError::NotFound("no coordinate or matching element".to_string())
                 }),
         }
+    }
+
+    fn focus_query_app(&self, query: &FindQuery) -> SootieResult<()> {
+        if let Some(app) = query.app.as_deref() {
+            self.focus(app, None, None)?;
+        }
+        Ok(())
     }
 }
 
@@ -2002,6 +2189,22 @@ impl DesktopBackend for MacosBackend {
                 .find(|window| window.focused)
                 .or_else(|| app.windows.first())
         });
+        if let Some(true) = macos_screen_lock_status()? {
+            let focused_element = selected_app
+                .zip(selected_window)
+                .map(|(app, window)| element_from_window(app, window));
+            return Ok(ContextSnapshot {
+                app: selected_app.map(|app| app.name.clone()),
+                app_id: selected_app.and_then(|app| app.app_id.clone()),
+                platform_app_id: selected_app.and_then(|app| app.platform_app_id.clone()),
+                bundle_id: selected_app.and_then(|app| app.bundle_id.clone()),
+                pid: selected_app.and_then(|app| app.pid),
+                window: selected_window.map(|window| window.title.clone()),
+                url: self.browser_url(app)?,
+                focused_element: focused_element.clone(),
+                interactive_elements: focused_element.into_iter().collect(),
+            });
+        }
         let accessibility_records = selected_app
             .map(|app| accessibility_elements(&app.name))
             .unwrap_or_default();
@@ -2052,6 +2255,32 @@ impl DesktopBackend for MacosBackend {
             focused_element,
             interactive_elements,
         })
+    }
+
+    fn browser_url(&self, app: Option<&str>) -> SootieResult<Option<String>> {
+        let url = if let Some(app) = app {
+            let script_app = resolve_app_filter_for_script(Some(app));
+            script_app
+                .as_deref()
+                .and_then(current_browser_url)
+                .or_else(|| current_browser_url(app))
+                .or_else(|| {
+                    self.cdp_port_for_app_filter(Some(app))
+                        .and_then(cdp::current_page_url)
+                })
+        } else {
+            frontmost_app_info(None)
+                .and_then(|app| current_browser_url(&app.name))
+                .or_else(|| {
+                    self.cdp_port_for_app_filter(None)
+                        .and_then(cdp::current_page_url)
+                })
+        };
+        Ok(url)
+    }
+
+    fn screen_locked(&self) -> SootieResult<Option<bool>> {
+        macos_screen_lock_status()
     }
 
     fn state(&self, app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
@@ -2175,6 +2404,15 @@ impl DesktopBackend for MacosBackend {
         {
             return Ok(screenshot);
         }
+        if let Some(true) = macos_screen_lock_status()? {
+            return Err(SootieError::Platform(
+                "macOS screen is locked; screenshot would capture the lock screen instead of the target app"
+                    .to_string(),
+            ));
+        }
+        if let Some(app) = app {
+            self.focus(app, None, None)?;
+        }
         let window = self.screenshot_window(app);
         let path = tmp_screenshot_path("png");
         let path_str = path.to_string_lossy().to_string();
@@ -2186,17 +2424,28 @@ impl DesktopBackend for MacosBackend {
                 bounds.width.round().max(1.0) as i64,
                 bounds.height.round().max(1.0) as i64
             );
-            if self
-                .capture_screenshot(&["-x", "-R", &region, &path_str])
-                .is_err()
-            {
+            if let Err(error) = self.capture_screenshot(&["-x", "-R", &region, &path_str]) {
+                if let Some(app) = app {
+                    return Err(Self::app_scoped_screenshot_region_error(
+                        app, &region, &error,
+                    ));
+                }
                 self.capture_screenshot(&["-x", &path_str])?;
             }
         } else {
+            if let Some(app) = app {
+                return Err(Self::app_scoped_screenshot_missing_window_error(app));
+            }
             self.capture_screenshot(&["-x", &path_str])?;
         }
         let bytes = std::fs::read(&path)?;
         let _ = std::fs::remove_file(&path);
+        if screenshot_looks_blank_black(&bytes) {
+            return Err(SootieError::Platform(
+                "screencapture returned a blank black image; macOS Screen Recording permission may be denied or the capture session is unavailable"
+                    .to_string(),
+            ));
+        }
         let (width, height) = png_dimensions(&bytes);
         Ok(Screenshot {
             mime_type: "image/png".to_string(),
@@ -2216,6 +2465,7 @@ impl DesktopBackend for MacosBackend {
         button: &str,
         count: u32,
     ) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("click")?;
         if x.is_none() && y.is_none() && button == "left" && count <= 1 && has_element_target(query)
         {
             if let Some(result) = self
@@ -2225,6 +2475,7 @@ impl DesktopBackend for MacosBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let (x, y) = self.resolve_point(x, y, query)?;
         run_jxa(
             &mouse_click_script(x, y, button, count)?,
@@ -2242,6 +2493,7 @@ impl DesktopBackend for MacosBackend {
         y: Option<f64>,
         query: &FindQuery,
     ) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("hover")?;
         if x.is_none() && y.is_none() && has_element_target(query) {
             if let Some(result) = self
                 .cdp_port_for_query(query)
@@ -2250,6 +2502,7 @@ impl DesktopBackend for MacosBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let (x, y) = self.resolve_point(x, y, query)?;
         run_jxa(
             &mouse_move_script(x, y),
@@ -2269,6 +2522,7 @@ impl DesktopBackend for MacosBackend {
         duration_secs: f64,
         button: &str,
     ) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("long press")?;
         if x.is_none() && y.is_none() && has_element_target(query) {
             if let Some(result) = self
                 .cdp_port_for_query(query)
@@ -2277,12 +2531,15 @@ impl DesktopBackend for MacosBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let (x, y) = self.resolve_point(x, y, query)?;
         run_jxa(
             &mouse_button_event_script(x, y, button, true)?,
             Duration::from_millis(POINTER_EVENT_TIMEOUT_MS),
         )?;
-        std::thread::sleep(std::time::Duration::from_secs_f64(duration_secs.max(0.0)));
+        std::thread::sleep(std::time::Duration::from_secs_f64(nonnegative_seconds(
+            duration_secs,
+        )));
         run_jxa(
             &mouse_button_event_script(x, y, button, false)?,
             Duration::from_millis(POINTER_EVENT_TIMEOUT_MS),
@@ -2301,6 +2558,7 @@ impl DesktopBackend for MacosBackend {
         duration_secs: f64,
         hold_duration_secs: f64,
     ) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("drag")?;
         if from.is_none() && has_element_target(query) {
             if let Some(result) = self.cdp_port_for_query(query).and_then(|port| {
                 cdp::drag_element(port, query, to, duration_secs, hold_duration_secs)
@@ -2308,16 +2566,18 @@ impl DesktopBackend for MacosBackend {
                 return Ok(result);
             }
         }
+        self.focus_query_app(query)?;
         let (from_x, from_y) = match from {
             Some(p) => p,
             None => self.resolve_point(None, None, query)?,
         };
-        std::thread::sleep(std::time::Duration::from_secs_f64(
-            hold_duration_secs.max(0.0),
-        ));
+        let duration_secs = nonnegative_seconds(duration_secs);
+        let hold_duration_secs = nonnegative_seconds(hold_duration_secs);
+        std::thread::sleep(std::time::Duration::from_secs_f64(hold_duration_secs));
         run_jxa(
-            &mouse_drag_script(from_x, from_y, to.0, to.1),
-            Duration::from_millis(POINTER_EVENT_TIMEOUT_MS),
+            &mouse_drag_script(from_x, from_y, to.0, to.1, duration_secs),
+            Duration::from_millis(POINTER_EVENT_TIMEOUT_MS)
+                .max(Duration::from_secs_f64(duration_secs + 1.0)),
         )?;
         Ok(ActionResult {
             method: "coregraphics".to_string(),
@@ -2331,6 +2591,7 @@ impl DesktopBackend for MacosBackend {
     }
 
     fn type_text(&self, text: &str, target: &FindQuery, clear: bool) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("type text")?;
         if has_element_target(target) {
             if let Some(result) = self
                 .cdp_port_for_query(target)
@@ -2355,6 +2616,7 @@ impl DesktopBackend for MacosBackend {
         modifiers: &[String],
         app: Option<&str>,
     ) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("key press")?;
         if let Some(result) = self
             .cdp_port_for_app_filter(app)
             .and_then(|port| cdp::press_key(port, key, modifiers))
@@ -2389,6 +2651,7 @@ impl DesktopBackend for MacosBackend {
         app: Option<&str>,
         at: Option<(f64, f64)>,
     ) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("scroll")?;
         if at.is_none() {
             if let Some(result) = self
                 .cdp_port_for_app_filter(app)
@@ -2416,6 +2679,7 @@ impl DesktopBackend for MacosBackend {
         platform_app_id: Option<&str>,
         window: Option<&str>,
     ) -> SootieResult<ActionResult> {
+        ensure_screen_unlocked_for_action("focus")?;
         let app_reference = platform_app_id.unwrap_or(app);
         let bundle_id = platform_app_id.or_else(|| looks_like_bundle_id(app).then_some(app));
         let mut foreground_error = None;
@@ -2447,16 +2711,14 @@ impl DesktopBackend for MacosBackend {
             foreground_error = osascript(&app_focus_script(&app_name)).err();
         }
         if let Some(window) = window {
-            return run_ax_window_action(&app_name, Some(window), "focus", None);
+            let result = run_ax_window_action(&app_name, Some(window), "focus", None)?;
+            if !wait_for_frontmost_app(&app_name, Duration::from_millis(FOCUS_CONFIRM_TIMEOUT_MS)) {
+                return Err(focus_not_frontmost_error(&app_name, foreground_error));
+            }
+            return Ok(result);
         }
         if !wait_for_frontmost_app(&app_name, Duration::from_millis(FOCUS_CONFIRM_TIMEOUT_MS)) {
-            let foreground_note = foreground_error
-                .map(|error| format!(" foreground fallback failed: {error}."))
-                .unwrap_or_default();
-            return Err(SootieError::Platform(format!(
-                "macOS did not make '{}' frontmost after activation;{} grant Accessibility and Automation permissions to the calling app, or bring the app forward manually and retry",
-                app_name, foreground_note
-            )));
+            return Err(focus_not_frontmost_error(&app_name, foreground_error));
         }
         let mut result = macos_window_result("focus", &app_name, window, None);
         if activated_with_appkit && window.is_none() {
@@ -2480,15 +2742,29 @@ impl DesktopBackend for MacosBackend {
                 details: json!({ "windows": self.state(Some(platform_app_id.unwrap_or(app)))? }),
             }),
             WindowCommand::Focus => self.focus(app, platform_app_id, window),
-            WindowCommand::Restore => run_ax_window_action(app_reference, window, "restore", None),
+            WindowCommand::Restore => {
+                ensure_screen_unlocked_for_action("restore window")?;
+                run_ax_window_action(app_reference, window, "restore", None)
+            }
             WindowCommand::Minimize => {
+                ensure_screen_unlocked_for_action("minimize window")?;
                 run_ax_window_action(app_reference, window, "minimize", None)
             }
             WindowCommand::Maximize => {
+                ensure_screen_unlocked_for_action("maximize window")?;
                 run_ax_window_action(app_reference, window, "maximize", None)
             }
-            WindowCommand::Close => run_ax_window_action(app_reference, window, "close", None),
+            WindowCommand::Close => {
+                ensure_screen_unlocked_for_action("close window")?;
+                run_ax_window_action(app_reference, window, "close", None)
+            }
             WindowCommand::Move | WindowCommand::Resize => {
+                let action = match command {
+                    WindowCommand::Move => "move window",
+                    WindowCommand::Resize => "resize window",
+                    _ => unreachable!(),
+                };
+                ensure_screen_unlocked_for_action(action)?;
                 let Some(bounds) = bounds else {
                     return Err(SootieError::InvalidArguments(
                         "move/resize requires x/y/width/height".to_string(),
@@ -2687,6 +2963,13 @@ mod tests {
     }
 
     #[test]
+    fn safari_filters_skip_cdp_probe() {
+        assert!(app_cannot_use_cdp("Safari"));
+        assert!(app_cannot_use_cdp("com.apple.Safari"));
+        assert!(!app_cannot_use_cdp("Google Chrome"));
+    }
+
+    #[test]
     fn app_snapshot_script_selects_frontmost_or_named_app() {
         let frontmost = app_snapshot_script(None);
         assert!(frontmost.contains("first process whose frontmost is true"));
@@ -2760,6 +3043,28 @@ mod tests {
         let filtered = window_server_app_list_script(Some("Chrome"));
         assert!(filtered.contains("const wanted = \"Chrome\";"));
         assert!(filtered.contains("owner.toLowerCase().indexOf"));
+    }
+
+    #[test]
+    fn app_scoped_screenshot_errors_do_not_allow_fullscreen_fallback() {
+        let missing = MacosBackend::app_scoped_screenshot_missing_window_error("Safari");
+        assert!(missing
+            .to_string()
+            .contains("no window bounds available for app-scoped screenshot of Safari"));
+        assert!(missing
+            .to_string()
+            .contains("omit app for a full-screen screenshot"));
+
+        let capture_error = SootieError::Platform("screencapture failed with status 1".to_string());
+        let region_error = MacosBackend::app_scoped_screenshot_region_error(
+            "Safari",
+            "1026,215,702,729",
+            &capture_error,
+        );
+        assert!(region_error
+            .to_string()
+            .contains("refusing to fall back to full-screen capture"));
+        assert!(region_error.to_string().contains("1026,215,702,729"));
     }
 
     #[test]
@@ -2840,13 +3145,16 @@ mod tests {
 
     #[test]
     fn mouse_drag_script_uses_coregraphics_drag_events() {
-        let script = mouse_drag_script(10.2, 20.7, 30.1, 40.9);
+        let script = mouse_drag_script(10.2, 20.7, 30.1, 40.9, 0.6);
         assert!(script.contains("CoreGraphics"));
+        assert!(script.contains("Foundation"));
         assert!(script.contains("kCGEventLeftMouseDown"));
         assert!(script.contains("kCGEventLeftMouseDragged"));
         assert!(script.contains("kCGEventLeftMouseUp"));
+        assert!(script.contains("NSThread.sleepForTimeInterval"));
         assert!(script.contains("fromX = 10"));
         assert!(script.contains("toY = 41"));
+        assert!(script.contains("600"));
         assert!(!script.contains("drag from"));
     }
 
@@ -3155,6 +3463,56 @@ mod tests {
             "rect (0.0, 0.0, 100.0, 100.0) does not intersect any displays"
         ));
         assert!(!screen_capture_display_unavailable("permission denied"));
+    }
+
+    #[test]
+    fn detects_blank_black_screenshot_payloads() {
+        fn png_from_pixels(pixels: Vec<image::Rgba<u8>>, width: u32, height: u32) -> Vec<u8> {
+            let image =
+                image::RgbaImage::from_fn(width, height, |x, y| pixels[(y * width + x) as usize]);
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(image)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            bytes.into_inner()
+        }
+
+        let blank_black = png_from_pixels(vec![image::Rgba([0, 0, 0, 255]); 4], 2, 2);
+        assert!(screenshot_looks_blank_black(&blank_black));
+
+        let visible_content = png_from_pixels(
+            vec![
+                image::Rgba([0, 0, 0, 255]),
+                image::Rgba([255, 255, 255, 255]),
+                image::Rgba([0, 0, 0, 255]),
+                image::Rgba([0, 0, 0, 255]),
+            ],
+            2,
+            2,
+        );
+        assert!(!screenshot_looks_blank_black(&visible_content));
+    }
+
+    #[test]
+    fn screen_lock_status_probe_does_not_panic() {
+        let _ = macos_screen_lock_status();
+    }
+
+    #[test]
+    fn locked_action_message_names_the_mutating_action() {
+        let message = screen_locked_action_message("drag");
+        assert!(message.contains("macOS screen is locked"));
+        assert!(message.contains("drag"));
+        assert!(message.contains("target app"));
+    }
+
+    #[test]
+    fn focus_not_frontmost_error_names_manual_recovery() {
+        let error = focus_not_frontmost_error("Safari", None);
+        let message = error.to_string();
+        assert!(message.contains("Safari"));
+        assert!(message.contains("frontmost"));
+        assert!(message.contains("bring the app forward manually"));
     }
 
     #[test]

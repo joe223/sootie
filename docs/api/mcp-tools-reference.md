@@ -102,11 +102,21 @@ Screenshot-producing tools return image data on two paths:
 read-only inspection from mutating desktop actions before dispatch:
 
 - Read-only tools such as `sootie_context`, `sootie_find`,
-  `sootie_screenshot`, and `sootie_learn_status` set `readOnlyHint: true`,
-  `destructiveHint: false`, and `idempotentHint: true`.
+  `sootie_screenshot`, `sootie_browser_observe`, `sootie_browser_find`,
+  `sootie_browser_extract`, `sootie_browser_screenshot`, and
+  `sootie_learn_status` set `readOnlyHint: true`, `destructiveHint: false`,
+  and `idempotentHint: true`.
 - Desktop actions such as `sootie_click`, `sootie_type`, `sootie_hotkey`,
   `sootie_drag`, `sootie_window`, and `sootie_run` set `readOnlyHint: false`
   and are marked as potentially mutating.
+- Browser-native actions such as `sootie_browser_open`,
+  `sootie_browser_click`, `sootie_browser_type`, `sootie_browser_press`,
+  `sootie_browser_scroll`, and browser navigation tools are non-read-only but
+  are not marked destructive except `sootie_browser_close_page`.
+- Browser-native diagnostics such as `sootie_browser_network`,
+  `sootie_browser_console`, and `sootie_browser_pdf` are read-only.
+  Storage, cookie, download, upload, and raw CDP escape-hatch tools are marked
+  destructive because their schemas include mutating operations.
 - Local recipe writes use non-read-only annotations even when they do not touch
   the desktop.
 
@@ -140,6 +150,32 @@ read-only inspection from mutating desktop actions before dispatch:
 | `sootie_parse_screen` | none | `app`, `full_resolution` | screenshot payload plus `elements`, `element_count`, `source` |
 | `sootie_ground` | `description` | `app`, `crop_box` | ranked candidates or vision-grounded point |
 | `sootie_annotate` | none | `app`, `roles`, `max_labels` | annotated image payload and text index |
+| `sootie_browser_connect` | none | `port`, `ws_url`, `browser`, `profile` | `connected`, `browser_id`, `endpoint`, `pages` |
+| `sootie_browser_pages` | none | `browser_id`, `port`, `ws_url`, `include_inactive` | `browser_id`, `pages` |
+| `sootie_browser_select_page` | `page_id` | `browser_id`, `port`, `ws_url` | selected `page` |
+| `sootie_browser_open` | `url` | `browser_id`, `port`, `ws_url`, `page_id`, `new_page`, `wait_until`, `timeout_ms` | `page_id`, `url`, `title`, `navigation_status` |
+| `sootie_browser_observe` | none | `browser_id`, `port`, `ws_url`, `page_id`, `mode`, `include`, `max_elements`, `max_text_chars`, `viewport_only` | `page`, `elements`, `text`, `diagnostics`, optional `screenshot` |
+| `sootie_browser_find` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `visible_only`, `max_results` | `elements`, `count`, `total_matches` |
+| `sootie_browser_click` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `button`, `count`, `wait_after` | browser action result |
+| `sootie_browser_type` | `text` | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `query`, `x`, `y`, `into`, `focused`, `clear`, `submit`, `delay_ms` | browser action result |
+| `sootie_browser_press` | `key` | `browser_id`, `port`, `ws_url`, `page_id`, `modifiers` | browser action result |
+| `sootie_browser_scroll` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `direction`, `amount` | browser action result |
+| `sootie_browser_wait` | `condition` | `browser_id`, `port`, `ws_url`, `page_id`, `value`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `timeout_ms`, `interval_ms` | wait result |
+| `sootie_browser_extract` | none | `browser_id`, `port`, `ws_url`, `page_id`, `format`, `instruction`, `max_chars`, `selector`, `ref`, `target` | `format`, `content`, `truncated`, `source` |
+| `sootie_browser_screenshot` | none | `browser_id`, `port`, `ws_url`, `page_id`, `full_page`, `format` | `image`, `mime_type`, `width`, `height`, `artifact_path`, `artifact_uri` |
+| `sootie_browser_back` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
+| `sootie_browser_forward` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
+| `sootie_browser_reload` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
+| `sootie_browser_close_page` | none | `browser_id`, `port`, `ws_url`, `page_id` | `closed`, `page_id` |
+| `sootie_browser_network` | none | `browser_id`, `port`, `ws_url`, `page_id`, `since_ms`, `include_body`, `request_id`, `url_contains`, `resource_type`, `max_entries`, `unsafe` | `requests`, optional `body` |
+| `sootie_browser_console` | none | `browser_id`, `port`, `ws_url`, `page_id`, `level`, `since_ms`, `max_entries` | `entries` |
+| `sootie_browser_storage` | `area`, `action` | `browser_id`, `port`, `ws_url`, `page_id`, `origin`, `key`, `value`, `unsafe` | storage action result |
+| `sootie_browser_cookies` | `action` | `browser_id`, `port`, `ws_url`, `page_id`, `name`, `value`, `url`, `domain`, `path`, `expires`, `http_only`, `secure`, `same_site`, `unsafe` | cookie action result |
+| `sootie_browser_downloads` | `action` | `browser_id`, `port`, `ws_url`, `page_id`, `download_path`, `unsafe` | download behavior result |
+| `sootie_browser_upload` | `file_paths` | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `unsafe` | upload result |
+| `sootie_browser_pdf` | none | `browser_id`, `port`, `ws_url`, `page_id`, `landscape`, `print_background`, `scale`, `paper_width`, `paper_height` | `mime_type`, `data_base64`, `byte_length` |
+| `sootie_cdp_send` | `method` | `browser_id`, `port`, `ws_url`, `page_id`, `domain`, `params`, `timeout_ms`, `unsafe` | raw CDP result |
+| `sootie_cdp_subscribe` | `domain` | `browser_id`, `port`, `ws_url`, `page_id`, `event`, `timeout_ms`, `max_events`, `unsafe` | bounded event batch |
 | `sootie_learn_start` | none | `task_description` | recording status |
 | `sootie_learn_stop` | none | none | recorded actions, apps, urls, duration |
 | `sootie_learn_status` | none | none | recording status and action count |
@@ -161,13 +197,28 @@ via `timeout` and `interval`.
 ## Browser CDP Behavior
 
 When a browser exposes CDP through `SOOTIE_CDP_PORT`, `SOOTIE_CDP_WS_URL`, or a
-discoverable local remote-debugging process, browser DOM targets use CDP first.
-CDP does not add a separate public tool family; the same `sootie_*` tools route
-browser DOM targets through CDP when possible. CDP-backed operations can read
-DOM text, enumerate elements, resolve element bounds, dispatch pointer and
-keyboard events, scroll the page, and capture page screenshots. If CDP is
-unavailable or the target is outside browser content, Sootie falls back to the
-platform backend.
+discoverable local remote-debugging process, portable `sootie_*` browser DOM
+targets use CDP first and then fall back to the platform backend when CDP is
+unavailable or the target is outside browser content.
+
+Sootie also exposes browser-native `sootie_browser_*` tools. These tools use CDP
+directly and do not fall back to desktop automation. They can list/select pages,
+open URLs, observe browser elements, operate by element `ref`, selector,
+role/name/text, DOM id/class, or viewport coordinates, extract page content,
+capture page screenshots, inspect network/console state, read or mutate browser
+storage and cookies, configure downloads, set file inputs, and render PDFs.
+
+`ref` values are session/page-scoped handles backed by Sootie's browser element
+registry. They remain usable across adjacent browser-native calls while the page
+state is current, but durable recipes should prefer role/name/text, DOM id, or
+selector targets. Navigation and page close clear page-scoped refs.
+
+Sensitive browser operations are policy-gated. Storage and cookie access,
+download behavior changes, file uploads, response-body reads, and raw CDP calls
+require `unsafe: true`. High-risk raw CDP methods such as `Runtime.evaluate`,
+`Network.getResponseBody`, `Browser.grantPermissions`,
+`Browser.setDownloadBehavior`, `Page.setDownloadBehavior`, and
+`Storage.clearDataForOrigin` also require `SOOTIE_ENABLE_UNSAFE_RAW_CDP=1`.
 
 ## Vision Grounding Behavior
 

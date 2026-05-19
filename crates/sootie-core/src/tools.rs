@@ -49,6 +49,32 @@ pub const TOOL_NAMES: &[&str] = &[
     "sootie_parse_screen",
     "sootie_ground",
     "sootie_annotate",
+    "sootie_browser_connect",
+    "sootie_browser_pages",
+    "sootie_browser_select_page",
+    "sootie_browser_open",
+    "sootie_browser_observe",
+    "sootie_browser_find",
+    "sootie_browser_click",
+    "sootie_browser_type",
+    "sootie_browser_press",
+    "sootie_browser_scroll",
+    "sootie_browser_wait",
+    "sootie_browser_extract",
+    "sootie_browser_screenshot",
+    "sootie_browser_back",
+    "sootie_browser_forward",
+    "sootie_browser_reload",
+    "sootie_browser_close_page",
+    "sootie_browser_network",
+    "sootie_browser_console",
+    "sootie_browser_storage",
+    "sootie_browser_cookies",
+    "sootie_browser_downloads",
+    "sootie_browser_upload",
+    "sootie_browser_pdf",
+    "sootie_cdp_send",
+    "sootie_cdp_subscribe",
     "sootie_learn_start",
     "sootie_learn_stop",
     "sootie_learn_status",
@@ -240,6 +266,174 @@ fn tool_definition(name: &str) -> ToolDefinition {
             props(&[("name", "string", "Recipe name.")]),
             &["name"],
         ),
+        "sootie_browser_connect" => tool(
+            name,
+            "Connect to a browser CDP endpoint.",
+            browser_connect_props(),
+            &[],
+        ),
+        "sootie_browser_pages" => tool(
+            name,
+            "List browser pages and tabs from the connected CDP endpoint.",
+            browser_session_props(&[("include_inactive", "boolean", "Include inactive pages.")]),
+            &[],
+        ),
+        "sootie_browser_select_page" => tool(
+            name,
+            "Select the browser page used by subsequent browser-native actions.",
+            browser_session_props(&[("page_id", "string", "Browser page id.")]),
+            &["page_id"],
+        ),
+        "sootie_browser_open" => tool(
+            name,
+            "Open a URL in a new or selected browser page.",
+            browser_open_props(),
+            &["url"],
+        ),
+        "sootie_browser_observe" => tool(
+            name,
+            "Observe browser page state, visible text, and interactive elements.",
+            browser_observe_props(),
+            &[],
+        ),
+        "sootie_browser_find" => tool(
+            name,
+            "Find browser elements by ref, selector, role/name/text, DOM id/class, or query.",
+            browser_find_props(),
+            &[],
+        ),
+        "sootie_browser_click" => tool(
+            name,
+            "Click a browser element using CDP without desktop fallback.",
+            browser_action_props(&[
+                ("button", "string", "left/right/middle."),
+                ("count", "integer", "Click count."),
+                ("wait_after", "string", "none/load/networkidle/stable."),
+            ]),
+            &[],
+        ),
+        "sootie_browser_type" => tool(
+            name,
+            "Type text into a browser element using CDP.",
+            browser_type_props(),
+            &["text"],
+        ),
+        "sootie_browser_press" => tool(
+            name,
+            "Press a browser key using CDP.",
+            browser_session_props(&[
+                ("page_id", "string", "Browser page id."),
+                ("key", "string", "Key name."),
+                ("modifiers", "array", "Modifier keys."),
+            ]),
+            &["key"],
+        ),
+        "sootie_browser_scroll" => tool(
+            name,
+            "Scroll the browser page or a browser element using CDP.",
+            browser_scroll_props(),
+            &[],
+        ),
+        "sootie_browser_wait" => tool(
+            name,
+            "Wait for browser lifecycle, URL/title/text, or element conditions.",
+            browser_wait_props(),
+            &["condition"],
+        ),
+        "sootie_browser_extract" => tool(
+            name,
+            "Extract browser page content as text, markdown, HTML, or JSON.",
+            browser_extract_props(),
+            &[],
+        ),
+        "sootie_browser_screenshot" => tool(
+            name,
+            "Capture a browser page screenshot through CDP.",
+            browser_session_props(&[
+                ("page_id", "string", "Browser page id."),
+                ("full_page", "boolean", "Capture beyond the current viewport when supported."),
+                ("format", "string", "png/jpeg."),
+            ]),
+            &[],
+        ),
+        "sootie_browser_back" => tool(
+            name,
+            "Navigate the selected browser page back.",
+            browser_history_props(),
+            &[],
+        ),
+        "sootie_browser_forward" => tool(
+            name,
+            "Navigate the selected browser page forward.",
+            browser_history_props(),
+            &[],
+        ),
+        "sootie_browser_reload" => tool(
+            name,
+            "Reload the selected browser page.",
+            browser_history_props(),
+            &[],
+        ),
+        "sootie_browser_close_page" => tool(
+            name,
+            "Close a browser page by page id.",
+            browser_session_props(&[("page_id", "string", "Browser page id.")]),
+            &[],
+        ),
+        "sootie_browser_network" => tool(
+            name,
+            "Inspect browser network entries or a guarded response body.",
+            browser_network_props(),
+            &[],
+        ),
+        "sootie_browser_console" => tool(
+            name,
+            "Read browser console entries captured from the page.",
+            browser_console_props(),
+            &[],
+        ),
+        "sootie_browser_storage" => tool(
+            name,
+            "List, read, or mutate localStorage/sessionStorage with policy checks.",
+            browser_storage_props(),
+            &["area", "action"],
+        ),
+        "sootie_browser_cookies" => tool(
+            name,
+            "List or mutate browser cookies with policy checks.",
+            browser_cookies_props(),
+            &["action"],
+        ),
+        "sootie_browser_downloads" => tool(
+            name,
+            "Configure browser download behavior with explicit unsafe opt-in.",
+            browser_downloads_props(),
+            &["action"],
+        ),
+        "sootie_browser_upload" => tool(
+            name,
+            "Set files on a browser file input through CDP with explicit unsafe opt-in.",
+            browser_upload_props(),
+            &["file_paths"],
+        ),
+        "sootie_browser_pdf" => tool(
+            name,
+            "Render the selected browser page to PDF through CDP.",
+            browser_pdf_props(),
+            &[],
+        ),
+        "sootie_cdp_send" => tool(
+            name,
+            "Send a raw CDP command through the guarded browser escape hatch.",
+            cdp_send_props(),
+            &["method"],
+        ),
+        "sootie_cdp_subscribe" => tool(
+            name,
+            "Collect a bounded batch of CDP events through the guarded escape hatch.",
+            cdp_subscribe_props(),
+            &["domain"],
+        ),
         "sootie_learn_start" => tool(
             name,
             "Start learning mode and record successful Sootie actions in this session.",
@@ -289,6 +483,16 @@ fn annotations_for(name: &str) -> ToolAnnotations {
         | "sootie_annotate"
         | "sootie_ground"
         | "sootie_parse_screen"
+        | "sootie_browser_connect"
+        | "sootie_browser_pages"
+        | "sootie_browser_select_page"
+        | "sootie_browser_observe"
+        | "sootie_browser_find"
+        | "sootie_browser_extract"
+        | "sootie_browser_screenshot"
+        | "sootie_browser_network"
+        | "sootie_browser_console"
+        | "sootie_browser_pdf"
         | "sootie_wait"
         | "sootie_recipes"
         | "sootie_recipe_show"
@@ -315,6 +519,37 @@ fn annotations_for(name: &str) -> ToolAnnotations {
             destructive_hint: true,
             idempotent_hint: true,
             open_world_hint: false,
+        },
+        "sootie_browser_open"
+        | "sootie_browser_click"
+        | "sootie_browser_type"
+        | "sootie_browser_press"
+        | "sootie_browser_scroll"
+        | "sootie_browser_wait"
+        | "sootie_browser_back"
+        | "sootie_browser_forward"
+        | "sootie_browser_reload" => ToolAnnotations {
+            read_only_hint: false,
+            destructive_hint: false,
+            idempotent_hint: false,
+            open_world_hint: true,
+        },
+        "sootie_browser_close_page" => ToolAnnotations {
+            read_only_hint: false,
+            destructive_hint: true,
+            idempotent_hint: true,
+            open_world_hint: true,
+        },
+        "sootie_browser_storage"
+        | "sootie_browser_cookies"
+        | "sootie_browser_downloads"
+        | "sootie_browser_upload"
+        | "sootie_cdp_send"
+        | "sootie_cdp_subscribe" => ToolAnnotations {
+            read_only_hint: false,
+            destructive_hint: true,
+            idempotent_hint: false,
+            open_world_hint: true,
         },
         _ => ToolAnnotations {
             read_only_hint: false,
@@ -434,6 +669,331 @@ fn scroll_props() -> Value {
         ("app", "string", "Optional app."),
         ("x", "number", "X coordinate."),
         ("y", "number", "Y coordinate."),
+    ])
+}
+
+fn browser_connect_props() -> Value {
+    props(&[
+        ("port", "integer", "CDP HTTP port."),
+        ("ws_url", "string", "Direct page WebSocket URL."),
+        ("browser", "string", "chrome/edge/chromium/auto."),
+        ("profile", "string", "Browser profile hint."),
+    ])
+}
+
+fn browser_session_props(extra: &[(&str, &str, &str)]) -> Value {
+    let mut map = props(&[
+        ("browser_id", "string", "Browser connection id."),
+        ("port", "integer", "CDP HTTP port."),
+        ("ws_url", "string", "Direct page WebSocket URL."),
+    ])
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    for (name, ty, description) in extra {
+        map.insert((*name).to_string(), typed_schema(ty, description));
+    }
+    Value::Object(map)
+}
+
+fn browser_page_props(extra: &[(&str, &str, &str)]) -> Value {
+    let mut map = browser_session_props(&[("page_id", "string", "Browser page id.")])
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    for (name, ty, description) in extra {
+        map.insert((*name).to_string(), typed_schema(ty, description));
+    }
+    Value::Object(map)
+}
+
+fn browser_open_props() -> Value {
+    browser_page_props(&[
+        ("url", "string", "URL to open."),
+        ("new_page", "boolean", "Open in a new page."),
+        (
+            "wait_until",
+            "string",
+            "load/domcontentloaded/networkidle/none.",
+        ),
+        ("timeout_ms", "integer", "Timeout in milliseconds."),
+    ])
+}
+
+fn browser_observe_props() -> Value {
+    let mut map = browser_page_props(&[
+        ("mode", "string", "snapshot/text/screenshot/hybrid."),
+        ("max_elements", "integer", "Maximum elements."),
+        (
+            "max_text_chars",
+            "integer",
+            "Maximum visible text characters.",
+        ),
+        (
+            "viewport_only",
+            "boolean",
+            "Only include viewport elements.",
+        ),
+    ])
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    map.insert(
+        "include".to_string(),
+        json!({
+            "type": "object",
+            "description": "Optional include flags for elements, text, screenshot, frames, network, and console."
+        }),
+    );
+    Value::Object(map)
+}
+
+fn browser_target_props() -> Value {
+    props(&[
+        ("ref", "string", "Element ref from observe/find."),
+        ("selector", "string", "CSS selector."),
+        ("dom_id", "string", "DOM id."),
+        ("dom_class", "string", "DOM class."),
+        ("role", "string", "Role filter."),
+        ("name", "string", "Accessible name filter."),
+        ("text", "string", "Visible text filter."),
+        ("query", "string", "Text/name search."),
+        ("x", "number", "Viewport X coordinate."),
+        ("y", "number", "Viewport Y coordinate."),
+    ])
+}
+
+fn browser_find_props() -> Value {
+    let mut map = browser_page_props(&[
+        ("visible_only", "boolean", "Only visible elements."),
+        ("max_results", "integer", "Maximum results."),
+    ])
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    if let Some(target) = browser_target_props().as_object() {
+        map.extend(target.clone());
+    }
+    Value::Object(map)
+}
+
+fn browser_action_props(extra: &[(&str, &str, &str)]) -> Value {
+    let mut map = browser_find_props()
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    for (name, ty, description) in extra {
+        map.insert((*name).to_string(), typed_schema(ty, description));
+    }
+    Value::Object(map)
+}
+
+fn browser_scroll_props() -> Value {
+    let mut map = browser_action_props(&[("direction", "string", "up/down/left/right.")])
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    map.insert(
+        "amount".to_string(),
+        json!({
+            "anyOf": [
+                { "type": "string", "enum": ["small", "medium", "large"] },
+                { "type": "integer", "minimum": 1 }
+            ],
+            "description": "small/medium/large or a positive integer."
+        }),
+    );
+    Value::Object(map)
+}
+
+fn browser_type_props() -> Value {
+    let mut map = browser_action_props(&[
+        ("into", "string", "Visible label, placeholder, or query."),
+        ("focused", "boolean", "Type into active element."),
+        ("text", "string", "Text to type."),
+        ("clear", "boolean", "Clear first."),
+        ("submit", "boolean", "Submit after typing."),
+        ("delay_ms", "integer", "Typing delay hint."),
+    ])
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    map.remove("max_results");
+    Value::Object(map)
+}
+
+fn browser_wait_props() -> Value {
+    browser_action_props(&[
+        ("condition", "string", "Browser wait condition."),
+        ("value", "string", "Condition value."),
+        ("timeout_ms", "integer", "Timeout in milliseconds."),
+        (
+            "interval_ms",
+            "integer",
+            "Polling interval in milliseconds.",
+        ),
+    ])
+}
+
+fn browser_extract_props() -> Value {
+    let mut map = browser_page_props(&[
+        ("format", "string", "text/markdown/html/json."),
+        ("instruction", "string", "Extraction instruction hint."),
+        ("max_chars", "integer", "Maximum output characters."),
+        ("selector", "string", "CSS selector target."),
+        ("ref", "string", "Element ref target."),
+    ])
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    map.insert(
+        "target".to_string(),
+        json!({
+            "type": "object",
+            "description": "Optional extraction target with ref, selector, or page=true."
+        }),
+    );
+    Value::Object(map)
+}
+
+fn browser_history_props() -> Value {
+    browser_page_props(&[("timeout_ms", "integer", "Timeout in milliseconds.")])
+}
+
+fn browser_network_props() -> Value {
+    browser_page_props(&[
+        (
+            "since_ms",
+            "integer",
+            "Only include recent entries when available.",
+        ),
+        (
+            "include_body",
+            "boolean",
+            "Include response body when a request id is provided.",
+        ),
+        (
+            "request_id",
+            "string",
+            "CDP request id for response-body lookup.",
+        ),
+        ("url_contains", "string", "Filter by URL substring."),
+        ("resource_type", "string", "Filter by resource type."),
+        ("max_entries", "integer", "Maximum entries."),
+        ("unsafe", "boolean", "Required for response body access."),
+    ])
+}
+
+fn browser_console_props() -> Value {
+    browser_page_props(&[
+        ("level", "string", "log/info/warning/error/debug."),
+        (
+            "since_ms",
+            "integer",
+            "Only include recent entries when available.",
+        ),
+        ("max_entries", "integer", "Maximum entries."),
+    ])
+}
+
+fn browser_storage_props() -> Value {
+    browser_page_props(&[
+        ("area", "string", "localStorage/sessionStorage."),
+        ("origin", "string", "Origin hint."),
+        ("action", "string", "list/get/set/remove/clear."),
+        ("key", "string", "Storage key."),
+        ("value", "string", "Storage value."),
+        ("unsafe", "boolean", "Required for every storage action."),
+    ])
+}
+
+fn browser_cookies_props() -> Value {
+    browser_page_props(&[
+        ("action", "string", "list/get/set/remove/clear."),
+        ("name", "string", "Cookie name."),
+        ("value", "string", "Cookie value."),
+        ("url", "string", "Cookie URL."),
+        ("domain", "string", "Cookie domain."),
+        ("path", "string", "Cookie path."),
+        ("expires", "number", "Cookie expiration timestamp."),
+        ("http_only", "boolean", "Set HttpOnly."),
+        ("secure", "boolean", "Set Secure."),
+        ("same_site", "string", "Strict/Lax/None."),
+        ("unsafe", "boolean", "Required for every cookie action."),
+    ])
+}
+
+fn browser_downloads_props() -> Value {
+    browser_page_props(&[
+        ("action", "string", "deny/allow/allowAndName/default."),
+        (
+            "download_path",
+            "string",
+            "Directory for allowed downloads.",
+        ),
+        ("unsafe", "boolean", "Required to change download behavior."),
+    ])
+}
+
+fn browser_upload_props() -> Value {
+    let mut map = browser_action_props(&[
+        ("file_paths", "array", "Absolute file paths to upload."),
+        ("unsafe", "boolean", "Required to set file input paths."),
+    ])
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    map.remove("max_results");
+    Value::Object(map)
+}
+
+fn browser_pdf_props() -> Value {
+    browser_page_props(&[
+        (
+            "landscape",
+            "boolean",
+            "Print PDF in landscape orientation.",
+        ),
+        (
+            "print_background",
+            "boolean",
+            "Include background graphics.",
+        ),
+        ("scale", "number", "PDF scale."),
+        ("paper_width", "number", "Paper width in inches."),
+        ("paper_height", "number", "Paper height in inches."),
+    ])
+}
+
+fn cdp_send_props() -> Value {
+    browser_page_props(&[
+        (
+            "domain",
+            "string",
+            "CDP domain; alternatively include it in method.",
+        ),
+        (
+            "method",
+            "string",
+            "CDP method, for example Page.captureScreenshot.",
+        ),
+        ("params", "object", "CDP params."),
+        ("timeout_ms", "integer", "Timeout in milliseconds."),
+        ("unsafe", "boolean", "Required for raw CDP execution."),
+    ])
+}
+
+fn cdp_subscribe_props() -> Value {
+    browser_page_props(&[
+        ("domain", "string", "CDP domain to enable and listen to."),
+        ("event", "string", "Optional event name filter."),
+        (
+            "timeout_ms",
+            "integer",
+            "Collection window in milliseconds.",
+        ),
+        ("max_events", "integer", "Maximum events."),
+        ("unsafe", "boolean", "Required for raw CDP subscription."),
     ])
 }
 
@@ -562,8 +1122,24 @@ mod tests {
     #[test]
     fn exposes_sootie_tool_surface() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 29);
+        assert_eq!(tools.len(), 55);
         assert!(tools.iter().any(|tool| tool.name == "sootie_context"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool.name == "sootie_browser_observe"));
+        for name in [
+            "sootie_browser_network",
+            "sootie_browser_console",
+            "sootie_browser_storage",
+            "sootie_browser_cookies",
+            "sootie_browser_downloads",
+            "sootie_browser_upload",
+            "sootie_browser_pdf",
+            "sootie_cdp_send",
+            "sootie_cdp_subscribe",
+        ] {
+            assert!(tools.iter().any(|tool| tool.name == name), "{name}");
+        }
         assert!(tools.iter().any(|tool| tool.name == "sootie_learn_status"));
         assert!(!tools.iter().any(|tool| tool.name == "sootie_launch"));
     }
@@ -571,7 +1147,7 @@ mod tests {
     #[test]
     fn tool_contract_is_exact() {
         let tools = tool_definitions();
-        assert_eq!(TOOL_NAMES.len(), 29);
+        assert_eq!(TOOL_NAMES.len(), 55);
         assert_eq!(
             tools
                 .iter()
@@ -583,6 +1159,26 @@ mod tests {
         macro_rules! app_scope {
             ($($name:literal),* $(,)?) => {
                 &["app", $($name),*][..]
+            };
+        }
+        macro_rules! browser_session {
+            ($($name:literal),* $(,)?) => {
+                &["browser_id", "port", "ws_url", $($name),*][..]
+            };
+        }
+        macro_rules! browser_page {
+            ($($name:literal),* $(,)?) => {
+                &["browser_id", "port", "ws_url", "page_id", $($name),*][..]
+            };
+        }
+        macro_rules! browser_target {
+            ($($name:literal),* $(,)?) => {
+                &[
+                    "browser_id", "port", "ws_url", "page_id",
+                    "visible_only", "max_results",
+                    "ref", "selector", "dom_id", "dom_class", "role", "name", "text", "query", "x", "y",
+                    $($name),*
+                ][..]
             };
         }
 
@@ -674,6 +1270,198 @@ mod tests {
                 &["description"],
             ),
             ("sootie_annotate", app_scope!["roles", "max_labels"], &[]),
+            (
+                "sootie_browser_connect",
+                &["port", "ws_url", "browser", "profile"],
+                &[],
+            ),
+            (
+                "sootie_browser_pages",
+                browser_session!["include_inactive"],
+                &[],
+            ),
+            (
+                "sootie_browser_select_page",
+                browser_session!["page_id"],
+                &["page_id"],
+            ),
+            (
+                "sootie_browser_open",
+                browser_page!["url", "new_page", "wait_until", "timeout_ms"],
+                &["url"],
+            ),
+            (
+                "sootie_browser_observe",
+                browser_page![
+                    "mode",
+                    "max_elements",
+                    "max_text_chars",
+                    "viewport_only",
+                    "include"
+                ],
+                &[],
+            ),
+            ("sootie_browser_find", browser_target![], &[]),
+            (
+                "sootie_browser_click",
+                browser_target!["button", "count", "wait_after"],
+                &[],
+            ),
+            (
+                "sootie_browser_type",
+                &[
+                    "browser_id",
+                    "port",
+                    "ws_url",
+                    "page_id",
+                    "visible_only",
+                    "ref",
+                    "selector",
+                    "dom_id",
+                    "dom_class",
+                    "role",
+                    "name",
+                    "text",
+                    "query",
+                    "x",
+                    "y",
+                    "into",
+                    "focused",
+                    "clear",
+                    "submit",
+                    "delay_ms",
+                ],
+                &["text"],
+            ),
+            (
+                "sootie_browser_press",
+                browser_session!["page_id", "key", "modifiers"],
+                &["key"],
+            ),
+            (
+                "sootie_browser_scroll",
+                browser_target!["direction", "amount"],
+                &[],
+            ),
+            (
+                "sootie_browser_wait",
+                browser_target!["condition", "value", "timeout_ms", "interval_ms"],
+                &["condition"],
+            ),
+            (
+                "sootie_browser_extract",
+                browser_page![
+                    "format",
+                    "instruction",
+                    "max_chars",
+                    "selector",
+                    "ref",
+                    "target"
+                ],
+                &[],
+            ),
+            (
+                "sootie_browser_screenshot",
+                browser_session!["page_id", "full_page", "format"],
+                &[],
+            ),
+            ("sootie_browser_back", browser_page!["timeout_ms"], &[]),
+            ("sootie_browser_forward", browser_page!["timeout_ms"], &[]),
+            ("sootie_browser_reload", browser_page!["timeout_ms"], &[]),
+            (
+                "sootie_browser_close_page",
+                browser_session!["page_id"],
+                &[],
+            ),
+            (
+                "sootie_browser_network",
+                browser_page![
+                    "since_ms",
+                    "include_body",
+                    "request_id",
+                    "url_contains",
+                    "resource_type",
+                    "max_entries",
+                    "unsafe"
+                ],
+                &[],
+            ),
+            (
+                "sootie_browser_console",
+                browser_page!["level", "since_ms", "max_entries"],
+                &[],
+            ),
+            (
+                "sootie_browser_storage",
+                browser_page!["area", "origin", "action", "key", "value", "unsafe"],
+                &["area", "action"],
+            ),
+            (
+                "sootie_browser_cookies",
+                browser_page![
+                    "action",
+                    "name",
+                    "value",
+                    "url",
+                    "domain",
+                    "path",
+                    "expires",
+                    "http_only",
+                    "secure",
+                    "same_site",
+                    "unsafe"
+                ],
+                &["action"],
+            ),
+            (
+                "sootie_browser_downloads",
+                browser_page!["action", "download_path", "unsafe"],
+                &["action"],
+            ),
+            (
+                "sootie_browser_upload",
+                &[
+                    "browser_id",
+                    "port",
+                    "ws_url",
+                    "page_id",
+                    "visible_only",
+                    "ref",
+                    "selector",
+                    "dom_id",
+                    "dom_class",
+                    "role",
+                    "name",
+                    "text",
+                    "query",
+                    "x",
+                    "y",
+                    "file_paths",
+                    "unsafe",
+                ],
+                &["file_paths"],
+            ),
+            (
+                "sootie_browser_pdf",
+                browser_page![
+                    "landscape",
+                    "print_background",
+                    "scale",
+                    "paper_width",
+                    "paper_height"
+                ],
+                &[],
+            ),
+            (
+                "sootie_cdp_send",
+                browser_page!["domain", "method", "params", "timeout_ms", "unsafe"],
+                &["method"],
+            ),
+            (
+                "sootie_cdp_subscribe",
+                browser_page!["domain", "event", "timeout_ms", "max_events", "unsafe"],
+                &["domain"],
+            ),
             ("sootie_learn_start", &["task_description"], &[]),
             ("sootie_learn_stop", &[], &[]),
             ("sootie_learn_status", &[], &[]),
@@ -725,6 +1513,32 @@ mod tests {
             ("sootie_parse_screen", &[]),
             ("sootie_ground", &["description"]),
             ("sootie_annotate", &[]),
+            ("sootie_browser_connect", &[]),
+            ("sootie_browser_pages", &[]),
+            ("sootie_browser_select_page", &["page_id"]),
+            ("sootie_browser_open", &["url"]),
+            ("sootie_browser_observe", &[]),
+            ("sootie_browser_find", &[]),
+            ("sootie_browser_click", &[]),
+            ("sootie_browser_type", &["text"]),
+            ("sootie_browser_press", &["key"]),
+            ("sootie_browser_scroll", &[]),
+            ("sootie_browser_wait", &["condition"]),
+            ("sootie_browser_extract", &[]),
+            ("sootie_browser_screenshot", &[]),
+            ("sootie_browser_back", &[]),
+            ("sootie_browser_forward", &[]),
+            ("sootie_browser_reload", &[]),
+            ("sootie_browser_close_page", &[]),
+            ("sootie_browser_network", &[]),
+            ("sootie_browser_console", &[]),
+            ("sootie_browser_storage", &["area", "action"]),
+            ("sootie_browser_cookies", &["action"]),
+            ("sootie_browser_downloads", &["action"]),
+            ("sootie_browser_upload", &["file_paths"]),
+            ("sootie_browser_pdf", &[]),
+            ("sootie_cdp_send", &["method"]),
+            ("sootie_cdp_subscribe", &["domain"]),
             ("sootie_learn_start", &[]),
             ("sootie_learn_stop", &[]),
             ("sootie_learn_status", &[]),
@@ -954,6 +1768,17 @@ mod tests {
     }
 
     #[test]
+    fn browser_scroll_amount_accepts_named_or_integer_schema() {
+        let tools = tool_definitions();
+        let scroll = tool_by_name(&tools, "sootie_browser_scroll");
+        let amount = &scroll.input_schema["properties"]["amount"];
+        assert_eq!(amount["anyOf"][0]["type"], "string");
+        assert_eq!(amount["anyOf"][0]["enum"][0], "small");
+        assert_eq!(amount["anyOf"][1]["type"], "integer");
+        assert_eq!(amount["anyOf"][1]["minimum"], 1);
+    }
+
+    #[test]
     fn advertised_shapes_do_not_expand_public_compatibility_parameters() {
         let tools = tool_definitions();
         let forbidden = [
@@ -977,6 +1802,9 @@ mod tests {
             "domId",
         ];
         for tool in &tools {
+            if tool.name.starts_with("sootie_browser_") || tool.name.starts_with("sootie_cdp_") {
+                continue;
+            }
             for name in forbidden {
                 assert!(
                     tool.input_schema["properties"][name].is_null(),
@@ -1047,5 +1875,19 @@ mod tests {
         assert!(!recipe_save.annotations.read_only_hint);
         assert!(!recipe_save.annotations.destructive_hint);
         assert!(!recipe_save.annotations.open_world_hint);
+
+        let browser_observe = tool_by_name(&tools, "sootie_browser_observe");
+        assert!(browser_observe.annotations.read_only_hint);
+        assert!(!browser_observe.annotations.destructive_hint);
+        assert!(!browser_observe.annotations.open_world_hint);
+
+        let browser_click = tool_by_name(&tools, "sootie_browser_click");
+        assert!(!browser_click.annotations.read_only_hint);
+        assert!(!browser_click.annotations.destructive_hint);
+        assert!(browser_click.annotations.open_world_hint);
+
+        let browser_close = tool_by_name(&tools, "sootie_browser_close_page");
+        assert!(!browser_close.annotations.read_only_hint);
+        assert!(browser_close.annotations.destructive_hint);
     }
 }

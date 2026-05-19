@@ -159,6 +159,88 @@ const expectedTools = [
     { app: "string", max_labels: "integer", roles: "array:string" },
     [],
   ],
+  [
+    "sootie_browser_connect",
+    { browser: "string", port: "integer", profile: "string", ws_url: "string" },
+    [],
+  ],
+  [
+    "sootie_browser_pages",
+    { browser_id: "string", include_inactive: "boolean", port: "integer", ws_url: "string" },
+    [],
+  ],
+  [
+    "sootie_browser_select_page",
+    { browser_id: "string", page_id: "string", port: "integer", ws_url: "string" },
+    ["page_id"],
+  ],
+  [
+    "sootie_browser_open",
+    { browser_id: "string", new_page: "boolean", page_id: "string", port: "integer", timeout_ms: "integer", url: "string", wait_until: "string", ws_url: "string" },
+    ["url"],
+  ],
+  [
+    "sootie_browser_observe",
+    { browser_id: "string", include: "object", max_elements: "integer", max_text_chars: "integer", mode: "string", page_id: "string", port: "integer", viewport_only: "boolean", ws_url: "string" },
+    [],
+  ],
+  [
+    "sootie_browser_find",
+    { browser_id: "string", dom_class: "string", dom_id: "string", max_results: "integer", name: "string", page_id: "string", port: "integer", query: "string", ref: "string", role: "string", selector: "string", text: "string", visible_only: "boolean", ws_url: "string", x: "number", y: "number" },
+    [],
+  ],
+  [
+    "sootie_browser_click",
+    { browser_id: "string", button: "string", count: "integer", dom_class: "string", dom_id: "string", max_results: "integer", name: "string", page_id: "string", port: "integer", query: "string", ref: "string", role: "string", selector: "string", text: "string", visible_only: "boolean", wait_after: "string", ws_url: "string", x: "number", y: "number" },
+    [],
+  ],
+  [
+    "sootie_browser_type",
+    { browser_id: "string", clear: "boolean", delay_ms: "integer", dom_class: "string", dom_id: "string", focused: "boolean", into: "string", name: "string", page_id: "string", port: "integer", query: "string", ref: "string", role: "string", selector: "string", submit: "boolean", text: "string", visible_only: "boolean", ws_url: "string", x: "number", y: "number" },
+    ["text"],
+  ],
+  [
+    "sootie_browser_press",
+    { browser_id: "string", key: "string", modifiers: "array:string", page_id: "string", port: "integer", ws_url: "string" },
+    ["key"],
+  ],
+  [
+    "sootie_browser_scroll",
+    { amount: "anyOf:string|integer", browser_id: "string", direction: "string", dom_class: "string", dom_id: "string", max_results: "integer", name: "string", page_id: "string", port: "integer", query: "string", ref: "string", role: "string", selector: "string", text: "string", visible_only: "boolean", ws_url: "string", x: "number", y: "number" },
+    [],
+  ],
+  [
+    "sootie_browser_wait",
+    { browser_id: "string", condition: "string", dom_class: "string", dom_id: "string", interval_ms: "integer", max_results: "integer", name: "string", page_id: "string", port: "integer", query: "string", ref: "string", role: "string", selector: "string", text: "string", timeout_ms: "integer", value: "string", visible_only: "boolean", ws_url: "string", x: "number", y: "number" },
+    ["condition"],
+  ],
+  [
+    "sootie_browser_extract",
+    { browser_id: "string", format: "string", instruction: "string", max_chars: "integer", page_id: "string", port: "integer", ref: "string", selector: "string", target: "object", ws_url: "string" },
+    [],
+  ],
+  [
+    "sootie_browser_screenshot",
+    { browser_id: "string", format: "string", full_page: "boolean", page_id: "string", port: "integer", ws_url: "string" },
+    [],
+  ],
+  ["sootie_browser_back", { browser_id: "string", page_id: "string", port: "integer", timeout_ms: "integer", ws_url: "string" }, []],
+  ["sootie_browser_forward", { browser_id: "string", page_id: "string", port: "integer", timeout_ms: "integer", ws_url: "string" }, []],
+  ["sootie_browser_reload", { browser_id: "string", page_id: "string", port: "integer", timeout_ms: "integer", ws_url: "string" }, []],
+  ["sootie_browser_close_page", { browser_id: "string", page_id: "string", port: "integer", ws_url: "string" }, []],
+  [
+    "sootie_browser_network",
+    { browser_id: "string", include_body: "boolean", max_entries: "integer", page_id: "string", port: "integer", request_id: "string", resource_type: "string", since_ms: "integer", unsafe: "boolean", url_contains: "string", ws_url: "string" },
+    [],
+  ],
+  ["sootie_browser_console", { browser_id: "string", level: "string", max_entries: "integer", page_id: "string", port: "integer", since_ms: "integer", ws_url: "string" }, []],
+  ["sootie_browser_storage", { action: "string", area: "string", browser_id: "string", key: "string", origin: "string", page_id: "string", port: "integer", unsafe: "boolean", value: "string", ws_url: "string" }, ["area", "action"]],
+  ["sootie_browser_cookies", { action: "string", browser_id: "string", domain: "string", expires: "number", http_only: "boolean", name: "string", page_id: "string", path: "string", port: "integer", same_site: "string", secure: "boolean", unsafe: "boolean", url: "string", value: "string", ws_url: "string" }, ["action"]],
+  ["sootie_browser_downloads", { action: "string", browser_id: "string", download_path: "string", page_id: "string", port: "integer", unsafe: "boolean", ws_url: "string" }, ["action"]],
+  ["sootie_browser_upload", { browser_id: "string", dom_class: "string", dom_id: "string", file_paths: "array:string", name: "string", page_id: "string", port: "integer", query: "string", ref: "string", role: "string", selector: "string", text: "string", unsafe: "boolean", visible_only: "boolean", ws_url: "string", x: "number", y: "number" }, ["file_paths"]],
+  ["sootie_browser_pdf", { browser_id: "string", landscape: "boolean", page_id: "string", paper_height: "number", paper_width: "number", port: "integer", print_background: "boolean", scale: "number", ws_url: "string" }, []],
+  ["sootie_cdp_send", { browser_id: "string", domain: "string", method: "string", page_id: "string", params: "object", port: "integer", timeout_ms: "integer", unsafe: "boolean", ws_url: "string" }, ["method"]],
+  ["sootie_cdp_subscribe", { browser_id: "string", domain: "string", event: "string", max_events: "integer", page_id: "string", port: "integer", timeout_ms: "integer", unsafe: "boolean", ws_url: "string" }, ["domain"]],
   ["sootie_learn_start", { task_description: "string" }, []],
   ["sootie_learn_stop", {}, []],
   ["sootie_learn_status", {}, []],
@@ -195,6 +277,9 @@ function argValue(args, name, fallback) {
 }
 
 function schemaType(schema) {
+  if (schema && Array.isArray(schema.anyOf)) {
+    return `anyOf:${schema.anyOf.map((entry) => entry.type).join("|")}`;
+  }
   const type = schema && schema.type;
   if (type !== "array") {
     return type;
@@ -255,9 +340,11 @@ function main() {
       }
     }
 
-    for (const property of forbiddenPublicFields) {
-      if (Object.hasOwn(properties || {}, property)) {
-        errors.push(`${name}: unexpectedly advertises ${property}`);
+    if (!name.startsWith("sootie_browser_") && !name.startsWith("sootie_cdp_")) {
+      for (const property of forbiddenPublicFields) {
+        if (Object.hasOwn(properties || {}, property)) {
+          errors.push(`${name}: unexpectedly advertises ${property}`);
+        }
       }
     }
     if (name !== "sootie_ground" && Object.hasOwn(properties || {}, "description")) {

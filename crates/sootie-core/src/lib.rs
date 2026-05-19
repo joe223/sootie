@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod browser;
 mod config;
 pub mod mcp;
 pub mod recipe;

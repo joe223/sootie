@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::backend::DesktopBackend;
+use crate::browser::BrowserService;
 use crate::config::{ResolutionStrategy, SootieConfig};
 use crate::recipe::{
     parse_recipe, recipe_step_tool_call, recipe_wait_tool_call, substitute_params, Recipe,
@@ -54,6 +55,7 @@ pub struct McpServer {
     learning_session: Option<LearningSession>,
     resolution_strategy: ResolutionStrategy,
     vision: VisionConfig,
+    browser: BrowserService,
 }
 
 struct LearningSession {
@@ -217,6 +219,7 @@ impl McpServer {
             learning_session: None,
             resolution_strategy: config.resolution.strategy,
             vision: VisionConfig::from_env_and_settings(&config.vision),
+            browser: BrowserService::default(),
         }
     }
 
@@ -228,6 +231,7 @@ impl McpServer {
             learning_session: None,
             resolution_strategy: config.resolution.strategy,
             vision: VisionConfig::from_env_and_settings(&config.vision),
+            browser: BrowserService::default(),
         }
     }
 
@@ -243,6 +247,7 @@ impl McpServer {
             learning_session: None,
             resolution_strategy,
             vision,
+            browser: BrowserService::default(),
         }
     }
 
@@ -504,6 +509,44 @@ impl McpServer {
                 payload["source"] = json!("platform-context");
                 Ok(ToolResult::ok(payload))
             }
+            "sootie_browser_connect" => Ok(ToolResult::ok(self.browser.connect(args)?)),
+            "sootie_browser_pages" => Ok(ToolResult::ok(self.browser.pages(args)?)),
+            "sootie_browser_select_page" => Ok(ToolResult::ok(self.browser.select_page(args)?)),
+            "sootie_browser_open" => Ok(ToolResult::ok(self.browser.open(args)?)),
+            "sootie_browser_observe" => {
+                let mut payload = self.browser.observe(args)?;
+                let mode = str_arg(args, "mode").unwrap_or_default();
+                let include_screenshot =
+                    nested_bool_arg(args, "include", "screenshot").unwrap_or(false);
+                if matches!(mode.as_str(), "screenshot" | "hybrid") || include_screenshot {
+                    let screenshot = self.browser.screenshot(args)?;
+                    payload["screenshot"] = screenshot_payload(screenshot);
+                }
+                Ok(ToolResult::ok(payload))
+            }
+            "sootie_browser_find" => Ok(ToolResult::ok(self.browser.find(args)?)),
+            "sootie_browser_click" => Ok(ToolResult::ok(self.browser.click(args)?)),
+            "sootie_browser_type" => Ok(ToolResult::ok(self.browser.type_text(args)?)),
+            "sootie_browser_press" => Ok(ToolResult::ok(self.browser.press(args)?)),
+            "sootie_browser_scroll" => Ok(ToolResult::ok(self.browser.scroll(args)?)),
+            "sootie_browser_wait" => Ok(ToolResult::ok(self.browser.wait(args)?)),
+            "sootie_browser_extract" => Ok(ToolResult::ok(self.browser.extract(args)?)),
+            "sootie_browser_screenshot" => {
+                Ok(screenshot_tool_result(self.browser.screenshot(args)))
+            }
+            "sootie_browser_back" => Ok(ToolResult::ok(self.browser.history(args, "back")?)),
+            "sootie_browser_forward" => Ok(ToolResult::ok(self.browser.history(args, "forward")?)),
+            "sootie_browser_reload" => Ok(ToolResult::ok(self.browser.history(args, "reload")?)),
+            "sootie_browser_close_page" => Ok(ToolResult::ok(self.browser.close_page(args)?)),
+            "sootie_browser_network" => Ok(ToolResult::ok(self.browser.network(args)?)),
+            "sootie_browser_console" => Ok(ToolResult::ok(self.browser.console(args)?)),
+            "sootie_browser_storage" => Ok(ToolResult::ok(self.browser.storage(args)?)),
+            "sootie_browser_cookies" => Ok(ToolResult::ok(self.browser.cookies(args)?)),
+            "sootie_browser_downloads" => Ok(ToolResult::ok(self.browser.downloads(args)?)),
+            "sootie_browser_upload" => Ok(ToolResult::ok(self.browser.upload(args)?)),
+            "sootie_browser_pdf" => Ok(ToolResult::ok(self.browser.pdf(args)?)),
+            "sootie_cdp_send" => Ok(ToolResult::ok(self.browser.cdp_send(args)?)),
+            "sootie_cdp_subscribe" => Ok(ToolResult::ok(self.browser.cdp_subscribe(args)?)),
             "sootie_click" => {
                 let query = find_query(args);
                 let (x, y) = xy_args(args, "x", "y", "target")?;
@@ -512,6 +555,7 @@ impl McpServer {
                 if let Some(result) = self.vision_first_click(x, y, &query, &button, count)? {
                     return Ok(self.action_result(result, query.app.as_deref()));
                 }
+                self.focus_app_for_explicit_pointer_coordinates(&query, x.zip(y))?;
                 let result = match self.backend.click(x, y, &query, &button, count) {
                     Ok(result) => result,
                     Err(error) => {
@@ -529,6 +573,7 @@ impl McpServer {
                 if let Some(result) = self.vision_first_hover(x, y, &query)? {
                     return Ok(self.action_result(result, query.app.as_deref()));
                 }
+                self.focus_app_for_explicit_pointer_coordinates(&query, x.zip(y))?;
                 let result = match self.backend.hover(x, y, &query) {
                     Ok(result) => result,
                     Err(error) => match self.vision_fallback_hover(&error, x, y, &query)? {
@@ -548,6 +593,7 @@ impl McpServer {
                 {
                     return Ok(self.action_result(result, query.app.as_deref()));
                 }
+                self.focus_app_for_explicit_pointer_coordinates(&query, x.zip(y))?;
                 let result = match self
                     .backend
                     .long_press(x, y, &query, duration_secs, &button)
@@ -577,6 +623,7 @@ impl McpServer {
                     Err(error) => return Err(error),
                 };
                 let to = self.required_point_arg(args, "to_x", "to_y", "to_target")?;
+                self.focus_app_for_explicit_pointer_coordinates(&query, from)?;
                 let result = self.backend.drag(
                     from,
                     to,
@@ -964,12 +1011,16 @@ impl McpServer {
                 missing_params.join(", ")
             )));
         }
+        if self.backend.screen_locked()? == Some(true) && recipe_requires_unlocked_screen(&recipe) {
+            return Ok(locked_recipe_result(&recipe));
+        }
         if let Some(precondition_error) = self.check_recipe_preconditions(&recipe)? {
             return Ok(precondition_error);
         }
 
         let mut results = Vec::new();
         for step in &recipe.steps {
+            let step_started_at = Instant::now();
             let (tool, raw_args) = recipe_step_tool_call(step, recipe.app.as_deref())?;
             let rendered_args = substitute_params(&raw_args, &params);
             let result = if tool == "__delay" {
@@ -990,8 +1041,10 @@ impl McpServer {
                 "success": success,
                 "data": result.data,
                 "error": result.error,
+                "suggestion": result.suggestion,
                 "context": result.context,
             });
+            step_result["duration_ms"] = json!(step_started_at.elapsed().as_millis() as u64);
             results.push(step_result.clone());
             if !success {
                 if should_skip_step(step.on_failure.as_deref(), recipe.on_failure.as_deref()) {
@@ -1003,6 +1056,7 @@ impl McpServer {
             if let Some(wait_after) = &step.wait_after {
                 let (wait_tool, wait_args) =
                     recipe_wait_tool_call(wait_after, recipe.app.as_deref())?;
+                let wait_started_at = Instant::now();
                 let wait_result = if wait_tool == "__delay" {
                     let seconds = wait_args
                         .get("seconds")
@@ -1018,8 +1072,11 @@ impl McpServer {
                     "success": wait_result.success,
                     "data": wait_result.data,
                     "error": wait_result.error,
+                    "suggestion": wait_result.suggestion,
                     "context": wait_result.context,
+                    "duration_ms": wait_started_at.elapsed().as_millis() as u64,
                 });
+                step_result["duration_ms"] = json!(step_started_at.elapsed().as_millis() as u64);
                 if wait_failed {
                     step_result["success"] = json!(false);
                     results.pop();
@@ -1033,29 +1090,50 @@ impl McpServer {
                 results.push(step_result);
             }
         }
-        Ok(ToolResult::ok(
-            json!({ "recipe": recipe.name, "success": true, "steps_completed": results.len(), "total_steps": recipe.steps.len(), "steps": results }),
-        ))
+        Ok(ToolResult::ok(recipe_success_payload(&recipe, results)))
     }
 
     fn check_recipe_preconditions(&self, recipe: &Recipe) -> SootieResult<Option<ToolResult>> {
         let Some(preconditions) = &recipe.preconditions else {
             return Ok(None);
         };
+        let mut url_context = None;
+        let mut url_matches = false;
+        if let Some(url) = &preconditions.url_contains {
+            let context = self.recipe_url_precondition_context(
+                recipe_url_precondition_app(recipe, preconditions),
+                url,
+            )?;
+            url_matches = recipe_context_matches_url_precondition(&context, url);
+            url_context = Some((url.as_str(), context));
+        }
         if let Some(app) = &preconditions.app_running {
-            if self.backend.state(Some(app))?.is_empty() {
+            let url_precondition_proves_app = url_matches
+                && recipe_url_precondition_app(recipe, preconditions)
+                    .is_some_and(|url_app| url_app.eq_ignore_ascii_case(app));
+            if !url_precondition_proves_app && self.backend.state(Some(app))?.is_empty() {
+                let context = self.backend.context(Some(app))?;
+                if context.app.is_some()
+                    || context.window.is_some()
+                    || !context.interactive_elements.is_empty()
+                {
+                    return Ok(None);
+                }
+                let diagnostics = self.backend.diagnostics();
                 return Ok(Some(
                     ToolResult::error(format!(
-                        "recipe precondition failed: app '{app}' is not running"
+                        "recipe precondition failed: app '{app}' is not accessible"
                     ))
-                    .with_suggestion("Start the app first, then retry the recipe."),
+                    .with_suggestion(empty_context_suggestion(
+                        self.backend.platform(),
+                        Some(app),
+                        &diagnostics,
+                    )),
                 ));
             }
         }
-        if let Some(url) = &preconditions.url_contains {
-            let context = self.backend.context(recipe.app.as_deref())?;
-            let current_url = context.url.unwrap_or_default();
-            if !current_url.contains(url) {
+        if let Some((url, context)) = url_context {
+            if !recipe_context_matches_url_precondition(&context, url) {
                 return Ok(Some(
                     ToolResult::error(format!(
                         "recipe precondition failed: current URL does not contain '{url}'"
@@ -1065,6 +1143,45 @@ impl McpServer {
             }
         }
         Ok(None)
+    }
+
+    fn recipe_url_precondition_context(
+        &self,
+        app: Option<&str>,
+        required_url: &str,
+    ) -> SootieResult<crate::types::ContextSnapshot> {
+        let mut last_fast_url = None;
+        for attempt in 0..3 {
+            let url = self.backend.browser_url(app)?.unwrap_or_default();
+            if !url.is_empty() {
+                return Ok(recipe_url_precondition_url_context(app, url));
+            }
+            last_fast_url = Some(url);
+            if attempt < 2 {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        let mut last_context = None;
+        for attempt in 0..3 {
+            let context = self.backend.context(app)?;
+            if recipe_context_matches_url_precondition(&context, required_url) {
+                return Ok(context);
+            }
+            let url_is_empty = context.url.as_deref().unwrap_or_default().is_empty();
+            last_context = Some(context);
+            if !url_is_empty || attempt == 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if let Some(context) = last_context {
+            Ok(context)
+        } else if let Some(url) = last_fast_url.filter(|url| !url.is_empty()) {
+            Ok(recipe_url_precondition_url_context(app, url))
+        } else {
+            self.backend.context(app)
+        }
     }
 
     fn action_result(&self, result: ActionResult, app: Option<&str>) -> ToolResult {
@@ -1088,6 +1205,9 @@ impl McpServer {
         }
         let mut elements = self.backend.find(query)?;
         if elements.is_empty() {
+            elements = self.context_find_elements(query)?;
+        }
+        if elements.is_empty() {
             if let Some(element) = self.vision_fallback_element(query)? {
                 elements.push(element);
             }
@@ -1101,8 +1221,26 @@ impl McpServer {
         }
         match self.backend.inspect(query)? {
             Some(element) => Ok(Some(element)),
-            None => self.vision_fallback_element(query),
+            None => {
+                if let Some(element) = self.context_find_elements(query)?.into_iter().next() {
+                    return Ok(Some(element));
+                }
+                self.vision_fallback_element(query)
+            }
         }
+    }
+
+    fn context_find_elements(&self, query: &FindQuery) -> SootieResult<Vec<ElementInfo>> {
+        if !query_has_target(query) {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .backend
+            .context(query.app.as_deref())?
+            .interactive_elements
+            .into_iter()
+            .filter(|element| element_matches_find_query(element, query))
+            .collect())
     }
 
     fn element_exists_for_wait(&self, query: &FindQuery) -> SootieResult<bool> {
@@ -1247,6 +1385,7 @@ impl McpServer {
         count: u32,
     ) -> SootieResult<ActionResult> {
         let (description, grounding) = self.required_vision_grounding_for_query(query)?;
+        self.focus_app_for_pointer_dispatch(query)?;
         let direct = self.backend.click(
             Some(grounding.x),
             Some(grounding.y),
@@ -1264,6 +1403,7 @@ impl McpServer {
 
     fn vision_target_hover(&self, query: &FindQuery) -> SootieResult<ActionResult> {
         let (description, grounding) = self.required_vision_grounding_for_query(query)?;
+        self.focus_app_for_pointer_dispatch(query)?;
         let direct =
             self.backend
                 .hover(Some(grounding.x), Some(grounding.y), &FindQuery::default())?;
@@ -1282,6 +1422,7 @@ impl McpServer {
         button: &str,
     ) -> SootieResult<ActionResult> {
         let (description, grounding) = self.required_vision_grounding_for_query(query)?;
+        self.focus_app_for_pointer_dispatch(query)?;
         let direct = self.backend.long_press(
             Some(grounding.x),
             Some(grounding.y),
@@ -1295,6 +1436,24 @@ impl McpServer {
             &description,
             &grounding,
         ))
+    }
+
+    fn focus_app_for_pointer_dispatch(&self, query: &FindQuery) -> SootieResult<()> {
+        if let Some(app) = query.app.as_deref() {
+            self.backend.focus(app, None, None)?;
+        }
+        Ok(())
+    }
+
+    fn focus_app_for_explicit_pointer_coordinates(
+        &self,
+        query: &FindQuery,
+        point: Option<(f64, f64)>,
+    ) -> SootieResult<()> {
+        if point.is_some() {
+            self.focus_app_for_pointer_dispatch(query)?;
+        }
+        Ok(())
     }
 
     fn required_vision_grounding_for_query(
@@ -1672,6 +1831,17 @@ fn validate_public_arg_type(
     value: &Value,
     schema: &Value,
 ) -> SootieResult<()> {
+    if let Some(variants) = schema.get("anyOf").and_then(Value::as_array) {
+        if variants
+            .iter()
+            .any(|variant| validate_public_arg_type(tool_name, key, value, variant).is_ok())
+        {
+            return Ok(());
+        }
+        return Err(SootieError::InvalidArguments(format!(
+            "{tool_name}.{key} must match one of the advertised schema variants"
+        )));
+    }
     let Some(ty) = schema.get("type").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -1749,6 +1919,74 @@ fn public_schema_type_label(schema: &Value) -> String {
     }
 }
 
+fn recipe_url_precondition_app<'a>(
+    recipe: &'a Recipe,
+    preconditions: &'a crate::recipe::RecipePreconditions,
+) -> Option<&'a str> {
+    recipe
+        .app
+        .as_deref()
+        .or(preconditions.app_running.as_deref())
+}
+
+fn recipe_url_precondition_url_context(
+    app: Option<&str>,
+    url: String,
+) -> crate::types::ContextSnapshot {
+    crate::types::ContextSnapshot {
+        app: app.map(str::to_string),
+        app_id: app.map(str::to_string),
+        platform_app_id: None,
+        bundle_id: None,
+        pid: None,
+        window: None,
+        url: Some(url),
+        focused_element: None,
+        interactive_elements: vec![],
+    }
+}
+
+fn recipe_requires_unlocked_screen(recipe: &Recipe) -> bool {
+    recipe.steps.iter().any(|step| {
+        recipe_step_tool_call(step, recipe.app.as_deref())
+            .map(|(tool, args)| tool_requires_unlocked_screen(&tool, &args))
+            .unwrap_or(false)
+    })
+}
+
+fn tool_requires_unlocked_screen(tool: &str, args: &Value) -> bool {
+    match tool {
+        "sootie_click"
+        | "sootie_hover"
+        | "sootie_long_press"
+        | "sootie_drag"
+        | "sootie_type"
+        | "sootie_press"
+        | "sootie_hotkey"
+        | "sootie_scroll"
+        | "sootie_focus"
+        | "sootie_screenshot"
+        | "sootie_parse_screen"
+        | "sootie_ground"
+        | "sootie_annotate" => true,
+        "sootie_window" => match args.get("action").and_then(Value::as_str) {
+            Some(action) => !action.eq_ignore_ascii_case("list"),
+            None => true,
+        },
+        _ => false,
+    }
+}
+
+fn locked_recipe_result(recipe: &Recipe) -> ToolResult {
+    ToolResult::error(format!(
+        "recipe '{}' requires an unlocked macOS screen",
+        recipe.name
+    ))
+    .with_suggestion(
+        "macOS is locked, so UI actions or screenshots would affect the lock screen instead of the target app. Unlock the Mac, verify the target window is visible, then retry.",
+    )
+}
+
 fn should_skip_step(step_policy: Option<&str>, recipe_policy: Option<&str>) -> bool {
     matches!(step_policy.or(recipe_policy), Some("skip"))
 }
@@ -1763,23 +2001,122 @@ fn tool_wait_failed(result: &ToolResult) -> bool {
             .is_some_and(|matched| !matched)
 }
 
+fn recipe_context_matches_url_precondition(
+    context: &crate::types::ContextSnapshot,
+    required_url: &str,
+) -> bool {
+    if context
+        .url
+        .as_deref()
+        .is_some_and(|url| url.contains(required_url))
+    {
+        return true;
+    }
+    if context.url.as_deref().is_some_and(|url| !url.is_empty()) {
+        return false;
+    }
+    context
+        .window
+        .as_deref()
+        .is_some_and(|window| window.contains(required_url))
+        || context.interactive_elements.iter().any(|element| {
+            [
+                element.name.as_deref(),
+                element.title.as_deref(),
+                element.text.as_deref(),
+                element.id.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|text| text.contains(required_url))
+        })
+}
+
+fn recipe_success_payload(recipe: &Recipe, steps: Vec<Value>) -> Value {
+    let mut payload = json!({
+        "recipe": recipe.name,
+        "success": true,
+        "steps_completed": steps.len(),
+        "total_steps": recipe.steps.len(),
+        "steps": steps,
+    });
+    if let Some(steps) = payload.get("steps").and_then(Value::as_array) {
+        if let Some(screenshot) = last_recipe_screenshot_artifact(steps) {
+            payload["last_screenshot"] = screenshot;
+        }
+    }
+    payload
+}
+
+fn last_recipe_screenshot_artifact(steps: &[Value]) -> Option<Value> {
+    steps.iter().rev().find_map(|step| {
+        if step.get("tool").and_then(Value::as_str) != Some("sootie_screenshot") {
+            return None;
+        }
+        let data = step.get("data")?;
+        let artifact_path = data.get("artifact_path").and_then(Value::as_str)?;
+        let mut screenshot = json!({
+            "step_id": step.get("id").cloned().unwrap_or(Value::Null),
+            "artifact_path": artifact_path,
+        });
+        copy_json_field(data, &mut screenshot, "artifact_uri");
+        copy_json_field(data, &mut screenshot, "width");
+        copy_json_field(data, &mut screenshot, "height");
+        copy_json_field(data, &mut screenshot, "window_title");
+        copy_json_field(data, &mut screenshot, "mime_type");
+        Some(screenshot)
+    })
+}
+
+fn copy_json_field(source: &Value, target: &mut Value, field: &str) {
+    if let Some(value) = source.get(field) {
+        target[field] = value.clone();
+    }
+}
+
 fn recipe_failed_result(recipe: &Recipe, steps: Vec<Value>, failed_step: Value) -> ToolResult {
+    let suggestion = recipe_failure_suggestion(&failed_step).unwrap_or_else(|| {
+        "Inspect failed_step, current context, and screenshots before retrying.".to_string()
+    });
+    let steps_completed = steps
+        .iter()
+        .filter(|step| {
+            step.get("success")
+                .and_then(Value::as_bool)
+                .is_some_and(|success| success)
+        })
+        .count();
     ToolResult {
         success: false,
         data: Some(json!({
             "recipe": recipe.name,
             "success": false,
             "failed_step": failed_step,
-            "steps_completed": steps.len(),
+            "steps_completed": steps_completed,
+            "steps_attempted": steps.len(),
             "total_steps": recipe.steps.len(),
             "steps": steps,
         })),
         error: Some(format!("recipe '{}' failed", recipe.name)),
-        suggestion: Some(
-            "Inspect failed_step, current context, and screenshots before retrying.".to_string(),
-        ),
+        suggestion: Some(suggestion),
         context: None,
     }
+}
+
+fn recipe_failure_suggestion(failed_step: &Value) -> Option<String> {
+    failed_step
+        .get("suggestion")
+        .and_then(Value::as_str)
+        .filter(|suggestion| !suggestion.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            failed_step
+                .get("wait_after")
+                .and_then(|wait_after| wait_after.get("suggestion"))
+                .and_then(Value::as_str)
+                .filter(|suggestion| !suggestion.trim().is_empty())
+                .map(str::to_string)
+        })
 }
 
 fn learned_action_event(name: &str, args: &Value) -> Option<Value> {
@@ -2000,6 +2337,10 @@ fn format_tool_result(
                 result = result.with_suggestion(
                     "The target app is visible to the window server, but macOS Accessibility did not expose a matching window for raising or focusing. Verify the window title with sootie_state, grant Accessibility/Automation to the launcher, or use a coordinate action against a visible window.",
                 );
+            } else if screen_capture_locked_recovery_needed(&message) {
+                result = result.with_suggestion(
+                    "macOS is locked, so UI actions would affect the lock screen instead of the target app. Unlock the Mac, verify the target window is visible, then retry.",
+                );
             }
             (result, true)
         }
@@ -2200,12 +2541,28 @@ fn screenshot_tool_result(result: SootieResult<Screenshot>) -> ToolResult {
 fn screenshot_error_result(error: SootieError) -> ToolResult {
     let message = error.to_string();
     let mut result = ToolResult::error(message.clone());
-    if screen_capture_display_unavailable(&message) {
+    if screen_capture_locked_recovery_needed(&message) {
+        result = result.with_suggestion(
+            "macOS is locked, so screenshots would capture the lock screen instead of the target app. Unlock the Mac, verify the target window is visible, then retry.",
+        );
+    } else if screen_capture_recovery_needed(&message) {
         result = result.with_suggestion(
             "macOS is not exposing an active display to this process. If the screen is visible, grant Screen Recording permission to the terminal or app that launched sootie, restart that process, then retry.",
         );
     }
     result
+}
+
+fn screen_capture_locked_recovery_needed(message: &str) -> bool {
+    let message = message.to_lowercase();
+    message.contains("screen is locked") || message.contains("lock screen")
+}
+
+fn screen_capture_recovery_needed(message: &str) -> bool {
+    let message = message.to_lowercase();
+    screen_capture_display_unavailable(&message)
+        || message.contains("blank black image")
+        || message.contains("screen recording permission")
 }
 
 fn screen_capture_display_unavailable(message: &str) -> bool {
@@ -3287,6 +3644,55 @@ fn role_matches(role: &str, filters: &[String]) -> bool {
     })
 }
 
+fn element_matches_find_query(element: &ElementInfo, query: &FindQuery) -> bool {
+    if let Some(role) = &query.role {
+        if !role_matches(&element.role, std::slice::from_ref(role)) {
+            return false;
+        }
+    }
+    if let Some(identifier) = &query.identifier {
+        if !element_field_matches(element.id.as_deref(), identifier)
+            && !element_text_matches_find_query(element, identifier)
+        {
+            return false;
+        }
+    }
+    if let Some(dom_id) = &query.dom_id {
+        if !element_field_matches(element.id.as_deref(), dom_id) {
+            return false;
+        }
+    }
+    if let Some(dom_class) = &query.dom_class {
+        if !element_text_matches_find_query(element, dom_class) {
+            return false;
+        }
+    }
+    if let Some(text) = &query.query {
+        if !element_text_matches_find_query(element, text) {
+            return false;
+        }
+    }
+    true
+}
+
+fn element_text_matches_find_query(element: &ElementInfo, needle: &str) -> bool {
+    element_field_matches(element.name.as_deref(), needle)
+        || element_field_matches(element.title.as_deref(), needle)
+        || element_field_matches(element.text.as_deref(), needle)
+        || element_field_matches(element.id.as_deref(), needle)
+        || element_field_matches(Some(&element.role), needle)
+}
+
+fn element_field_matches(value: Option<&str>, needle: &str) -> bool {
+    let needle = needle.trim().to_lowercase();
+    if needle.is_empty() {
+        return true;
+    }
+    value
+        .map(|value| value.to_lowercase().contains(&needle))
+        .unwrap_or(false)
+}
+
 fn vision_description(query: &FindQuery) -> Option<String> {
     query
         .query
@@ -3898,6 +4304,15 @@ fn bool_arg(args: &Value, key: &str) -> Option<bool> {
     }
 }
 
+fn nested_bool_arg(args: &Value, object_key: &str, key: &str) -> Option<bool> {
+    match args.get(object_key)?.as_object()?.get(key)? {
+        Value::Bool(value) => Some(*value),
+        Value::String(value) if value.eq_ignore_ascii_case("true") => Some(true),
+        Value::String(value) if value.eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
+}
+
 fn f64_value_arg(value: &Value) -> Option<f64> {
     value
         .as_f64()
@@ -3949,6 +4364,7 @@ mod tests {
     use base64::Engine;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     struct FakeBackend;
@@ -3957,7 +4373,72 @@ mod tests {
         fn platform(&self) -> &'static str {
             "fake"
         }
-        fn context(&self, _app: Option<&str>) -> SootieResult<ContextSnapshot> {
+        fn context(&self, app: Option<&str>) -> SootieResult<ContextSnapshot> {
+            if matches!(app, Some("MissingApp" | "UrlOnlyBrowser")) {
+                return Ok(ContextSnapshot {
+                    app: None,
+                    app_id: None,
+                    platform_app_id: None,
+                    bundle_id: None,
+                    pid: None,
+                    window: None,
+                    url: None,
+                    focused_element: None,
+                    interactive_elements: vec![],
+                });
+            }
+            let mut interactive_elements = vec![
+                ElementInfo {
+                    id: Some("fake-button".into()),
+                    role: "AXButton".into(),
+                    title: Some("Submit".into()),
+                    name: Some("Submit".into()),
+                    text: None,
+                    bounds: Some(Bounds {
+                        x: 10.0,
+                        y: 20.0,
+                        width: 100.0,
+                        height: 40.0,
+                    }),
+                    actions: vec!["click".into()],
+                    editable: Some(false),
+                    enabled: Some(true),
+                },
+                ElementInfo {
+                    id: Some("fake-field".into()),
+                    role: "AXTextField".into(),
+                    title: Some("Name".into()),
+                    name: Some("Name".into()),
+                    text: None,
+                    bounds: Some(Bounds {
+                        x: 20.0,
+                        y: 80.0,
+                        width: 200.0,
+                        height: 30.0,
+                    }),
+                    actions: vec!["setValue".into()],
+                    editable: Some(true),
+                    enabled: Some(true),
+                },
+            ];
+            if app == Some("Safari") {
+                interactive_elements.push(ElementInfo {
+                    id: Some("ellipse-tool".into()),
+                    role: "AXGroup".into(),
+                    title: Some("Ellipse — O or 4".into()),
+                    name: Some("Ellipse — O or 4".into()),
+                    text: None,
+                    bounds: Some(Bounds {
+                        x: 1400.0,
+                        y: 100.0,
+                        width: 36.0,
+                        height: 36.0,
+                    }),
+                    actions: vec!["click".into()],
+                    editable: Some(false),
+                    enabled: Some(true),
+                });
+            }
             Ok(ContextSnapshot {
                 app: Some("Fake".into()),
                 app_id: Some("Fake".into()),
@@ -3967,43 +4448,19 @@ mod tests {
                 window: Some("Main".into()),
                 url: Some("https://example.com/current".into()),
                 focused_element: None,
-                interactive_elements: vec![
-                    ElementInfo {
-                        id: Some("fake-button".into()),
-                        role: "AXButton".into(),
-                        title: Some("Submit".into()),
-                        name: Some("Submit".into()),
-                        text: None,
-                        bounds: Some(Bounds {
-                            x: 10.0,
-                            y: 20.0,
-                            width: 100.0,
-                            height: 40.0,
-                        }),
-                        actions: vec!["click".into()],
-                        editable: Some(false),
-                        enabled: Some(true),
-                    },
-                    ElementInfo {
-                        id: Some("fake-field".into()),
-                        role: "AXTextField".into(),
-                        title: Some("Name".into()),
-                        name: Some("Name".into()),
-                        text: None,
-                        bounds: Some(Bounds {
-                            x: 20.0,
-                            y: 80.0,
-                            width: 200.0,
-                            height: 30.0,
-                        }),
-                        actions: vec!["setValue".into()],
-                        editable: Some(true),
-                        enabled: Some(true),
-                    },
-                ],
+                interactive_elements,
             })
         }
-        fn state(&self, _app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
+        fn browser_url(&self, app: Option<&str>) -> SootieResult<Option<String>> {
+            if matches!(app, Some("Safari" | "UrlOnlyBrowser")) {
+                return Ok(Some("https://excalidraw.com/".into()));
+            }
+            Ok(Some("https://example.com/current".into()))
+        }
+        fn state(&self, app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
+            if matches!(app, Some("MissingApp" | "UrlOnlyBrowser")) {
+                return Ok(vec![]);
+            }
             Ok(vec![AppInfo {
                 name: "Fake".into(),
                 app_id: Some("Fake".into()),
@@ -4024,7 +4481,10 @@ mod tests {
                 }],
             }])
         }
-        fn find(&self, _query: &FindQuery) -> SootieResult<Vec<ElementInfo>> {
+        fn find(&self, query: &FindQuery) -> SootieResult<Vec<ElementInfo>> {
+            if query.query.as_deref() == Some("Ellipse") {
+                return Ok(vec![]);
+            }
             Ok(vec![ElementInfo {
                 id: Some("fake-button".into()),
                 role: "button".into(),
@@ -4188,6 +4648,133 @@ mod tests {
                 method: "fake-window".into(),
                 details: json!({ "command": command, "app": app, "platform_app_id": platform_app_id, "window": window, "bounds": bounds }),
             })
+        }
+    }
+
+    struct LockedFakeBackend;
+
+    impl DesktopBackend for LockedFakeBackend {
+        fn platform(&self) -> &'static str {
+            FakeBackend.platform()
+        }
+        fn diagnostics(&self) -> Vec<RuntimeDiagnostic> {
+            FakeBackend.diagnostics()
+        }
+        fn context(&self, app: Option<&str>) -> SootieResult<ContextSnapshot> {
+            FakeBackend.context(app)
+        }
+        fn browser_url(&self, app: Option<&str>) -> SootieResult<Option<String>> {
+            FakeBackend.browser_url(app)
+        }
+        fn screen_locked(&self) -> SootieResult<Option<bool>> {
+            Ok(Some(true))
+        }
+        fn state(&self, app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
+            FakeBackend.state(app)
+        }
+        fn find(&self, query: &FindQuery) -> SootieResult<Vec<ElementInfo>> {
+            FakeBackend.find(query)
+        }
+        fn read(
+            &self,
+            app: Option<&str>,
+            query: Option<&str>,
+            depth: Option<u32>,
+        ) -> SootieResult<String> {
+            FakeBackend.read(app, query, depth)
+        }
+        fn inspect(&self, query: &FindQuery) -> SootieResult<Option<ElementInfo>> {
+            FakeBackend.inspect(query)
+        }
+        fn element_at(&self, x: f64, y: f64) -> SootieResult<Option<ElementInfo>> {
+            FakeBackend.element_at(x, y)
+        }
+        fn screenshot(&self, app: Option<&str>, full_resolution: bool) -> SootieResult<Screenshot> {
+            FakeBackend.screenshot(app, full_resolution)
+        }
+        fn click(
+            &self,
+            x: Option<f64>,
+            y: Option<f64>,
+            query: &FindQuery,
+            button: &str,
+            count: u32,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.click(x, y, query, button, count)
+        }
+        fn hover(
+            &self,
+            x: Option<f64>,
+            y: Option<f64>,
+            query: &FindQuery,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.hover(x, y, query)
+        }
+        fn long_press(
+            &self,
+            x: Option<f64>,
+            y: Option<f64>,
+            query: &FindQuery,
+            duration_secs: f64,
+            button: &str,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.long_press(x, y, query, duration_secs, button)
+        }
+        fn drag(
+            &self,
+            from: Option<(f64, f64)>,
+            to: (f64, f64),
+            query: &FindQuery,
+            duration_secs: f64,
+            hold_duration_secs: f64,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.drag(from, to, query, duration_secs, hold_duration_secs)
+        }
+        fn type_text(
+            &self,
+            text: &str,
+            target: &FindQuery,
+            clear: bool,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.type_text(text, target, clear)
+        }
+        fn press(
+            &self,
+            key: &str,
+            modifiers: &[String],
+            app: Option<&str>,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.press(key, modifiers, app)
+        }
+        fn hotkey(&self, keys: &[String], app: Option<&str>) -> SootieResult<ActionResult> {
+            FakeBackend.hotkey(keys, app)
+        }
+        fn scroll(
+            &self,
+            direction: &str,
+            amount: i32,
+            app: Option<&str>,
+            at: Option<(f64, f64)>,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.scroll(direction, amount, app, at)
+        }
+        fn focus(
+            &self,
+            app: &str,
+            platform_app_id: Option<&str>,
+            window: Option<&str>,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.focus(app, platform_app_id, window)
+        }
+        fn window(
+            &self,
+            command: WindowCommand,
+            app: &str,
+            platform_app_id: Option<&str>,
+            window: Option<&str>,
+            bounds: Option<Bounds>,
+        ) -> SootieResult<ActionResult> {
+            FakeBackend.window(command, app, platform_app_id, window, bounds)
         }
     }
 
@@ -4375,6 +4962,217 @@ mod tests {
         }
     }
 
+    struct RecordingBackend {
+        events: Arc<Mutex<Vec<String>>>,
+        fail_focus: bool,
+    }
+
+    impl RecordingBackend {
+        fn record(&self, event: impl Into<String>) {
+            self.events.lock().unwrap().push(event.into());
+        }
+    }
+
+    impl DesktopBackend for RecordingBackend {
+        fn platform(&self) -> &'static str {
+            "fake"
+        }
+
+        fn context(&self, app: Option<&str>) -> SootieResult<ContextSnapshot> {
+            Ok(ContextSnapshot {
+                app: Some(app.unwrap_or("Fake").into()),
+                app_id: Some(app.unwrap_or("Fake").into()),
+                platform_app_id: Some("fake".into()),
+                bundle_id: None,
+                pid: Some(42),
+                window: Some("Main".into()),
+                url: None,
+                focused_element: None,
+                interactive_elements: vec![],
+            })
+        }
+
+        fn state(&self, app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
+            Ok(vec![AppInfo {
+                name: app.unwrap_or("Fake").into(),
+                app_id: Some(app.unwrap_or("Fake").into()),
+                platform_app_id: Some("fake".into()),
+                pid: Some(42),
+                bundle_id: None,
+                is_frontmost: true,
+                windows: vec![],
+            }])
+        }
+
+        fn find(&self, _query: &FindQuery) -> SootieResult<Vec<ElementInfo>> {
+            Ok(vec![])
+        }
+
+        fn read(
+            &self,
+            _app: Option<&str>,
+            _query: Option<&str>,
+            _depth: Option<u32>,
+        ) -> SootieResult<String> {
+            Ok(String::new())
+        }
+
+        fn inspect(&self, _query: &FindQuery) -> SootieResult<Option<ElementInfo>> {
+            Ok(None)
+        }
+
+        fn element_at(&self, _x: f64, _y: f64) -> SootieResult<Option<ElementInfo>> {
+            Ok(None)
+        }
+
+        fn screenshot(
+            &self,
+            _app: Option<&str>,
+            _full_resolution: bool,
+        ) -> SootieResult<Screenshot> {
+            Ok(Screenshot {
+                mime_type: "image/png".into(),
+                data_base64: "abc123".into(),
+                width: Some(100),
+                height: Some(100),
+                window_title: Some("Main".into()),
+                window_frame: None,
+            })
+        }
+
+        fn click(
+            &self,
+            x: Option<f64>,
+            y: Option<f64>,
+            _query: &FindQuery,
+            button: &str,
+            count: u32,
+        ) -> SootieResult<ActionResult> {
+            self.record("click");
+            Ok(ActionResult {
+                method: "recording-click".into(),
+                details: json!({ "x": x, "y": y, "button": button, "count": count }),
+            })
+        }
+
+        fn hover(
+            &self,
+            _x: Option<f64>,
+            _y: Option<f64>,
+            _query: &FindQuery,
+        ) -> SootieResult<ActionResult> {
+            self.record("hover");
+            Ok(ActionResult {
+                method: "recording-hover".into(),
+                details: json!({}),
+            })
+        }
+
+        fn long_press(
+            &self,
+            _x: Option<f64>,
+            _y: Option<f64>,
+            _query: &FindQuery,
+            duration_secs: f64,
+            button: &str,
+        ) -> SootieResult<ActionResult> {
+            self.record("long_press");
+            Ok(ActionResult {
+                method: "recording-long-press".into(),
+                details: json!({ "duration": duration_secs, "button": button }),
+            })
+        }
+
+        fn drag(
+            &self,
+            _from: Option<(f64, f64)>,
+            _to: (f64, f64),
+            _query: &FindQuery,
+            duration_secs: f64,
+            hold_duration_secs: f64,
+        ) -> SootieResult<ActionResult> {
+            self.record("drag");
+            Ok(ActionResult {
+                method: "recording-drag".into(),
+                details: json!({ "duration": duration_secs, "hold_duration": hold_duration_secs }),
+            })
+        }
+
+        fn type_text(
+            &self,
+            _text: &str,
+            _target: &FindQuery,
+            _clear: bool,
+        ) -> SootieResult<ActionResult> {
+            Ok(ActionResult {
+                method: "recording-type".into(),
+                details: json!({}),
+            })
+        }
+
+        fn press(
+            &self,
+            _key: &str,
+            _modifiers: &[String],
+            _app: Option<&str>,
+        ) -> SootieResult<ActionResult> {
+            Ok(ActionResult {
+                method: "recording-press".into(),
+                details: json!({}),
+            })
+        }
+
+        fn hotkey(&self, _keys: &[String], _app: Option<&str>) -> SootieResult<ActionResult> {
+            Ok(ActionResult {
+                method: "recording-hotkey".into(),
+                details: json!({}),
+            })
+        }
+
+        fn scroll(
+            &self,
+            _direction: &str,
+            _amount: i32,
+            _app: Option<&str>,
+            _at: Option<(f64, f64)>,
+        ) -> SootieResult<ActionResult> {
+            Ok(ActionResult {
+                method: "recording-scroll".into(),
+                details: json!({}),
+            })
+        }
+
+        fn focus(
+            &self,
+            app: &str,
+            _platform_app_id: Option<&str>,
+            _window: Option<&str>,
+        ) -> SootieResult<ActionResult> {
+            self.record(format!("focus:{app}"));
+            if self.fail_focus {
+                return Err(SootieError::Platform("focus failed".into()));
+            }
+            Ok(ActionResult {
+                method: "recording-focus".into(),
+                details: json!({ "app": app }),
+            })
+        }
+
+        fn window(
+            &self,
+            _command: WindowCommand,
+            _app: &str,
+            _platform_app_id: Option<&str>,
+            _window: Option<&str>,
+            _bounds: Option<Bounds>,
+        ) -> SootieResult<ActionResult> {
+            Ok(ActionResult {
+                method: "recording-window".into(),
+                details: json!({}),
+            })
+        }
+    }
+
     fn spawn_vision_ground_server(response: Value) -> (String, thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -4462,7 +5260,7 @@ mod tests {
         assert!(response.error.is_none());
         assert_eq!(
             response.result.unwrap()["tools"].as_array().unwrap().len(),
-            29
+            TOOL_NAMES.len()
         );
     }
 
@@ -4673,6 +5471,40 @@ mod tests {
             "sootie_recipe_delete" => json!({ "name": "saved" }),
             "sootie_ground" => json!({ "description": "Submit" }),
             "sootie_annotate" => json!({ "max_labels": 3 }),
+            "sootie_browser_connect"
+            | "sootie_browser_pages"
+            | "sootie_browser_observe"
+            | "sootie_browser_find"
+            | "sootie_browser_extract"
+            | "sootie_browser_screenshot"
+            | "sootie_browser_back"
+            | "sootie_browser_forward"
+            | "sootie_browser_reload"
+            | "sootie_browser_close_page" => json!({ "port": 9 }),
+            "sootie_browser_select_page" => json!({ "port": 9, "page_id": "missing" }),
+            "sootie_browser_open" => json!({ "port": 9, "url": "https://example.com" }),
+            "sootie_browser_click" => json!({ "port": 9, "query": "Submit" }),
+            "sootie_browser_type" => json!({ "port": 9, "text": "hello", "into": "Search" }),
+            "sootie_browser_press" => json!({ "port": 9, "key": "Enter" }),
+            "sootie_browser_scroll" => json!({ "port": 9, "direction": "down" }),
+            "sootie_browser_wait" => {
+                json!({ "port": 9, "condition": "urlContains", "value": "example" })
+            }
+            "sootie_browser_network" => json!({ "port": 9 }),
+            "sootie_browser_console" => json!({ "port": 9 }),
+            "sootie_browser_storage" => {
+                json!({ "port": 9, "area": "localStorage", "action": "list" })
+            }
+            "sootie_browser_cookies" => json!({ "port": 9, "action": "list" }),
+            "sootie_browser_downloads" => json!({ "port": 9, "action": "deny", "unsafe": true }),
+            "sootie_browser_upload" => {
+                json!({ "port": 9, "selector": "input[type=file]", "file_paths": ["/tmp/missing"], "unsafe": true })
+            }
+            "sootie_browser_pdf" => json!({ "port": 9 }),
+            "sootie_cdp_send" => {
+                json!({ "port": 9, "method": "Browser.getVersion", "unsafe": true })
+            }
+            "sootie_cdp_subscribe" => json!({ "port": 9, "domain": "Log", "unsafe": true }),
             "sootie_learn_start" => json!({ "task_description": "smoke" }),
             other => panic!("missing smoke arguments for {other}"),
         }
@@ -4689,6 +5521,31 @@ mod tests {
         });
         assert!(response.error.is_none());
         assert_eq!(response.result.unwrap()["isError"], true);
+    }
+
+    #[test]
+    fn browser_connect_reports_missing_cdp_as_tool_error() {
+        let mut server = McpServer::new(Box::new(FakeBackend));
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_browser_connect",
+                "arguments": { "port": 9 }
+            }),
+        });
+        assert!(response.error.is_none());
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            result["structuredContent"]["report"]["tool"],
+            "sootie_browser_connect"
+        );
+        assert!(result["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("BROWSER_NOT_CONNECTED"));
     }
 
     #[test]
@@ -4744,6 +5601,23 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("sootie_state"));
+    }
+
+    #[test]
+    fn locked_ui_action_errors_suggest_unlocking() {
+        let result = format_tool_result(
+            "sootie_drag",
+            json!({"app":"Safari"}),
+            Err(SootieError::Platform(
+                "macOS screen is locked; drag would affect the lock screen instead of the target app"
+                    .to_string(),
+            )),
+            10,
+        );
+        assert_eq!(result["isError"], true);
+        let suggestion = result["structuredContent"]["suggestion"].as_str().unwrap();
+        assert!(suggestion.contains("Unlock the Mac"));
+        assert!(suggestion.contains("target app"));
     }
 
     #[test]
@@ -4909,6 +5783,45 @@ mod tests {
         assert_eq!(data["total_matches"], 1);
         assert_eq!(data["elements"][0]["name"], "Submit");
         assert_eq!(data["elements"][0]["position"]["x"], 10.0);
+    }
+
+    #[test]
+    fn find_tool_falls_back_to_context_elements() {
+        let mut server = McpServer::new(Box::new(FakeBackend));
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name":"sootie_find",
+                "arguments":{"query":"Ellipse","role":"AXGroup","app":"Safari"}
+            }),
+        });
+        let result = response.result.unwrap();
+        let data = &result["structuredContent"]["data"];
+        assert_eq!(data["count"], 1);
+        assert_eq!(data["elements"][0]["role"], "AXGroup");
+        assert_eq!(data["elements"][0]["name"], "Ellipse — O or 4");
+        assert_eq!(data["elements"][0]["position"]["x"], 1400.0);
+    }
+
+    #[test]
+    fn inspect_tool_falls_back_to_context_elements() {
+        let mut server = McpServer::new(Box::new(FakeBackend));
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name":"sootie_inspect",
+                "arguments":{"query":"Ellipse","role":"AXGroup","app":"Safari"}
+            }),
+        });
+        let result = response.result.unwrap();
+        let data = &result["structuredContent"]["data"];
+        assert_eq!(data["role"], "AXGroup");
+        assert_eq!(data["name"], "Ellipse — O or 4");
+        assert_eq!(data["position"]["x"], 1400.0);
     }
 
     #[test]
@@ -5088,6 +6001,31 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("active display"));
+    }
+
+    #[test]
+    fn screenshot_blank_black_returns_recovery_suggestion() {
+        let result = screenshot_tool_result(Err(SootieError::Platform(
+            "screencapture returned a blank black image".to_string(),
+        )));
+        assert!(!result.success);
+        assert!(result
+            .suggestion
+            .as_deref()
+            .unwrap()
+            .contains("Screen Recording"));
+    }
+
+    #[test]
+    fn screenshot_locked_screen_returns_unlock_suggestion() {
+        let result = screenshot_tool_result(Err(SootieError::Platform(
+            "macOS screen is locked; screenshot would capture the lock screen instead of the target app"
+                .to_string(),
+        )));
+        assert!(!result.success);
+        let suggestion = result.suggestion.as_deref().unwrap();
+        assert!(suggestion.contains("Unlock the Mac"));
+        assert!(suggestion.contains("target window"));
     }
 
     #[test]
@@ -5504,6 +6442,14 @@ mod tests {
             Some(true)
         );
         assert_eq!(bool_arg(&json!({"clear":"false"}), "clear"), Some(false));
+        assert_eq!(
+            nested_bool_arg(
+                &json!({"include":{"screenshot":"true"}}),
+                "include",
+                "screenshot"
+            ),
+            Some(true)
+        );
         assert_eq!(u32_arg(&json!({"count":2.5}), "count"), None);
     }
 
@@ -5541,9 +6487,61 @@ mod tests {
                 json!({"text":"hello","clear":"true"}),
                 "sootie_type.clear must be a boolean",
             ),
+            (
+                "sootie_browser_scroll",
+                json!({"amount": []}),
+                "sootie_browser_scroll.amount must match one of the advertised schema variants",
+            ),
         ] {
             let result = call_tool(tool, arguments);
             assert_eq!(result["isError"], true);
+            assert!(result["structuredContent"]["error"]
+                .as_str()
+                .unwrap()
+                .contains(expected));
+        }
+    }
+
+    #[test]
+    fn browser_mutating_tools_apply_policy_before_cdp_connection() {
+        for (tool, arguments, expected) in [
+            (
+                "sootie_browser_storage",
+                json!({
+                    "port": 9,
+                    "area": "localStorage",
+                    "action": "get",
+                    "key": "token"
+                }),
+                "POLICY_BLOCKED: browser storage access requires unsafe=true",
+            ),
+            (
+                "sootie_browser_cookies",
+                json!({
+                    "port": 9,
+                    "action": "list"
+                }),
+                "POLICY_BLOCKED: browser cookie access requires unsafe=true",
+            ),
+            (
+                "sootie_cdp_send",
+                json!({
+                    "port": 9,
+                    "method": "Browser.getVersion"
+                }),
+                "POLICY_BLOCKED: raw CDP requires unsafe=true",
+            ),
+            (
+                "sootie_cdp_subscribe",
+                json!({
+                    "port": 9,
+                    "domain": "Log"
+                }),
+                "POLICY_BLOCKED: raw CDP requires unsafe=true",
+            ),
+        ] {
+            let result = call_tool(tool, arguments);
+            assert_eq!(result["isError"], true, "{tool}");
             assert!(result["structuredContent"]["error"]
                 .as_str()
                 .unwrap()
@@ -5752,6 +6750,90 @@ mod tests {
         assert_eq!(data["dispatch"]["button"], "right");
         let request = handle.join().unwrap();
         assert!(request.contains("\"description\":\"Submit\""));
+    }
+
+    #[test]
+    fn app_scoped_coordinate_click_focuses_before_dispatch() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut server = McpServer::new(Box::new(RecordingBackend {
+            events: events.clone(),
+            fail_focus: false,
+        }));
+
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_click",
+                "arguments": { "app": "Safari", "x": 12.0, "y": 34.0 }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            ["focus:Safari".to_string(), "click".to_string()]
+        );
+    }
+
+    #[test]
+    fn app_scoped_coordinate_click_stops_when_focus_fails() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut server = McpServer::new(Box::new(RecordingBackend {
+            events: events.clone(),
+            fail_focus: true,
+        }));
+
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_click",
+                "arguments": { "app": "Safari", "x": 12.0, "y": 34.0 }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            ["focus:Safari".to_string()]
+        );
+    }
+
+    #[test]
+    fn app_scoped_coordinate_drag_focuses_before_dispatch() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut server = McpServer::new(Box::new(RecordingBackend {
+            events: events.clone(),
+            fail_focus: false,
+        }));
+
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_drag",
+                "arguments": {
+                    "app": "Safari",
+                    "from_x": 12.0,
+                    "from_y": 34.0,
+                    "to_x": 56.0,
+                    "to_y": 78.0
+                }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            ["focus:Safari".to_string(), "drag".to_string()]
+        );
     }
 
     #[test]
@@ -6554,6 +7636,332 @@ mod tests {
     }
 
     #[test]
+    fn recipe_failure_uses_failed_step_suggestion() {
+        let recipe = parse_recipe(&json!({
+            "schema_version": 1,
+            "name": "visibility-gated",
+            "steps": [
+                { "tool": "sootie_screenshot", "args": {} }
+            ]
+        }))
+        .unwrap();
+        let failed_step = json!({
+            "id": 1,
+            "tool": "sootie_screenshot",
+            "success": false,
+            "error": "platform error: macOS screen is locked",
+            "suggestion": "Unlock the Mac, verify the target window is visible, then retry."
+        });
+        let result = recipe_failed_result(&recipe, vec![failed_step.clone()], failed_step);
+        assert!(!result.success);
+        assert_eq!(
+            result.suggestion.as_deref(),
+            Some("Unlock the Mac, verify the target window is visible, then retry.")
+        );
+        let data = result.data.as_ref().unwrap();
+        assert_eq!(data["steps_completed"], 0);
+        assert_eq!(data["steps_attempted"], 1);
+    }
+
+    #[test]
+    fn locked_screen_recipe_preflight_blocks_ui_recipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 1,
+            "name": "locked-ui",
+            "steps": [
+                { "tool": "sootie_window", "args": { "app": "Safari", "action": "focus" } },
+                { "tool": "sootie_click", "args": { "x": 10, "y": 20 } }
+            ]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(LockedFakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "locked-ui" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(result["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("requires an unlocked macOS screen"));
+        assert!(result["structuredContent"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("Unlock the Mac"));
+    }
+
+    #[test]
+    fn locked_screen_recipe_preflight_allows_read_only_recipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 1,
+            "name": "locked-readonly",
+            "steps": [
+                { "tool": "sootie_context", "args": { "app": "Safari" } }
+            ]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(LockedFakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "locked-readonly" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(result["structuredContent"]["success"], true);
+        assert_eq!(result["structuredContent"]["data"]["steps_completed"], 1);
+    }
+
+    #[test]
+    fn recipe_app_precondition_reports_inaccessible_desktop() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 2,
+            "name": "missing-app",
+            "app": "MissingApp",
+            "preconditions": {
+                "app_running": "MissingApp"
+            },
+            "steps": [
+                { "id": 1, "action": "screenshot" }
+            ]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "missing-app" }
+            }),
+        });
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(result["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("not accessible"));
+        assert!(result["structuredContent"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("No accessible window"));
+    }
+
+    #[test]
+    fn recipe_url_precondition_uses_app_running_when_recipe_app_is_absent() {
+        let recipe = parse_recipe(&json!({
+            "schema_version": 1,
+            "name": "browser-recipe",
+            "preconditions": {
+                "app_running": "Safari",
+                "url_contains": "excalidraw.com"
+            },
+            "steps": []
+        }))
+        .unwrap();
+        let preconditions = recipe.preconditions.as_ref().unwrap();
+        assert_eq!(
+            recipe_url_precondition_app(&recipe, preconditions),
+            Some("Safari")
+        );
+
+        let explicit = parse_recipe(&json!({
+            "schema_version": 1,
+            "name": "browser-recipe",
+            "app": "Google Chrome",
+            "preconditions": {
+                "app_running": "Safari",
+                "url_contains": "excalidraw.com"
+            },
+            "steps": []
+        }))
+        .unwrap();
+        let explicit_preconditions = explicit.preconditions.as_ref().unwrap();
+        assert_eq!(
+            recipe_url_precondition_app(&explicit, explicit_preconditions),
+            Some("Google Chrome")
+        );
+    }
+
+    #[test]
+    fn recipe_url_precondition_uses_lightweight_browser_url_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+
+        let context = server
+            .recipe_url_precondition_context(Some("Safari"), "excalidraw.com")
+            .unwrap();
+
+        assert_eq!(context.app.as_deref(), Some("Safari"));
+        assert_eq!(context.url.as_deref(), Some("https://excalidraw.com/"));
+        assert!(context.interactive_elements.is_empty());
+    }
+
+    #[test]
+    fn matching_browser_url_precondition_can_satisfy_app_running_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 1,
+            "name": "url-only-browser",
+            "preconditions": {
+                "app_running": "UrlOnlyBrowser",
+                "url_contains": "excalidraw.com"
+            },
+            "steps": []
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "url-only-browser" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(result["structuredContent"]["success"], true);
+    }
+
+    #[test]
+    fn recipe_success_surfaces_last_screenshot_artifact() {
+        let recipe = parse_recipe(&json!({
+            "schema_version": 1,
+            "name": "capture-after-draw",
+            "steps": [
+                { "tool": "sootie_click", "args": {} },
+                { "tool": "sootie_screenshot", "args": {} }
+            ]
+        }))
+        .unwrap();
+        let payload = recipe_success_payload(
+            &recipe,
+            vec![
+                json!({
+                    "id": 1,
+                    "tool": "sootie_click",
+                    "success": true,
+                    "data": {}
+                }),
+                json!({
+                    "id": 2,
+                    "tool": "sootie_screenshot",
+                    "success": true,
+                    "data": {
+                        "artifact_path": "/tmp/sootie-artifacts/final.png",
+                        "artifact_uri": "file:///tmp/sootie-artifacts/final.png",
+                        "width": 800,
+                        "height": 600,
+                        "window_title": "Excalidraw Whiteboard",
+                        "mime_type": "image/png"
+                    }
+                }),
+            ],
+        );
+        assert_eq!(payload["steps_completed"], 2);
+        assert_eq!(payload["last_screenshot"]["step_id"], 2);
+        assert_eq!(
+            payload["last_screenshot"]["artifact_path"],
+            "/tmp/sootie-artifacts/final.png"
+        );
+        assert_eq!(payload["last_screenshot"]["width"], 800);
+        assert_eq!(
+            payload["last_screenshot"]["window_title"],
+            "Excalidraw Whiteboard"
+        );
+    }
+
+    #[test]
+    fn url_precondition_accepts_domain_from_accessibility_when_url_is_empty() {
+        let context = ContextSnapshot {
+            app: Some("Safari".into()),
+            app_id: Some("Safari".into()),
+            platform_app_id: None,
+            bundle_id: None,
+            pid: Some(42),
+            window: Some("Excalidraw Whiteboard".into()),
+            url: Some(String::new()),
+            focused_element: None,
+            interactive_elements: vec![ElementInfo {
+                id: Some("ShowPerSitePreferencesMenuItem".into()),
+                role: "AXMenuItem".into(),
+                title: Some("Settings for excalidraw.com...".into()),
+                name: Some("Settings for excalidraw.com...".into()),
+                text: None,
+                bounds: None,
+                actions: vec!["click".into()],
+                editable: Some(false),
+                enabled: Some(false),
+            }],
+        };
+        assert!(recipe_context_matches_url_precondition(
+            &context,
+            "excalidraw.com"
+        ));
+    }
+
+    #[test]
+    fn url_precondition_rejects_nonempty_wrong_url() {
+        let context = ContextSnapshot {
+            app: Some("Safari".into()),
+            app_id: Some("Safari".into()),
+            platform_app_id: None,
+            bundle_id: None,
+            pid: Some(42),
+            window: Some("Excalidraw Whiteboard".into()),
+            url: Some("https://example.com/".into()),
+            focused_element: None,
+            interactive_elements: vec![ElementInfo {
+                id: Some("ShowPerSitePreferencesMenuItem".into()),
+                role: "AXMenuItem".into(),
+                title: Some("Settings for excalidraw.com...".into()),
+                name: Some("Settings for excalidraw.com...".into()),
+                text: None,
+                bounds: None,
+                actions: vec!["click".into()],
+                editable: Some(false),
+                enabled: Some(false),
+            }],
+        };
+        assert!(!recipe_context_matches_url_precondition(
+            &context,
+            "excalidraw.com"
+        ));
+    }
+
+    #[test]
     fn runs_legacy_wait_step_as_delay() {
         let dir = tempfile::tempdir().unwrap();
         let store = RecipeStore::new(dir.path().to_path_buf());
@@ -6589,5 +7997,6 @@ mod tests {
             result["structuredContent"]["data"]["steps"][0]["data"]["delay_seconds"],
             0.0
         );
+        assert!(result["structuredContent"]["data"]["steps"][0]["duration_ms"].is_number());
     }
 }

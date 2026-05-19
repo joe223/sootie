@@ -16,7 +16,7 @@ screenshot call, one action call, and one browser CDP call or an explicit
 reason CDP is unavailable.
 
 The minimum smoke above is only a triage gate. A platform is not fully verified
-until the full 29-tool coverage suite below has a captured response for every
+until the full 55-tool coverage suite below has a captured response for every
 public `sootie_*` tool, or a documented platform/environment reason for any
 unavailable CDP-backed browser step.
 
@@ -108,7 +108,7 @@ Required framed calls:
 Expected evidence:
 
 - `initialize` returns `serverInfo.name: "sootie"`.
-- `tools/list` returns exactly 29 tools.
+- `tools/list` returns exactly 55 tools.
 - `tools/list` marks `sootie_learn_status` with `readOnlyHint: true`.
 - `sootie_learn_status` returns `success: true`.
 
@@ -231,7 +231,7 @@ Expected evidence:
 - `sootie_learn_stop` returns one recorded action.
 - `sootie_recipe_delete` returns `deleted: true`.
 
-## Full 29-Tool Coverage Smoke
+## Full 55-Tool Coverage Smoke
 
 Use this gate before marking any platform runtime complete. The smaller smokes
 above prove that the runtime is reachable; this table proves that every public
@@ -251,7 +251,7 @@ so `sootie_learn_status` and `sootie_learn_stop` can prove action recording.
 The Node.js helper scripts in this section are optional evidence helpers, not
 Sootie runtime dependencies. If Node is unavailable on a target machine, send
 the JSON-RPC requests manually or with another MCP client, then check the same
-requirements: all 29 public tools present, no unknown tools, `success: true`,
+requirements: all 55 public tools present, no unknown tools, `success: true`,
 `report.success: true`, and numeric `report.duration_ms` for each tool result.
 
 Suggested placeholder replacements:
@@ -619,7 +619,7 @@ node docs/development/collect-runtime-evidence.mjs \
   "mcp_stdio": {
     "line_json": "pass",
     "content_length": "pass",
-    "tool_count": 29
+    "tool_count": 55
   },
   "smokes": {
     "perception": "pass",
@@ -680,7 +680,7 @@ and screenshot paths in `build_artifacts` and `artifacts`. Relative artifact
 paths are resolved from the evidence JSON file's directory. The runtime
 evidence gate checks that referenced files exist, that passing build logs contain
 `exit_status=0`, that runtime-mode `doctor` agrees with the runtime summary, that the framed
-log includes the initialize response, `tools/list` with 29 tools and
+log includes the initialize response, `tools/list` with 55 tools and
 `sootie_learn_status.readOnlyHint: true`, plus a successful
 `sootie_learn_status` report, and that the raw JSON-RPC log includes
 successful tool reports for the full public surface with request/response ids

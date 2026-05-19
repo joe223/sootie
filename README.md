@@ -5,33 +5,63 @@
 <h1 align="center">Sootie</h1>
 
 <p align="center">
-  A Rust computer-use runtime that gives AI agents one portable MCP tool surface
-  for desktop apps, browser pages, screenshots, recipes, and vision grounding.
+  Cross-platform computer-use for agents that need the whole desktop, not just one browser tab.
 </p>
 
 <p align="center">
-  <a href="docs/api/mcp-tools-reference.md">Tools</a>
+  <a href="#quick-start">Quick start</a>
   ·
-  <a href="docs/guides/browser-cdp.md">CDP guide</a>
+  <a href="#tool-surface">55 MCP tools</a>
   ·
-  <a href="docs/api/recipe-schema.md">Recipes</a>
+  <a href="#recipes-and-learning">Recipes</a>
   ·
-  <a href="docs/development/runtime-smoke-runbook.md">Runtime checks</a>
+  <a href="#runtime-check">Runtime checks</a>
 </p>
 
-## Why Sootie
+Sootie is a Rust MCP runtime that gives any MCP-capable agent one computer-use
+contract across macOS, Linux, and Windows. Use it from OpenCode, Claude Code,
+Codex, Cursor, VS Code, or your own agent runtime.
 
-Sootie is built for agents that need to operate real computers through a stable
-tool contract instead of one-off UI scripts. It runs as an MCP server over
-stdio, exposes `sootie_*` tools, and keeps the public argument and response
-shapes portable across macOS, Linux, and Windows.
+The agent keeps calling the same `sootie_*` tools while Sootie chooses the best
+execution path underneath: browser DOM through CDP, native OS backends for real
+desktop state, and vision grounding when structure runs out.
 
-The current runtime resolves targets through the strongest available signal:
-browser CDP for DOM-backed pages, the native desktop backend for app and window
-state, and vision grounding as the final fallback. A `vision-only` mode is also
-available when you want to test or force the visual grounding path directly.
+Teach it a workflow once. Save it as a JSON recipe. Run it again from any
+agent.
 
-## What It Can Do
+```bash
+sootie setup
+sootie serve
+```
+
+## Watch Sootie Work
+
+<!-- Demo GIF placeholder:
+     Replace this block with the Safari + Excalidraw flower + recipe-recording GIF.
+     Suggested asset path: docs/assets/sootie-excalidraw-flower-recipe.gif
+-->
+
+<p align="center">
+  <em>Demo GIF placeholder: Safari + Excalidraw draws a colorful flower, then
+  records the workflow as a reusable Sootie recipe.</em>
+</p>
+
+## What Makes Sootie Different
+
+Agent frameworks move fast. Desktop automation APIs do not. Sootie makes that
+boundary stable.
+
+- Agent-neutral: any MCP-capable client can call the same Sootie tools.
+- Platform-neutral: macOS, Linux, and Windows share the same public MCP
+  contract while backend-specific mechanics stay below it.
+- Signal-aware: browser CDP first, native platform state second, vision
+  grounding last.
+- Workflow-aware: learning mode records successful desktop actions and recipes
+  replay them later.
+- Evidence-first: `sootie doctor`, structured tool reports, and full-suite smoke
+  docs make runtime readiness inspectable instead of assumed.
+
+## What Agents Can Do
 
 - Inspect the current desktop: apps, windows, URLs, focused elements, visible
   text, screenshots, and interactive elements.
@@ -45,6 +75,19 @@ available when you want to test or force the visual grounding path directly.
   mode.
 - Report runtime readiness with `sootie doctor` before an MCP client depends on
   the desktop session.
+
+## How It Works
+
+Sootie runs as an MCP server over stdio and exposes `sootie_*` tools with
+portable argument and response shapes. Each target is resolved through the
+strongest available signal:
+
+1. Browser CDP for DOM-backed pages.
+2. Native platform backends for apps, windows, and desktop state.
+3. Vision grounding when structural signals are not enough.
+
+A `vision-only` mode is also available when you want to test or force the visual
+grounding path directly.
 
 ## Install
 
@@ -156,12 +199,14 @@ is:
 
 ## Tool Surface
 
-Sootie exposes 29 MCP tools.
+Sootie exposes 55 MCP tools.
 
 | Area | Tools |
 | --- | --- |
 | Orientation and perception | `sootie_context`, `sootie_state`, `sootie_find`, `sootie_read`, `sootie_inspect`, `sootie_element_at`, `sootie_screenshot`, `sootie_parse_screen`, `sootie_ground`, `sootie_annotate` |
 | Actions | `sootie_click`, `sootie_type`, `sootie_press`, `sootie_hotkey`, `sootie_scroll`, `sootie_hover`, `sootie_long_press`, `sootie_drag`, `sootie_focus`, `sootie_window`, `sootie_wait` |
+| Browser-native CDP | `sootie_browser_connect`, `sootie_browser_pages`, `sootie_browser_select_page`, `sootie_browser_open`, `sootie_browser_observe`, `sootie_browser_find`, `sootie_browser_click`, `sootie_browser_type`, `sootie_browser_press`, `sootie_browser_scroll`, `sootie_browser_wait`, `sootie_browser_extract`, `sootie_browser_screenshot`, `sootie_browser_back`, `sootie_browser_forward`, `sootie_browser_reload`, `sootie_browser_close_page`, `sootie_browser_network`, `sootie_browser_console`, `sootie_browser_storage`, `sootie_browser_cookies`, `sootie_browser_downloads`, `sootie_browser_upload`, `sootie_browser_pdf` |
+| Guarded raw CDP | `sootie_cdp_send`, `sootie_cdp_subscribe` |
 | Recipes and learning | `sootie_recipes`, `sootie_run`, `sootie_recipe_show`, `sootie_recipe_save`, `sootie_recipe_delete`, `sootie_learn_start`, `sootie_learn_stop`, `sootie_learn_status` |
 
 Every tool returns MCP content plus structured content with `success`, `data`,
@@ -270,11 +315,14 @@ numbered labels.
 The public MCP contract stays portable while the Rust backend chooses the
 native mechanism available on the current host.
 
-## Recipes
+## Recipes and Learning
 
 Recipes are JSON documents that can be saved, listed, inspected, deleted, and
 run through the MCP tool surface. A recipe can encode action steps, wait steps,
 parameter substitution, and legacy recorded step shapes.
+
+Learning mode records successful actions so an agent can turn a real desktop
+workflow into a reusable recipe.
 
 See [Recipe Schema](docs/api/recipe-schema.md) for the full format.
 

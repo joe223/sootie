@@ -2104,7 +2104,7 @@ mod tests {
     fn tools_json_preserves_mcp_annotations() {
         let payload: serde_json::Value = serde_json::from_str(&tools_json().unwrap()).unwrap();
         let tools = payload.as_array().unwrap();
-        assert_eq!(tools.len(), 29);
+        assert_eq!(tools.len(), sootie_core::tools::TOOL_NAMES.len());
 
         let missing_annotations = tools
             .iter()

@@ -12,9 +12,11 @@ use crate::types::{ActionResult, Bounds, ElementInfo, FindQuery, Screenshot};
 use super::png_dimensions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PageInfo {
+pub(crate) struct PageInfo {
+    pub target_id: String,
     pub url: String,
     pub title: Option<String>,
+    pub page_type: String,
     pub web_socket_debugger_url: Option<String>,
 }
 
@@ -31,7 +33,7 @@ struct KeyDescriptor {
 }
 
 #[allow(dead_code)]
-pub(super) fn parse_remote_debugging_port(cmdline: &str) -> Option<u16> {
+pub(crate) fn parse_remote_debugging_port(cmdline: &str) -> Option<u16> {
     let args = cmdline.split_whitespace().collect::<Vec<_>>();
     for (index, arg) in args.iter().enumerate() {
         if let Some(port) = arg.strip_prefix("--remote-debugging-port=") {
@@ -45,12 +47,12 @@ pub(super) fn parse_remote_debugging_port(cmdline: &str) -> Option<u16> {
 }
 
 #[allow(dead_code)]
-pub(super) fn current_page_url(port: u16) -> Option<String> {
+pub(crate) fn current_page_url(port: u16) -> Option<String> {
     pages_json(port).and_then(|payload| parse_page_url(&payload))
 }
 
 #[allow(dead_code)]
-pub(super) fn configured_port() -> Option<u16> {
+pub(crate) fn configured_port() -> Option<u16> {
     env::var("SOOTIE_CDP_PORT")
         .ok()
         .and_then(|port| port.parse().ok())
@@ -62,7 +64,7 @@ pub(super) fn configured_port() -> Option<u16> {
 }
 
 #[allow(dead_code)]
-pub(super) fn current_page(port: u16) -> Option<PageInfo> {
+pub(crate) fn current_page(port: u16) -> Option<PageInfo> {
     let payload = pages_json(port)?;
     let page = parse_current_page(&payload);
     match &page {
@@ -79,16 +81,32 @@ pub(super) fn current_page(port: u16) -> Option<PageInfo> {
 }
 
 #[allow(dead_code)]
-pub(super) fn page_elements(port: u16) -> Option<Vec<ElementInfo>> {
+pub(crate) fn browser_pages(port: u16) -> Option<Vec<PageInfo>> {
+    pages_json(port).and_then(|payload| parse_pages(&payload))
+}
+
+#[allow(dead_code)]
+pub(crate) fn page_by_id(port: u16, page_id: Option<&str>) -> Option<PageInfo> {
+    let pages = browser_pages(port)?;
+    if let Some(page_id) = page_id.filter(|value| !value.trim().is_empty()) {
+        return pages
+            .into_iter()
+            .find(|page| page.target_id == page_id || page_id == page.url);
+    }
+    pages.into_iter().find(is_reportable_page)
+}
+
+#[allow(dead_code)]
+pub(crate) fn page_elements(port: u16) -> Option<Vec<ElementInfo>> {
     let page = current_page(port)?;
-    let ws_url = ws_url_with_fallback_port(&page.web_socket_debugger_url?, port);
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
     evaluate_json(&ws_url, DOM_ELEMENTS_EXPRESSION).map(|value| parse_dom_elements(&value))
 }
 
 #[allow(dead_code)]
-pub(super) fn page_text(port: u16, query: Option<&str>, depth: Option<u32>) -> Option<String> {
+pub(crate) fn page_text(port: u16, query: Option<&str>, depth: Option<u32>) -> Option<String> {
     let page = current_page(port)?;
-    let ws_url = ws_url_with_fallback_port(&page.web_socket_debugger_url?, port);
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
     let query = serde_json::to_string(&query.filter(|query| !query.trim().is_empty())).ok()?;
     let depth = depth
         .map(|depth| depth.min(64).to_string())
@@ -102,14 +120,24 @@ pub(super) fn page_text(port: u16, query: Option<&str>, depth: Option<u32>) -> O
 }
 
 #[allow(dead_code)]
-pub(super) fn page_screenshot(port: u16) -> Option<Screenshot> {
-    let page = current_page(port)?;
-    let ws_url = ws_url_with_fallback_port(&page.web_socket_debugger_url?, port);
-    let result = cdp_command(
-        &ws_url,
-        "Page.captureScreenshot",
-        json!({ "format": "png", "fromSurface": true }),
-    )?;
+pub(crate) fn page_screenshot(port: u16) -> Option<Screenshot> {
+    page_screenshot_by_id(port, None, false)
+}
+
+#[allow(dead_code)]
+pub(crate) fn page_screenshot_by_id(
+    port: u16,
+    page_id: Option<&str>,
+    full_page: bool,
+) -> Option<Screenshot> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
+    let params = if full_page {
+        json!({ "format": "png", "fromSurface": true, "captureBeyondViewport": true })
+    } else {
+        json!({ "format": "png", "fromSurface": true })
+    };
+    let result = cdp_command(&ws_url, "Page.captureScreenshot", params)?;
     let data_base64 = result.get("data").and_then(Value::as_str)?.to_string();
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&data_base64)
@@ -126,13 +154,13 @@ pub(super) fn page_screenshot(port: u16) -> Option<Screenshot> {
 }
 
 #[allow(dead_code)]
-pub(super) fn click_element(port: u16, query: &FindQuery) -> Option<ActionResult> {
+pub(crate) fn click_element(port: u16, query: &FindQuery) -> Option<ActionResult> {
     let value = evaluate_dom_action(port, query, CLICK_ELEMENT_BODY)?;
     action_result("cdp-click", value, query)
 }
 
 #[allow(dead_code)]
-pub(super) fn type_text_element(
+pub(crate) fn type_text_element(
     port: u16,
     query: &FindQuery,
     text: &str,
@@ -152,13 +180,13 @@ pub(super) fn type_text_element(
 }
 
 #[allow(dead_code)]
-pub(super) fn hover_element(port: u16, query: &FindQuery) -> Option<ActionResult> {
+pub(crate) fn hover_element(port: u16, query: &FindQuery) -> Option<ActionResult> {
     let value = evaluate_dom_action(port, query, HOVER_ELEMENT_BODY)?;
     action_result("cdp-hover", value, query)
 }
 
 #[allow(dead_code)]
-pub(super) fn long_press_element(
+pub(crate) fn long_press_element(
     port: u16,
     query: &FindQuery,
     duration_secs: f64,
@@ -180,7 +208,7 @@ pub(super) fn long_press_element(
 }
 
 #[allow(dead_code)]
-pub(super) fn drag_element(
+pub(crate) fn drag_element(
     port: u16,
     query: &FindQuery,
     to: (f64, f64),
@@ -212,9 +240,19 @@ pub(super) fn drag_element(
 }
 
 #[allow(dead_code)]
-pub(super) fn press_key(port: u16, key: &str, modifiers: &[String]) -> Option<ActionResult> {
-    let page = current_page(port)?;
-    let ws_url = ws_url_with_fallback_port(&page.web_socket_debugger_url?, port);
+pub(crate) fn press_key(port: u16, key: &str, modifiers: &[String]) -> Option<ActionResult> {
+    press_key_on_page(port, None, key, modifiers)
+}
+
+#[allow(dead_code)]
+pub(crate) fn press_key_on_page(
+    port: u16,
+    page_id: Option<&str>,
+    key: &str,
+    modifiers: &[String],
+) -> Option<ActionResult> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
     let key = key_descriptor(key)?;
     let modifier_mask = cdp_modifier_mask(modifiers)?;
     for event_type in ["rawKeyDown", "keyUp"] {
@@ -243,9 +281,19 @@ pub(super) fn press_key(port: u16, key: &str, modifiers: &[String]) -> Option<Ac
 }
 
 #[allow(dead_code)]
-pub(super) fn scroll_page(port: u16, direction: &str, amount: i32) -> Option<ActionResult> {
-    let page = current_page(port)?;
-    let ws_url = ws_url_with_fallback_port(&page.web_socket_debugger_url?, port);
+pub(crate) fn scroll_page(port: u16, direction: &str, amount: i32) -> Option<ActionResult> {
+    scroll_page_by_id(port, None, direction, amount)
+}
+
+#[allow(dead_code)]
+pub(crate) fn scroll_page_by_id(
+    port: u16,
+    page_id: Option<&str>,
+    direction: &str,
+    amount: i32,
+) -> Option<ActionResult> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
     let direction = serde_json::to_string(direction).ok()?;
     let steps = amount.abs().max(1);
     let expression =
@@ -258,7 +306,274 @@ pub(super) fn scroll_page(port: u16, direction: &str, amount: i32) -> Option<Act
 }
 
 #[allow(dead_code)]
+pub(crate) fn open_page(
+    port: u16,
+    url: &str,
+    new_page: bool,
+    timeout: Duration,
+) -> Option<PageInfo> {
+    if new_page {
+        return new_browser_page(port, url, timeout).or_else(|| {
+            let page = current_page(port)?;
+            navigate_page(port, Some(&page.target_id), url, timeout)
+        });
+    }
+    let page = current_page(port)?;
+    navigate_page(port, Some(&page.target_id), url, timeout)
+}
+
+#[allow(dead_code)]
+pub(crate) fn navigate_page(
+    port: u16,
+    page_id: Option<&str>,
+    url: &str,
+    timeout: Duration,
+) -> Option<PageInfo> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
+    cdp_command_with_timeout(&ws_url, "Page.navigate", json!({ "url": url }), timeout)?;
+    wait_for_page_ready(port, Some(&page.target_id), "domcontentloaded", timeout);
+    page_by_id(port, Some(&page.target_id)).or(Some(PageInfo {
+        url: url.to_string(),
+        ..page
+    }))
+}
+
+#[allow(dead_code)]
+pub(crate) fn close_page(port: u16, page_id: &str) -> Option<()> {
+    http_text(port, "GET", &format!("/json/close/{page_id}")).map(|_| ())
+}
+
+#[allow(dead_code)]
+pub(crate) fn browser_history_action(
+    port: u16,
+    page_id: Option<&str>,
+    direction: &str,
+    timeout: Duration,
+) -> Option<PageInfo> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
+    let expression = match direction {
+        "back" => "history.back(); true",
+        "forward" => "history.forward(); true",
+        "reload" => "location.reload(); true",
+        _ => return None,
+    };
+    evaluate_json_with_options(&ws_url, expression, false, timeout)?;
+    wait_for_page_ready(port, Some(&page.target_id), "domcontentloaded", timeout);
+    page_by_id(port, Some(&page.target_id)).or(Some(page))
+}
+
+#[allow(dead_code)]
+pub(crate) fn evaluate_on_page(
+    port: u16,
+    page_id: Option<&str>,
+    expression: &str,
+    await_promise: bool,
+    timeout: Duration,
+) -> Option<Value> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
+    evaluate_json_with_options(&ws_url, expression, await_promise, timeout)
+}
+
+#[allow(dead_code)]
+pub(crate) fn send_cdp_command(
+    port: u16,
+    page_id: Option<&str>,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Option<Value> {
+    let ws_url = if method.starts_with("Browser.") {
+        browser_websocket_url(port).or_else(|| {
+            page_by_id(port, page_id)
+                .and_then(|page| page.web_socket_debugger_url)
+                .map(|url| ws_url_with_fallback_port(&url, port))
+        })?
+    } else {
+        let page = page_by_id(port, page_id)?;
+        ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port)
+    };
+    cdp_command_with_timeout(&ws_url, method, params, timeout)
+}
+
+#[allow(dead_code)]
+pub(crate) fn collect_cdp_events(
+    port: u16,
+    page_id: Option<&str>,
+    domain: &str,
+    event: Option<&str>,
+    timeout: Duration,
+    max_events: u32,
+) -> Option<Vec<Value>> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
+    let endpoint = parse_ws_endpoint(&ws_url)?;
+    let mut stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port)).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
+    websocket_handshake(&mut stream, &endpoint)?;
+    let enable = json!({ "id": 1, "method": format!("{domain}.enable"), "params": {} });
+    send_ws_text(&mut stream, &enable.to_string())?;
+    let started = std::time::Instant::now();
+    let mut events = Vec::new();
+    while started.elapsed() < timeout && events.len() < max_events as usize {
+        let Some(message) = read_ws_text(&mut stream) else {
+            continue;
+        };
+        let Ok(payload) = serde_json::from_str::<Value>(&message) else {
+            continue;
+        };
+        if payload.get("id").is_some() {
+            continue;
+        }
+        let method = payload.get("method").and_then(Value::as_str).unwrap_or("");
+        if !method.starts_with(&format!("{domain}.")) {
+            continue;
+        }
+        if let Some(event) = event {
+            if method != format!("{domain}.{event}") {
+                continue;
+            }
+        }
+        events.push(payload);
+    }
+    Some(events)
+}
+
+#[allow(dead_code)]
+pub(crate) fn set_file_input_files(
+    port: u16,
+    page_id: Option<&str>,
+    target: &Value,
+    file_paths: &[String],
+    timeout: Duration,
+) -> Option<Value> {
+    let page = page_by_id(port, page_id)?;
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
+    let selector = target
+        .get("selector")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            target
+                .get("dom_id")
+                .and_then(Value::as_str)
+                .map(|id| format!("#{id}"))
+        })?;
+    let expression = format!(
+        "document.querySelector({})",
+        serde_json::to_string(&selector).ok()?
+    );
+    let mut stream = open_cdp_stream(&ws_url, timeout)?;
+    let evaluate = cdp_command_on_stream(
+        &mut stream,
+        &ws_url,
+        "Runtime.evaluate",
+        json!({ "expression": expression, "returnByValue": false }),
+        1,
+    )?;
+    let object_id = evaluate
+        .get("result")
+        .and_then(|result| result.get("objectId"))
+        .and_then(Value::as_str)?;
+    let described = cdp_command_on_stream(
+        &mut stream,
+        &ws_url,
+        "DOM.describeNode",
+        json!({ "objectId": object_id }),
+        2,
+    )?;
+    let backend_node_id = described
+        .get("node")
+        .and_then(|node| node.get("backendNodeId"))
+        .and_then(Value::as_i64)?;
+    cdp_command_on_stream(
+        &mut stream,
+        &ws_url,
+        "DOM.setFileInputFiles",
+        json!({ "backendNodeId": backend_node_id, "files": file_paths }),
+        3,
+    )?;
+    Some(json!({
+        "selector": selector,
+        "file_count": file_paths.len(),
+        "backend_node_id": backend_node_id,
+    }))
+}
+
+#[allow(dead_code)]
+pub(crate) fn page_ready_state(port: u16, page_id: Option<&str>) -> Option<String> {
+    evaluate_on_page(
+        port,
+        page_id,
+        "document.readyState",
+        false,
+        Duration::from_secs(2),
+    )
+    .and_then(|value| value.as_str().map(str::to_string))
+}
+
+#[allow(dead_code)]
+pub(crate) fn wait_for_page_ready(
+    port: u16,
+    page_id: Option<&str>,
+    condition: &str,
+    timeout: Duration,
+) -> bool {
+    let started = std::time::Instant::now();
+    loop {
+        let ready = page_ready_state(port, page_id);
+        let matched = match condition {
+            "none" => true,
+            "domcontentloaded" | "stable" | "networkidle" => ready
+                .as_deref()
+                .is_some_and(|state| state == "interactive" || state == "complete"),
+            "load" => ready.as_deref() == Some("complete"),
+            _ => true,
+        };
+        if matched {
+            return true;
+        }
+        if started.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn new_browser_page(port: u16, url: &str, timeout: Duration) -> Option<PageInfo> {
+    let target = http_json(
+        port,
+        "PUT",
+        &format!("/json/new?{}", percent_encode_url(url)),
+    )?;
+    let target_id = target
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string)?;
+    wait_for_page_ready(port, Some(&target_id), "domcontentloaded", timeout);
+    page_by_id(port, Some(&target_id)).or_else(|| page_from_json(&target))
+}
+
+#[allow(dead_code)]
 fn pages_json(port: u16) -> Option<String> {
+    http_text(port, "GET", "/json")
+}
+
+fn browser_websocket_url(port: u16) -> Option<String> {
+    http_json(port, "GET", "/json/version")?
+        .get("webSocketDebuggerUrl")
+        .and_then(Value::as_str)
+        .map(|url| ws_url_with_fallback_port(url, port))
+}
+
+fn http_json(port: u16, method: &str, path: &str) -> Option<Value> {
+    http_text(port, method, path).and_then(|payload| serde_json::from_str(&payload).ok())
+}
+
+fn http_text(port: u16, method: &str, path: &str) -> Option<String> {
     let host = cdp_host();
     let mut stream = match TcpStream::connect((host.as_str(), port)) {
         Ok(stream) => stream,
@@ -271,7 +586,7 @@ fn pages_json(port: u16) -> Option<String> {
     let _ = stream.set_read_timeout(timeout);
     let _ = stream.set_write_timeout(timeout);
     if let Err(error) = stream.write_all(
-        format!("GET /json HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
+        format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
     ) {
         tracing::debug!(host, port, %error, "failed to write CDP HTTP request");
         return None;
@@ -312,6 +627,28 @@ fn pages_json(port: u16) -> Option<String> {
         .or(Some(response))
 }
 
+fn percent_encode_url(url: &str) -> String {
+    url.bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'~'
+            | b':'
+            | b'/'
+            | b'?'
+            | b'&'
+            | b'='
+            | b'#'
+            | b'%' => vec![byte as char],
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
 fn cdp_host() -> String {
     env::var("SOOTIE_CDP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
 }
@@ -345,27 +682,61 @@ fn parse_page_url(payload: &str) -> Option<String> {
 }
 
 fn parse_current_page(payload: &str) -> Option<PageInfo> {
+    parse_pages(payload)?.into_iter().find(is_reportable_page)
+}
+
+fn parse_pages(payload: &str) -> Option<Vec<PageInfo>> {
     let pages = serde_json::from_str::<serde_json::Value>(payload).ok()?;
-    pages.as_array()?.iter().find_map(|page| {
-        let page_type = page.get("type").and_then(serde_json::Value::as_str);
-        let url = page.get("url").and_then(serde_json::Value::as_str)?;
-        if page_type == Some("page") && is_reportable_url(url) {
-            Some(PageInfo {
-                url: url.to_string(),
-                title: page
-                    .get("title")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|title| !title.is_empty())
-                    .map(str::to_string),
-                web_socket_debugger_url: page
-                    .get("webSocketDebuggerUrl")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string),
-            })
-        } else {
-            None
-        }
+    Some(
+        pages
+            .as_array()?
+            .iter()
+            .filter_map(page_from_json)
+            .collect(),
+    )
+}
+
+fn page_from_json(page: &Value) -> Option<PageInfo> {
+    let target_id = page
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+        .or_else(|| {
+            page.get("webSocketDebuggerUrl")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|url| url.rsplit('/').next())
+                .filter(|id| !id.is_empty())
+        })
+        .or_else(|| page.get("url").and_then(serde_json::Value::as_str))
+        .map(str::to_string)?;
+    let url = page
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let page_type = page
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("other")
+        .to_string();
+    Some(PageInfo {
+        target_id,
+        url,
+        title: page
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .filter(|title| !title.is_empty())
+            .map(str::to_string),
+        page_type,
+        web_socket_debugger_url: page
+            .get("webSocketDebuggerUrl")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
     })
+}
+
+fn is_reportable_page(page: &PageInfo) -> bool {
+    page.page_type == "page" && is_reportable_url(&page.url)
 }
 
 fn is_reportable_url(url: &str) -> bool {
@@ -449,10 +820,15 @@ fn cdp_command_with_timeout(
     params: Value,
     timeout: Duration,
 ) -> Option<Value> {
+    let mut stream = open_cdp_stream(ws_url, timeout)?;
+    cdp_command_on_stream(&mut stream, ws_url, method, params, 1)
+}
+
+fn open_cdp_stream(ws_url: &str, timeout: Duration) -> Option<TcpStream> {
     let endpoint = match parse_ws_endpoint(ws_url) {
         Some(endpoint) => endpoint,
         None => {
-            tracing::debug!(ws_url, method, "failed to parse CDP WebSocket endpoint");
+            tracing::debug!(ws_url, "failed to parse CDP WebSocket endpoint");
             return None;
         }
     };
@@ -461,7 +837,6 @@ fn cdp_command_with_timeout(
         Err(error) => {
             tracing::debug!(
                 ws_url,
-                method,
                 %error,
                 "failed to connect to CDP WebSocket endpoint"
             );
@@ -472,20 +847,30 @@ fn cdp_command_with_timeout(
     let _ = stream.set_read_timeout(timeout);
     let _ = stream.set_write_timeout(timeout);
     if websocket_handshake(&mut stream, &endpoint).is_none() {
-        tracing::debug!(ws_url, method, "CDP WebSocket handshake failed");
+        tracing::debug!(ws_url, "CDP WebSocket handshake failed");
         return None;
     }
+    Some(stream)
+}
+
+fn cdp_command_on_stream(
+    stream: &mut TcpStream,
+    ws_url: &str,
+    method: &str,
+    params: Value,
+    id: i64,
+) -> Option<Value> {
     let request = json!({
-        "id": 1,
+        "id": id,
         "method": method,
         "params": params
     });
-    if send_ws_text(&mut stream, &request.to_string()).is_none() {
+    if send_ws_text(stream, &request.to_string()).is_none() {
         tracing::debug!(ws_url, method, "failed to write CDP WebSocket frame");
         return None;
     }
     for _ in 0..8 {
-        let message = match read_ws_text(&mut stream) {
+        let message = match read_ws_text(stream) {
             Some(message) => message,
             None => {
                 tracing::debug!(
@@ -503,7 +888,7 @@ fn cdp_command_with_timeout(
                 return None;
             }
         };
-        if payload.get("id").and_then(Value::as_i64) == Some(1) {
+        if payload.get("id").and_then(Value::as_i64) == Some(id) {
             if payload.get("error").is_some() {
                 return None;
             }
@@ -535,7 +920,7 @@ fn evaluate_dom_action_with_options(
     timeout: Duration,
 ) -> Option<Value> {
     let page = current_page(port)?;
-    let ws_url = ws_url_with_fallback_port(&page.web_socket_debugger_url?, port);
+    let ws_url = ws_url_with_fallback_port(page.web_socket_debugger_url.as_deref()?, port);
     let query = serde_json::to_string(&query_value(query)).ok()?;
     let expression =
         format!("(() => {{\nconst query = {query};\n{DOM_QUERY_HELPERS}\n{body}\n}})()");
@@ -1132,9 +1517,9 @@ mod tests {
     fn parses_page_url() {
         let payload = r#"[
           {"type":"other","url":"devtools://devtools/bundled/inspector.html"},
-          {"type":"page","url":"chrome://new-tab-page","title":"New Tab","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/internal"},
-          {"type":"page","url":"about:blank"},
-          {"type":"page","url":"https://example.com/current","title":"Current","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/1"}
+          {"id":"internal","type":"page","url":"chrome://new-tab-page","title":"New Tab","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/internal"},
+          {"id":"blank","type":"page","url":"about:blank"},
+          {"id":"page-1","type":"page","url":"https://example.com/current","title":"Current","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/1"}
         ]"#;
         assert_eq!(
             parse_page_url(payload),
@@ -1143,11 +1528,26 @@ mod tests {
         assert_eq!(
             parse_current_page(payload),
             Some(PageInfo {
+                target_id: "page-1".to_string(),
                 url: "https://example.com/current".to_string(),
                 title: Some("Current".to_string()),
+                page_type: "page".to_string(),
                 web_socket_debugger_url: Some("ws://127.0.0.1:9222/devtools/page/1".to_string())
             })
         );
+    }
+
+    #[test]
+    fn parses_pages_for_browser_api() {
+        let payload = r#"[
+          {"id":"page-1","type":"page","url":"https://example.com","title":"Example","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/page-1"},
+          {"id":"bg-1","type":"background_page","url":"chrome-extension://extension/background.html","title":"Background"}
+        ]"#;
+        let pages = parse_pages(payload).unwrap();
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].target_id, "page-1");
+        assert_eq!(pages[0].page_type, "page");
+        assert_eq!(pages[1].page_type, "background_page");
     }
 
     #[test]
@@ -1361,6 +1761,94 @@ mod tests {
         assert_eq!(screenshot.width, Some(320));
         assert_eq!(screenshot.height, Some(240));
         assert_eq!(screenshot.window_title.as_deref(), Some("Example"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn file_upload_uses_single_cdp_session_for_object_resolution() {
+        let _tcp_guard = TCP_MOCK_LOCK.lock().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut http, _) = listener.accept().unwrap();
+            read_http_request(&mut http);
+            let body = json!([{
+                "id": "page-1",
+                "type": "page",
+                "url": "https://example.com",
+                "title": "Example",
+                "webSocketDebuggerUrl": format!("ws://127.0.0.1:{port}/devtools/page/page-1")
+            }])
+            .to_string();
+            http.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            drop(http);
+
+            let (mut ws, _) = listener.accept().unwrap();
+            let _ = ws.set_read_timeout(Some(Duration::from_secs(2)));
+            let handshake = read_http_request(&mut ws);
+            assert_valid_websocket_key(&handshake);
+            ws.write_all(
+                b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            )
+            .unwrap();
+
+            let evaluate = read_ws_text(&mut ws).expect("runtime evaluate request");
+            assert!(evaluate.contains("\"Runtime.evaluate\""));
+            assert!(evaluate.contains("document.querySelector"));
+            write_server_ws_text(
+                &mut ws,
+                &json!({
+                    "id": 1,
+                    "result": { "result": { "objectId": "object-1" } }
+                })
+                .to_string(),
+            );
+
+            let describe = read_ws_text(&mut ws).expect("describe node request on same session");
+            assert!(describe.contains("\"DOM.describeNode\""));
+            assert!(describe.contains("\"objectId\":\"object-1\""));
+            write_server_ws_text(
+                &mut ws,
+                &json!({
+                    "id": 2,
+                    "result": { "node": { "backendNodeId": 99 } }
+                })
+                .to_string(),
+            );
+
+            let upload = read_ws_text(&mut ws).expect("set file input files request");
+            assert!(upload.contains("\"DOM.setFileInputFiles\""));
+            assert!(upload.contains("\"backendNodeId\":99"));
+            assert!(upload.contains("/tmp/sootie-upload.txt"));
+            write_server_ws_text(
+                &mut ws,
+                &json!({
+                    "id": 3,
+                    "result": {}
+                })
+                .to_string(),
+            );
+        });
+
+        let result = set_file_input_files(
+            port,
+            Some("page-1"),
+            &json!({ "selector": "#file" }),
+            &["/tmp/sootie-upload.txt".into()],
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(result["selector"], "#file");
+        assert_eq!(result["file_count"], 1);
+        assert_eq!(result["backend_node_id"], 99);
         server.join().unwrap();
     }
 

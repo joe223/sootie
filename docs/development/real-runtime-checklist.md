@@ -157,7 +157,7 @@ Checks:
 For the current acceptance scope, do not mark completion until:
 
 - macOS has full runtime evidence: `doctor`, real MCP stdio smokes, full
-  29-tool coverage, screenshot artifact, CDP smoke, and client attachment
+  55-tool coverage, screenshot artifact, browser CDP smoke, and client attachment
   evidence.
 - Linux has implementation plus build/link evidence. Full Linux desktop
   runtime evidence is optional unless the scope changes to require a Linux
