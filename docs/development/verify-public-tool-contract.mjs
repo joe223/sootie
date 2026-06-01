@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 const expectedTools = [
   ["sootie_context", { app: "string" }, []],
@@ -13,6 +14,7 @@ const expectedTools = [
       dom_class: "string",
       dom_id: "string",
       identifier: "string",
+      max_results: "integer",
       query: "string",
       role: "string",
     },
@@ -27,7 +29,7 @@ const expectedTools = [
   ["sootie_element_at", { x: "number", y: "number" }, ["x", "y"]],
   [
     "sootie_screenshot",
-    { app: "string", full_resolution: "boolean" },
+    { app: "string", full_resolution: "boolean", window: "string" },
     [],
   ],
   [
@@ -146,7 +148,7 @@ const expectedTools = [
   ["sootie_recipe_delete", { name: "string" }, ["name"]],
   [
     "sootie_parse_screen",
-    { app: "string", full_resolution: "boolean" },
+    { app: "string", full_resolution: "boolean", window: "string" },
     [],
   ],
   [
@@ -276,6 +278,16 @@ function argValue(args, name, fallback) {
   return args[index + 1];
 }
 
+function defaultServer() {
+  if (process.env.SOOTIE_CONTRACT_SERVER) {
+    return process.env.SOOTIE_CONTRACT_SERVER;
+  }
+  if (existsSync("target/debug/sootie")) {
+    return "target/debug/sootie";
+  }
+  return "target/release/sootie";
+}
+
 function schemaType(schema) {
   if (schema && Array.isArray(schema.anyOf)) {
     return `anyOf:${schema.anyOf.map((entry) => entry.type).join("|")}`;
@@ -304,13 +316,13 @@ function main() {
         "  node docs/development/verify-public-tool-contract.mjs",
         "",
         "Options:",
-        "  --server <path>  Sootie binary. Default: target/release/sootie",
+        "  --server <path>  Sootie binary. Default: $SOOTIE_CONTRACT_SERVER, target/debug/sootie, then target/release/sootie.",
       ].join("\n"),
     );
     return;
   }
 
-  const server = argValue(args, "--server", "target/release/sootie");
+  const server = argValue(args, "--server", defaultServer());
   const tools = JSON.parse(execFileSync(server, ["tools", "--raw"], { encoding: "utf8" }));
   const expectedNames = expectedTools.map(([name]) => name);
   const actualNames = tools.map((tool) => tool.name);

@@ -131,11 +131,14 @@ fn tool_definition(name: &str) -> ToolDefinition {
         "sootie_screenshot" => tool(
             name,
             "Capture a screenshot for visual debugging.",
-            optional_app_props(&[(
-                "full_resolution",
-                "boolean",
-                "Request native-resolution capture when supported.",
-            )]),
+            optional_app_props(&[
+                ("window", "string", "Window title substring."),
+                (
+                    "full_resolution",
+                    "boolean",
+                    "Request native-resolution capture when supported.",
+                ),
+            ]),
             &[],
         ),
         "sootie_annotate" => tool(
@@ -156,11 +159,14 @@ fn tool_definition(name: &str) -> ToolDefinition {
         "sootie_parse_screen" => tool(
             name,
             "Detect visible interactive elements from platform context.",
-            optional_app_props(&[(
-                "full_resolution",
-                "boolean",
-                "Request native-resolution capture when supported.",
-            )]),
+            optional_app_props(&[
+                ("window", "string", "Window title substring."),
+                (
+                    "full_resolution",
+                    "boolean",
+                    "Request native-resolution capture when supported.",
+                ),
+            ]),
             &[],
         ),
         "sootie_click" => tool(
@@ -611,6 +617,7 @@ fn find_props() -> Value {
         ("identifier", "string", "Native identifier."),
         ("app", "string", "App name."),
         ("depth", "integer", "Depth hint."),
+        ("max_results", "integer", "Maximum results."),
     ])
 }
 
@@ -1194,6 +1201,7 @@ mod tests {
                     "dom_class",
                     "identifier",
                     "depth",
+                    "max_results",
                 ],
                 &[],
             ),
@@ -1204,7 +1212,11 @@ mod tests {
                 &["query"],
             ),
             ("sootie_element_at", &["x", "y"], &["x", "y"]),
-            ("sootie_screenshot", app_scope!["full_resolution"], &[]),
+            (
+                "sootie_screenshot",
+                app_scope!["window", "full_resolution"],
+                &[],
+            ),
             (
                 "sootie_click",
                 app_scope!["query", "role", "dom_id", "x", "y", "button", "count",],
@@ -1263,7 +1275,11 @@ mod tests {
             ("sootie_recipe_show", &["name"], &["name"]),
             ("sootie_recipe_save", &["recipe_json"], &["recipe_json"]),
             ("sootie_recipe_delete", &["name"], &["name"]),
-            ("sootie_parse_screen", app_scope!["full_resolution"], &[]),
+            (
+                "sootie_parse_screen",
+                app_scope!["window", "full_resolution"],
+                &[],
+            ),
             (
                 "sootie_ground",
                 app_scope!["description", "crop_box"],
@@ -1573,6 +1589,7 @@ mod tests {
                     ("identifier", "string"),
                     ("app", "string"),
                     ("depth", "integer"),
+                    ("max_results", "integer"),
                 ][..],
                 &[][..],
             ),
@@ -1598,7 +1615,11 @@ mod tests {
             ),
             (
                 "sootie_screenshot",
-                &[("app", "string"), ("full_resolution", "boolean")],
+                &[
+                    ("app", "string"),
+                    ("window", "string"),
+                    ("full_resolution", "boolean"),
+                ],
                 &[],
             ),
             (
@@ -1725,7 +1746,11 @@ mod tests {
             ("sootie_recipe_delete", &[("name", "string")], &[]),
             (
                 "sootie_parse_screen",
-                &[("app", "string"), ("full_resolution", "boolean")],
+                &[
+                    ("app", "string"),
+                    ("window", "string"),
+                    ("full_resolution", "boolean"),
+                ],
                 &[],
             ),
             (

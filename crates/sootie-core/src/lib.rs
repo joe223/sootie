@@ -3,6 +3,8 @@ pub mod browser;
 mod config;
 pub mod mcp;
 pub mod recipe;
+mod recipe_learning;
+mod recipe_runtime;
 pub mod tools;
 pub mod types;
 mod vision;

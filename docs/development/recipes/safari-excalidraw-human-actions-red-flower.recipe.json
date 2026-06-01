@@ -1,0 +1,662 @@
+{
+  "schema_version": 4,
+  "name": "safari-excalidraw-human-actions-red-flower",
+  "description": "Safari Excalidraw demo recipe using only human-like UI actions: open a clean canvas, draw stem and leaves first, then red petals, flower center, and final highlights.",
+  "app": "Safari",
+  "steps": [
+    {
+      "id": 1,
+      "action": "focus",
+      "params": {
+        "app": "Safari"
+      }
+    },
+    {
+      "id": 2,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "l"
+      ]
+    },
+    {
+      "id": 3,
+      "action": "type",
+      "text": "https://excalidraw.com/",
+      "clear_first": true
+    },
+    {
+      "id": 4,
+      "action": "press",
+      "key": "Enter"
+    },
+    {
+      "id": 5,
+      "action": "wait",
+      "params": {
+        "condition": "urlContains",
+        "value": "excalidraw.com",
+        "timeout": 15,
+        "interval": 0.25
+      }
+    },
+    {
+      "id": 6,
+      "action": "wait",
+      "timeout": 2
+    },
+    {
+      "id": 7,
+      "action": "focus",
+      "params": {
+        "app": "Safari",
+        "window": "Excalidraw"
+      }
+    },
+    {
+      "id": 8,
+      "action": "press",
+      "key": "Escape"
+    },
+    {
+      "id": 9,
+      "action": "press",
+      "key": "1"
+    },
+    {
+      "id": 10,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 530,
+          "y": 440
+        }
+      }
+    },
+    {
+      "id": 11,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "a"
+      ]
+    },
+    {
+      "id": 12,
+      "action": "press",
+      "key": "Delete"
+    },
+    {
+      "id": 13,
+      "action": "wait",
+      "timeout": 0.3
+    },
+    {
+      "id": 14,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "a"
+      ]
+    },
+    {
+      "id": 15,
+      "action": "press",
+      "key": "Delete"
+    },
+    {
+      "id": 16,
+      "action": "wait",
+      "timeout": 0.5
+    },
+    {
+      "id": 17,
+      "action": "press",
+      "key": "6"
+    },
+    {
+      "id": 18,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 148
+        }
+      }
+    },
+    {
+      "id": 19,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 122,
+          "y": 263
+        }
+      }
+    },
+    {
+      "id": 20,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 530,
+          "y": 710
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 530,
+          "y": 510
+        }
+      },
+      "params": {
+        "duration": 0.5,
+        "hold_duration": 0.1
+      }
+    },
+    {
+      "id": 21,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 22,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 148
+        }
+      }
+    },
+    {
+      "id": 23,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 122,
+          "y": 263
+        }
+      }
+    },
+    {
+      "id": 24,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 196
+        }
+      }
+    },
+    {
+      "id": 25,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 122,
+          "y": 311
+        }
+      }
+    },
+    {
+      "id": 26,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 380,
+          "y": 590
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 525,
+          "y": 635
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 27,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 28,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 535,
+          "y": 590
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 680,
+          "y": 635
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 29,
+      "action": "screenshot",
+      "target": {
+        "window": "Excalidraw"
+      }
+    },
+    {
+      "id": 30,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 31,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 148
+        }
+      }
+    },
+    {
+      "id": 32,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 258,
+          "y": 263
+        }
+      }
+    },
+    {
+      "id": 33,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 196
+        }
+      }
+    },
+    {
+      "id": 34,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 258,
+          "y": 311
+        }
+      }
+    },
+    {
+      "id": 35,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 490,
+          "y": 330
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 570,
+          "y": 440
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 36,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 37,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 420,
+          "y": 395
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 540,
+          "y": 485
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 38,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 39,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 520,
+          "y": 395
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 640,
+          "y": 485
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 40,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 41,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 490,
+          "y": 460
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 570,
+          "y": 570
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 42,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 43,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 445,
+          "y": 360
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 545,
+          "y": 460
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 44,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 45,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 515,
+          "y": 360
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 615,
+          "y": 460
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 46,
+      "action": "screenshot",
+      "target": {
+        "window": "Excalidraw"
+      }
+    },
+    {
+      "id": 47,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 48,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 148
+        }
+      }
+    },
+    {
+      "id": 49,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 122,
+          "y": 263
+        }
+      }
+    },
+    {
+      "id": 50,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 196
+        }
+      }
+    },
+    {
+      "id": 51,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 190,
+          "y": 311
+        }
+      }
+    },
+    {
+      "id": 52,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 495,
+          "y": 395
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 565,
+          "y": 465
+        }
+      },
+      "params": {
+        "duration": 0.45,
+        "hold_duration": 0.08
+      }
+    },
+    {
+      "id": 53,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 54,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 148
+        }
+      }
+    },
+    {
+      "id": 55,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 156,
+          "y": 195
+        }
+      }
+    },
+    {
+      "id": 56,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 40,
+          "y": 196
+        }
+      }
+    },
+    {
+      "id": 57,
+      "action": "click",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 156,
+          "y": 243
+        }
+      }
+    },
+    {
+      "id": 58,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 510,
+          "y": 417
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 522,
+          "y": 429
+        }
+      },
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.05
+      }
+    },
+    {
+      "id": 59,
+      "action": "press",
+      "key": "4"
+    },
+    {
+      "id": 60,
+      "action": "drag",
+      "target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 536,
+          "y": 420
+        }
+      },
+      "to_target": {
+        "window": "Excalidraw",
+        "window_coordinate": {
+          "x": 547,
+          "y": 431
+        }
+      },
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.05
+      }
+    },
+    {
+      "id": 61,
+      "action": "wait",
+      "timeout": 1
+    },
+    {
+      "id": 62,
+      "action": "screenshot",
+      "target": {
+        "window": "Excalidraw"
+      }
+    }
+  ]
+}

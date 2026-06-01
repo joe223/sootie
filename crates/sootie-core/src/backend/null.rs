@@ -33,7 +33,12 @@ impl DesktopBackend for NullBackend {
     fn element_at(&self, _x: f64, _y: f64) -> SootieResult<Option<ElementInfo>> {
         Ok(None)
     }
-    fn screenshot(&self, _app: Option<&str>, _full_resolution: bool) -> SootieResult<Screenshot> {
+    fn screenshot(
+        &self,
+        _app: Option<&str>,
+        _window: Option<&str>,
+        _full_resolution: bool,
+    ) -> SootieResult<Screenshot> {
         Err(unsupported(self.platform(), "screenshot"))
     }
     fn click(

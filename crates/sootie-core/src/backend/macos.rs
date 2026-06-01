@@ -28,6 +28,7 @@ const FOCUS_CONFIRM_TIMEOUT_MS: u64 = 1_200;
 const BROWSER_URL_TIMEOUT_MS: u64 = 1_000;
 const POINTER_EVENT_TIMEOUT_MS: u64 = 1_000;
 const KEYBOARD_EVENT_TIMEOUT_MS: u64 = 1_000;
+const SCREEN_LOCK_FALLBACK_TIMEOUT_MS: u64 = 1_000;
 const SCREEN_LOCK_KEY: &str = "CGSSessionScreenIsLocked";
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const K_CF_NUMBER_INT_TYPE: i32 = 9;
@@ -376,6 +377,47 @@ fn macos_window_server_diagnostic_from_result(
 
 fn macos_window_server_diagnostic() -> RuntimeDiagnostic {
     macos_window_server_diagnostic_from_result(window_server_app_list_result(None))
+}
+
+fn macos_screen_lock_diagnostic_from_status(
+    status: SootieResult<Option<bool>>,
+) -> RuntimeDiagnostic {
+    match status {
+        Ok(Some(true)) => RuntimeDiagnostic {
+            name: "macos_screen_lock".to_string(),
+            success: false,
+            message: "macOS screen is locked".to_string(),
+            details: Some(json!({
+                "locked": true,
+                "recovery": "Unlock the Mac, verify the target window is visible, then retry UI actions."
+            })),
+        },
+        Ok(Some(false)) => RuntimeDiagnostic {
+            name: "macos_screen_lock".to_string(),
+            success: true,
+            message: "macOS screen is unlocked".to_string(),
+            details: Some(json!({ "locked": false })),
+        },
+        Ok(None) => RuntimeDiagnostic {
+            name: "macos_screen_lock".to_string(),
+            success: true,
+            message: "macOS screen lock status is unavailable".to_string(),
+            details: Some(json!({ "locked": null })),
+        },
+        Err(error) => RuntimeDiagnostic {
+            name: "macos_screen_lock".to_string(),
+            success: false,
+            message: "macOS screen lock probe failed".to_string(),
+            details: Some(json!({
+                "error": error.to_string(),
+                "recovery": "Run Sootie from a process attached to an active Aqua desktop session."
+            })),
+        },
+    }
+}
+
+fn macos_screen_lock_diagnostic() -> RuntimeDiagnostic {
+    macos_screen_lock_diagnostic_from_status(macos_screen_lock_status())
 }
 
 fn frontmost_app_script() -> &'static str {
@@ -969,9 +1011,10 @@ for (let i = 0; i < windows.count; i++) {{
   if (width <= 0 || height <= 0) continue;
   appPid = String(raw(item, 'kCGWindowOwnerPID') || appPid);
   ownerName = owner || ownerName;
+  const windowNumber = String(raw(item, 'kCGWindowNumber') || '');
   const fallbackName = ownerName + ' window ' + String(rows.length + 1);
   const winName = String(raw(item, 'kCGWindowName') || fallbackName);
-  rows.push([winName, String(Number(bounds.X || 0)), String(Number(bounds.Y || 0)), String(width), String(height)].join(winFieldSep));
+  rows.push([winName, String(Number(bounds.X || 0)), String(Number(bounds.Y || 0)), String(width), String(height), windowNumber].join(winFieldSep));
 }}
 rows.length === 0 ? '' : [ownerName, 'false', appPid, '', rows.join(winSep)].join(fieldSep);"#,
         app_name_json = app_name_json
@@ -1029,9 +1072,10 @@ for (let i = 0; i < windows.count; i++) {{
   if (width <= 0 || height <= 0) continue;
   const ownerPid = String(raw(item, 'kCGWindowOwnerPID') || '');
   if (!byOwner[owner]) byOwner[owner] = {{ pid: ownerPid, windows: [] }};
+  const windowNumber = String(raw(item, 'kCGWindowNumber') || '');
   const fallbackName = owner + ' window ' + String(byOwner[owner].windows.length + 1);
   const winName = String(raw(item, 'kCGWindowName') || fallbackName);
-  byOwner[owner].windows.push([winName, String(Number(bounds.X || 0)), String(Number(bounds.Y || 0)), String(width), String(height)].join(winFieldSep));
+  byOwner[owner].windows.push([winName, String(Number(bounds.X || 0)), String(Number(bounds.Y || 0)), String(width), String(height), windowNumber].join(winFieldSep));
   if (rows.indexOf(owner) === -1) rows.push(owner);
 }}
 let appRows = [];
@@ -1108,10 +1152,18 @@ guard windowsError == .success, let windows = rawWindows as? [AXUIElement], !win
 }}
 
 let wantedWindow: String? = {window_json}
-let target = wantedWindow.flatMap {{ name in
-    let normalizedName = name.lowercased()
-    return windows.first {{ attrString($0, kAXTitleAttribute as CFString).lowercased().contains(normalizedName) }}
-}} ?? windows[0]
+let target: AXUIElement
+if let wantedWindow = wantedWindow {{
+    let normalizedName = wantedWindow.lowercased()
+    guard let matchedWindow = windows.first(where: {{
+        attrString($0, kAXTitleAttribute as CFString).lowercased().contains(normalizedName)
+    }}) else {{
+        fail("window not found: \(app.localizedName ?? wanted) matching \(wantedWindow)")
+    }}
+    target = matchedWindow
+}} else {{
+    target = windows[0]
+}}
 let title = attrString(target, kAXTitleAttribute as CFString)
 let action = "{action}"
 let rect: CGRect? = {bounds_code}
@@ -1235,10 +1287,10 @@ fn screenshot_looks_blank_black(bytes: &[u8]) -> bool {
 }
 
 fn macos_screen_lock_status() -> SootieResult<Option<bool>> {
-    unsafe {
+    let status = unsafe {
         let session = CGSessionCopyCurrentDictionary();
         if session.is_null() {
-            return Ok(None);
+            return macos_screen_lock_status_from_ioreg();
         }
 
         let key = CString::new(SCREEN_LOCK_KEY).map_err(|error| {
@@ -1248,15 +1300,43 @@ fn macos_screen_lock_status() -> SootieResult<Option<bool>> {
             CFStringCreateWithCString(std::ptr::null(), key.as_ptr(), K_CF_STRING_ENCODING_UTF8);
         if key.is_null() {
             CFRelease(session as CFTypeRef);
-            return Ok(None);
+            return macos_screen_lock_status_from_ioreg();
         }
 
         let value = CFDictionaryGetValue(session, key as *const c_void);
         let status = cf_value_to_bool(value);
         CFRelease(key as CFTypeRef);
         CFRelease(session as CFTypeRef);
-        Ok(status)
+        status
+    };
+    match status {
+        Some(value) => Ok(Some(value)),
+        None => macos_screen_lock_status_from_ioreg(),
     }
+}
+
+fn macos_screen_lock_status_from_ioreg() -> SootieResult<Option<bool>> {
+    let output = command_output_timeout(
+        "ioreg",
+        &["-n", "Root", "-d1"],
+        Duration::from_millis(SCREEN_LOCK_FALLBACK_TIMEOUT_MS),
+    )?;
+    Ok(parse_macos_screen_lock_status_from_ioreg(&output))
+}
+
+fn parse_macos_screen_lock_status_from_ioreg(output: &str) -> Option<bool> {
+    for line in output.lines() {
+        let line = line.trim();
+        if line.contains("\"IOConsoleLocked\"") || line.contains("\"CGSSessionScreenIsLocked\"") {
+            if line.contains("= Yes") || line.contains("=Yes") {
+                return Some(true);
+            }
+            if line.contains("= No") || line.contains("=No") {
+                return Some(false);
+            }
+        }
+    }
+    None
 }
 
 fn ensure_screen_unlocked_for_action(action: &str) -> SootieResult<()> {
@@ -1773,6 +1853,7 @@ fn parse_accessibility_element_row(row: &str) -> Option<AccessibilityElement> {
     let focused = parse_optional_bool(fields[9]).unwrap_or(false);
     let editable = editable_role(role);
     let title = name.clone().or_else(|| text.clone());
+    let has_name = name.as_ref().is_some_and(|name| !name.trim().is_empty());
     Some(AccessibilityElement {
         focused,
         element: ElementInfo {
@@ -1782,7 +1863,7 @@ fn parse_accessibility_element_row(row: &str) -> Option<AccessibilityElement> {
             name,
             text,
             bounds,
-            actions: actions_for_accessibility_role(role, editable),
+            actions: actions_for_accessibility_role(role, editable, has_name),
             editable: Some(editable),
             enabled,
         },
@@ -1843,8 +1924,12 @@ fn parse_app_state_rows(output: &str, app_filter: Option<&str>) -> Vec<AppInfo> 
                     }),
                     _ => None,
                 };
+                let id = fields
+                    .get(5)
+                    .and_then(|value| non_empty_string(value))
+                    .unwrap_or_else(|| format!("win_{index}_{window_index}"));
                 Some(WindowInfo {
-                    id: Some(format!("win_{index}_{window_index}")),
+                    id: Some(id),
                     title: title.to_string(),
                     bounds,
                     focused: is_frontmost && window_index == 0,
@@ -1960,6 +2045,35 @@ fn parse_optional_bool(value: &str) -> Option<bool> {
     }
 }
 
+fn select_window(windows: Vec<WindowInfo>, window: Option<&str>) -> Option<WindowInfo> {
+    if let Some(needle) = window {
+        return windows
+            .into_iter()
+            .find(|candidate| candidate.title.contains(needle));
+    }
+    windows
+        .iter()
+        .find(|window| window.focused)
+        .cloned()
+        .or_else(|| windows.into_iter().next())
+}
+
+fn native_window_capture_arg(window: &WindowInfo) -> Option<String> {
+    let id = window.id.as_deref()?;
+    id.parse::<u32>().ok()?;
+    Some(format!("-l{id}"))
+}
+
+fn screenshot_region_arg(bounds: &Bounds) -> String {
+    format!(
+        "{},{},{},{}",
+        bounds.x.round() as i64,
+        bounds.y.round() as i64,
+        bounds.width.round().max(1.0) as i64,
+        bounds.height.round().max(1.0) as i64
+    )
+}
+
 fn editable_role(role: &str) -> bool {
     let role = role.to_lowercase();
     role.contains("textfield")
@@ -1968,7 +2082,7 @@ fn editable_role(role: &str) -> bool {
         || role.contains("searchfield")
 }
 
-fn actions_for_accessibility_role(role: &str, editable: bool) -> Vec<String> {
+fn actions_for_accessibility_role(role: &str, editable: bool, has_name: bool) -> Vec<String> {
     let role = role.to_lowercase();
     let mut actions = Vec::new();
     if editable {
@@ -1979,6 +2093,7 @@ fn actions_for_accessibility_role(role: &str, editable: bool) -> Vec<String> {
         || role.contains("radio")
         || role.contains("menuitem")
         || role.contains("link")
+        || (role.contains("group") && has_name)
     {
         actions.push("click".to_string());
     }
@@ -2050,19 +2165,21 @@ impl MacosBackend {
         browser_cdp_port(&app.name)
     }
 
-    fn screenshot_window(&self, app: Option<&str>) -> Option<WindowInfo> {
+    fn screenshot_window(&self, app: Option<&str>, window: Option<&str>) -> Option<WindowInfo> {
         let app = app?;
-        let windows = self
-            .state(Some(app))
-            .ok()?
+        let mut windows = window_server_app_list(Some(app))
             .into_iter()
             .flat_map(|app| app.windows.into_iter())
             .collect::<Vec<_>>();
-        windows
-            .iter()
-            .find(|window| window.focused)
-            .cloned()
-            .or_else(|| windows.into_iter().next())
+        if windows.is_empty() {
+            windows = self
+                .state(Some(app))
+                .ok()?
+                .into_iter()
+                .flat_map(|app| app.windows.into_iter())
+                .collect::<Vec<_>>();
+        }
+        select_window(windows, window)
     }
 
     fn app_scoped_screenshot_missing_window_error(app: &str) -> SootieError {
@@ -2141,6 +2258,7 @@ impl DesktopBackend for MacosBackend {
 
     fn diagnostics(&self) -> Vec<RuntimeDiagnostic> {
         vec![
+            macos_screen_lock_diagnostic(),
             macos_accessibility_diagnostic(),
             macos_window_server_diagnostic(),
         ]
@@ -2397,12 +2515,19 @@ impl DesktopBackend for MacosBackend {
         ))
     }
 
-    fn screenshot(&self, app: Option<&str>, _full_resolution: bool) -> SootieResult<Screenshot> {
-        if let Some(screenshot) = self
-            .cdp_port_for_app_filter(app)
-            .and_then(cdp::page_screenshot)
-        {
-            return Ok(screenshot);
+    fn screenshot(
+        &self,
+        app: Option<&str>,
+        window_filter: Option<&str>,
+        _full_resolution: bool,
+    ) -> SootieResult<Screenshot> {
+        if window_filter.is_none() {
+            if let Some(screenshot) = self
+                .cdp_port_for_app_filter(app)
+                .and_then(cdp::page_screenshot)
+            {
+                return Ok(screenshot);
+            }
         }
         if let Some(true) = macos_screen_lock_status()? {
             return Err(SootieError::Platform(
@@ -2411,19 +2536,41 @@ impl DesktopBackend for MacosBackend {
             ));
         }
         if let Some(app) = app {
-            self.focus(app, None, None)?;
+            self.focus(app, None, window_filter)?;
         }
-        let window = self.screenshot_window(app);
+        let window = self.screenshot_window(app, window_filter);
         let path = tmp_screenshot_path("png");
         let path_str = path.to_string_lossy().to_string();
-        if let Some(bounds) = window.as_ref().and_then(|window| window.bounds.as_ref()) {
-            let region = format!(
-                "{},{},{},{}",
-                bounds.x.round() as i64,
-                bounds.y.round() as i64,
-                bounds.width.round().max(1.0) as i64,
-                bounds.height.round().max(1.0) as i64
-            );
+        if let Some(window_id_arg) = window.as_ref().and_then(native_window_capture_arg) {
+            if let Err(window_error) = self.capture_screenshot(&["-x", &window_id_arg, &path_str]) {
+                if let Some(bounds) = window.as_ref().and_then(|window| window.bounds.as_ref()) {
+                    let region = screenshot_region_arg(bounds);
+                    if let Err(region_error) =
+                        self.capture_screenshot(&["-x", "-R", &region, &path_str])
+                    {
+                        if let Some(app) = app {
+                            return Err(Self::app_scoped_screenshot_region_error(
+                                app,
+                                &region,
+                                &SootieError::Platform(format!(
+                                    "native window capture failed: {window_error}; region capture failed: {region_error}"
+                                )),
+                            ));
+                        }
+                        self.capture_screenshot(&["-x", &path_str])?;
+                    }
+                } else if let Some(app) = app {
+                    return Err(Self::app_scoped_screenshot_region_error(
+                        app,
+                        &window_id_arg,
+                        &window_error,
+                    ));
+                } else {
+                    self.capture_screenshot(&["-x", &path_str])?;
+                }
+            }
+        } else if let Some(bounds) = window.as_ref().and_then(|window| window.bounds.as_ref()) {
+            let region = screenshot_region_arg(bounds);
             if let Err(error) = self.capture_screenshot(&["-x", "-R", &region, &path_str]) {
                 if let Some(app) = app {
                     return Err(Self::app_scoped_screenshot_region_error(
@@ -2608,6 +2755,27 @@ impl DesktopBackend for MacosBackend {
             method: "coregraphics".to_string(),
             details: json!({ "bytes": text.len(), "clear": clear }),
         })
+    }
+
+    fn set_clipboard_text(&self, text: &str) -> SootieResult<ActionResult> {
+        command_output_stdin_timeout(
+            "pbcopy",
+            &[],
+            Some(text.as_bytes()),
+            Duration::from_millis(KEYBOARD_EVENT_TIMEOUT_MS),
+        )?;
+        Ok(ActionResult {
+            method: "pbcopy".to_string(),
+            details: json!({ "bytes": text.len() }),
+        })
+    }
+
+    fn clipboard_text(&self) -> SootieResult<String> {
+        command_output_timeout(
+            "pbpaste",
+            &[],
+            Duration::from_millis(KEYBOARD_EVENT_TIMEOUT_MS),
+        )
     }
 
     fn press(
@@ -3027,6 +3195,7 @@ mod tests {
         let script = window_server_snapshot_script("Codex");
         assert!(script.contains("CGWindowListCopyWindowInfo"));
         assert!(script.contains("kCGWindowOwnerName"));
+        assert!(script.contains("kCGWindowNumber"));
         assert!(script.contains("kCGWindowLayer"));
         assert!(script.contains("kCGWindowBounds"));
         assert!(script.contains("const wanted = \"Codex\";"));
@@ -3043,6 +3212,7 @@ mod tests {
         let filtered = window_server_app_list_script(Some("Chrome"));
         assert!(filtered.contains("const wanted = \"Chrome\";"));
         assert!(filtered.contains("owner.toLowerCase().indexOf"));
+        assert!(filtered.contains("kCGWindowNumber"));
     }
 
     #[test]
@@ -3070,7 +3240,7 @@ mod tests {
     #[test]
     fn parses_window_server_app_list_rows_as_front_to_back_context_candidates() {
         let output = concat!(
-            "Notes\u{1f}true\u{1f}1234\u{1f}\u{1f}Todo\u{1c}10\u{1c}20\u{1c}300\u{1c}200",
+            "Notes\u{1f}true\u{1f}1234\u{1f}\u{1f}Todo\u{1c}10\u{1c}20\u{1c}300\u{1c}200\u{1c}4242",
             "\u{1e}",
             "Calendar\u{1f}false\u{1f}5678\u{1f}\u{1f}May\u{1c}30\u{1c}40\u{1c}500\u{1c}400",
         );
@@ -3081,10 +3251,59 @@ mod tests {
         assert_eq!(apps[0].pid, Some(1234));
         assert!(apps[0].is_frontmost);
         assert_eq!(apps[0].windows[0].title, "Todo");
+        assert_eq!(apps[0].windows[0].id.as_deref(), Some("4242"));
         assert!(apps[0].windows[0].focused);
         assert_eq!(apps[1].name, "Calendar");
         assert!(!apps[1].is_frontmost);
         assert!(!apps[1].windows[0].focused);
+    }
+
+    #[test]
+    fn native_window_capture_arg_uses_numeric_window_id() {
+        let native = WindowInfo {
+            id: Some("4242".to_string()),
+            title: "Excalidraw Whiteboard".to_string(),
+            bounds: None,
+            focused: true,
+        };
+        assert_eq!(
+            native_window_capture_arg(&native).as_deref(),
+            Some("-l4242")
+        );
+
+        let synthetic = WindowInfo {
+            id: Some("win_0_0".to_string()),
+            title: "Synthetic".to_string(),
+            bounds: None,
+            focused: true,
+        };
+        assert_eq!(native_window_capture_arg(&synthetic), None);
+    }
+
+    #[test]
+    fn explicit_screenshot_window_must_match_title() {
+        let windows = vec![
+            WindowInfo {
+                id: Some("111".to_string()),
+                title: "Main".to_string(),
+                bounds: None,
+                focused: true,
+            },
+            WindowInfo {
+                id: Some("222".to_string()),
+                title: "Excalidraw Whiteboard".to_string(),
+                bounds: None,
+                focused: false,
+            },
+        ];
+
+        assert_eq!(
+            select_window(windows.clone(), Some("Excalidraw"))
+                .and_then(|window| window.id)
+                .as_deref(),
+            Some("222")
+        );
+        assert_eq!(select_window(windows, Some("Missing")), None);
     }
 
     #[test]
@@ -3217,6 +3436,16 @@ mod tests {
         assert!(script.contains("let action = \"move\""));
         assert!(script.contains("let wantedWindow: String? = \"Untitled\""));
         assert!(!script.contains("System Events"));
+    }
+
+    #[test]
+    fn ax_window_action_script_requires_explicit_window_match() {
+        let script = ax_window_action_script("Safari", Some("Excalidraw"), "focus", None);
+        assert!(script.contains("guard let matchedWindow = windows.first"));
+        assert!(script.contains(
+            "window not found: \\(app.localizedName ?? wanted) matching \\(wantedWindow)"
+        ));
+        assert!(!script.contains("}} ?? windows[0]"));
     }
 
     #[test]
@@ -3414,6 +3643,33 @@ mod tests {
     }
 
     #[test]
+    fn screen_lock_diagnostic_reports_locked_and_unlocked_states() {
+        let locked = macos_screen_lock_diagnostic_from_status(Ok(Some(true)));
+        assert_eq!(locked.name, "macos_screen_lock");
+        assert!(!locked.success);
+        assert!(locked.message.contains("locked"));
+        assert_eq!(
+            locked.details.as_ref().unwrap().get("locked").unwrap(),
+            &json!(true)
+        );
+
+        let unlocked = macos_screen_lock_diagnostic_from_status(Ok(Some(false)));
+        assert_eq!(unlocked.name, "macos_screen_lock");
+        assert!(unlocked.success);
+        assert_eq!(
+            unlocked.details.as_ref().unwrap().get("locked").unwrap(),
+            &json!(false)
+        );
+
+        let unknown = macos_screen_lock_diagnostic_from_status(Ok(None));
+        assert!(unknown.success);
+        assert_eq!(
+            unknown.details.as_ref().unwrap().get("locked").unwrap(),
+            &json!(null)
+        );
+    }
+
+    #[test]
     fn builds_minimal_frontmost_app_info_when_deep_state_is_unavailable() {
         let app = app_info_from_frontmost_name("cmux", Some("cm")).unwrap();
         assert_eq!(app.name, "cmux");
@@ -3499,6 +3755,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_ioreg_screen_lock_status() {
+        assert_eq!(
+            parse_macos_screen_lock_status_from_ioreg(r#""IOConsoleLocked" = Yes"#),
+            Some(true)
+        );
+        assert_eq!(
+            parse_macos_screen_lock_status_from_ioreg(
+                r#""IOConsoleUsers" = ({"CGSSessionScreenIsLocked"=Yes})"#
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            parse_macos_screen_lock_status_from_ioreg(r#""IOConsoleLocked" = No"#),
+            Some(false)
+        );
+        assert_eq!(parse_macos_screen_lock_status_from_ioreg(""), None);
+    }
+
+    #[test]
     fn locked_action_message_names_the_mutating_action() {
         let message = screen_locked_action_message("drag");
         assert!(message.contains("macOS screen is locked"));
@@ -3575,6 +3850,24 @@ mod tests {
         assert_eq!(record.element.text.as_deref(), Some("query"));
         assert_eq!(record.element.editable, Some(true));
         assert_eq!(record.element.actions, vec!["setValue"]);
+    }
+
+    #[test]
+    fn named_accessibility_groups_are_click_candidates() {
+        let record = parse_accessibility_element_row(
+            "AXGroup\u{1f}Line — L or 6\u{1f}\u{1f}\u{1f}630\u{1f}132\u{1f}37\u{1f}36\u{1f}true\u{1f}false",
+        )
+        .unwrap();
+        assert_eq!(record.element.role, "AXGroup");
+        assert_eq!(record.element.name.as_deref(), Some("Line — L or 6"));
+        assert_eq!(record.element.actions, vec!["click"]);
+        assert!(element_matches_query(
+            &record.element,
+            &FindQuery {
+                query: Some("Line".to_string()),
+                ..Default::default()
+            }
+        ));
     }
 
     #[test]

@@ -4,8 +4,9 @@ use base64::Engine;
 use serde_json::json;
 
 use crate::backend::{
-    cdp, command_output, command_output_timeout, element_at_from_elements, element_from_window,
-    filter_elements, has_element_target, png_dimensions, tmp_screenshot_path, DesktopBackend,
+    cdp, command_output, command_output_stdin_timeout, command_output_timeout,
+    element_at_from_elements, element_from_window, filter_elements, has_element_target,
+    png_dimensions, tmp_screenshot_path, DesktopBackend,
 };
 use crate::types::{
     ActionResult, AppInfo, Bounds, ContextSnapshot, ElementInfo, FindQuery, RuntimeDiagnostic,
@@ -675,7 +676,7 @@ impl WindowsBackend {
         browser_cdp_port(process_name)
     }
 
-    fn screenshot_window(&self, app: Option<&str>) -> Option<WindowInfo> {
+    fn screenshot_window(&self, app: Option<&str>, window: Option<&str>) -> Option<WindowInfo> {
         let app = app?;
         let windows = self
             .state(Some(app))
@@ -683,6 +684,11 @@ impl WindowsBackend {
             .into_iter()
             .flat_map(|app| app.windows.into_iter())
             .collect::<Vec<_>>();
+        if let Some(needle) = window {
+            return windows
+                .into_iter()
+                .find(|candidate| candidate.title.contains(needle));
+        }
         windows
             .iter()
             .find(|window| window.focused)
@@ -894,14 +900,21 @@ impl DesktopBackend for WindowsBackend {
         ))
     }
 
-    fn screenshot(&self, app: Option<&str>, _full_resolution: bool) -> SootieResult<Screenshot> {
-        if let Some(screenshot) = self
-            .cdp_port_for_app_filter(app)
-            .and_then(cdp::page_screenshot)
-        {
-            return Ok(screenshot);
+    fn screenshot(
+        &self,
+        app: Option<&str>,
+        window: Option<&str>,
+        _full_resolution: bool,
+    ) -> SootieResult<Screenshot> {
+        if window.is_none() {
+            if let Some(screenshot) = self
+                .cdp_port_for_app_filter(app)
+                .and_then(cdp::page_screenshot)
+            {
+                return Ok(screenshot);
+            }
         }
-        let window = self.screenshot_window(app);
+        let window = self.screenshot_window(app, window);
         let path = tmp_screenshot_path("png");
         let path_str = path.to_string_lossy().replace('\\', "\\\\");
         let rect_script = window
@@ -1100,6 +1113,31 @@ impl DesktopBackend for WindowsBackend {
             method: "powershell".to_string(),
             details: json!({ "bytes": text.len(), "clear": clear }),
         })
+    }
+
+    fn set_clipboard_text(&self, text: &str) -> SootieResult<ActionResult> {
+        command_output_stdin_timeout(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-Command",
+                "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+            ],
+            Some(text.as_bytes()),
+            Duration::from_millis(1_000),
+        )?;
+        Ok(ActionResult {
+            method: "powershell".to_string(),
+            details: json!({ "bytes": text.len() }),
+        })
+    }
+
+    fn clipboard_text(&self) -> SootieResult<String> {
+        command_output_timeout(
+            "powershell",
+            &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
+            Duration::from_millis(1_000),
+        )
     }
 
     fn press(

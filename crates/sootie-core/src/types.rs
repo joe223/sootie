@@ -182,6 +182,7 @@ pub struct FindQuery {
     pub identifier: Option<String>,
     pub app: Option<String>,
     pub depth: Option<u32>,
+    pub max_results: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

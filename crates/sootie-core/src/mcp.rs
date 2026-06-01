@@ -16,6 +16,12 @@ use crate::recipe::{
     parse_recipe, recipe_step_tool_call, recipe_wait_tool_call, substitute_params, Recipe,
     RecipeStore,
 };
+use crate::recipe_learning::learned_recipe_from_actions;
+use crate::recipe_runtime::{
+    recipe_coordinate_fallback_args, recipe_coordinate_fallback_reason,
+    recipe_error_coordinate_fallback_reason, recipe_primary_dispatch_args,
+    resolve_recipe_coordinate_spaces,
+};
 use crate::tools::tool_definitions;
 use crate::types::{
     ActionResult, AppInfo, Bounds, ElementInfo, FindQuery, RuntimeDiagnostic, Screenshot,
@@ -80,6 +86,7 @@ const VISION_HISTORY_ROOT_DIR: &str = "/tmp/sootie/vision_history";
 const VISION_GROUNDING_HISTORY_DIR: &str = "/tmp/sootie/vision_history/grounding";
 const VISION_GROUNDING_SCREENSHOT_MIME_TYPE: &str = "image/jpeg";
 const VISION_GROUNDING_JPEG_QUALITY: u8 = 90;
+const MAX_LEARNED_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 struct VisionFrame {
@@ -201,6 +208,35 @@ struct GroundingAnnotation {
     value: String,
     confidence: Option<f64>,
     label: Option<String>,
+}
+
+struct RecipeDispatchOutcome {
+    result: ToolResult,
+    fallback_used: bool,
+    fallback_reason: Option<String>,
+}
+
+fn suppress_recipe_action_context(tool: &str, args: &mut Value) {
+    if !matches!(
+        tool,
+        "sootie_click"
+            | "sootie_hover"
+            | "sootie_long_press"
+            | "sootie_drag"
+            | "sootie_type"
+            | "sootie_press"
+            | "sootie_hotkey"
+            | "sootie_scroll"
+            | "sootie_focus"
+            | "sootie_window"
+    ) {
+        return;
+    }
+    let Value::Object(map) = args else {
+        return;
+    };
+    map.entry("__include_context".to_string())
+        .or_insert_with(|| json!(false));
 }
 
 fn stdio_encoding_name(encoding: StdioEncoding) -> &'static str {
@@ -379,9 +415,9 @@ impl McpServer {
         if name.starts_with("sootie_learn_") {
             return;
         }
-        let Some(session) = &mut self.learning_session else {
+        if self.learning_session.is_none() {
             return;
-        };
+        }
         if !matches!(result, Ok(result) if result.success) {
             return;
         }
@@ -389,8 +425,55 @@ impl McpServer {
             if let Ok(result) = result {
                 enrich_learned_event_from_context(&mut event, result.context.as_ref());
             }
-            session.events.push(event);
+            self.enrich_learned_event_coordinates(&mut event);
+            self.enrich_learned_event_clipboard(&mut event);
+            if let Some(session) = &mut self.learning_session {
+                session.events.push(event);
+            }
         }
+    }
+
+    fn enrich_learned_event_coordinates(&self, event: &mut Value) {
+        let Some(app) = event
+            .get("app")
+            .and_then(Value::as_str)
+            .filter(|app| !app.is_empty())
+            .map(str::to_string)
+        else {
+            return;
+        };
+        let window = event
+            .get("window")
+            .and_then(Value::as_str)
+            .filter(|window| !window.is_empty());
+        let Ok(Some(bounds)) = self.current_window_bounds(&app, window) else {
+            return;
+        };
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return;
+        }
+        event["window_frame"] = json!({
+            "x": bounds.x,
+            "y": bounds.y,
+            "width": bounds.width,
+            "height": bounds.height,
+        });
+        enrich_point_coordinate_fields(event, &bounds, "x", "y", "");
+        enrich_point_coordinate_fields(event, &bounds, "from_x", "from_y", "from_");
+        enrich_point_coordinate_fields(event, &bounds, "to_x", "to_y", "to_");
+    }
+
+    fn enrich_learned_event_clipboard(&self, event: &mut Value) {
+        if !learned_event_is_paste_hotkey(event) {
+            return;
+        }
+        let Ok(text) = self.backend.clipboard_text() else {
+            return;
+        };
+        if text.is_empty() || text.len() > MAX_LEARNED_CLIPBOARD_TEXT_BYTES {
+            return;
+        }
+        event["clipboard_text"] = json!(text);
     }
 
     fn dispatch(&mut self, name: &str, args: &Value) -> SootieResult<ToolResult> {
@@ -430,11 +513,20 @@ impl McpServer {
             "sootie_find" => {
                 let query = find_query(args);
                 let elements = self.find_elements(&query)?;
+                let total_matches = elements.len();
+                let elements = if let Some(max_results) = query.max_results {
+                    elements
+                        .into_iter()
+                        .take(max_results as usize)
+                        .collect::<Vec<_>>()
+                } else {
+                    elements
+                };
                 let summaries = elements.iter().map(element_summary).collect::<Vec<_>>();
                 let mut result = ToolResult::ok(json!({
                     "elements": summaries,
                     "count": elements.len(),
-                    "total_matches": elements.len(),
+                    "total_matches": total_matches,
                 }));
                 if elements.is_empty() && !self.resolution_strategy.is_vision_only() {
                     if let Ok(context) = self.backend.context(query.app.as_deref()) {
@@ -484,17 +576,24 @@ impl McpServer {
                 ))
                 .with_suggestion(element_at_miss_suggestion(self.backend.platform()))),
             },
-            "sootie_screenshot" => Ok(screenshot_tool_result(self.backend.screenshot(
-                optional_app_arg(args).as_deref(),
-                bool_arg(args, "full_resolution").unwrap_or(false),
-            ))),
+            "sootie_screenshot" => {
+                let app = optional_app_arg(args);
+                let window = screenshot_window_arg(args, app.as_deref())?;
+                Ok(screenshot_tool_result(self.backend.screenshot(
+                    app.as_deref(),
+                    window.as_deref(),
+                    bool_arg(args, "full_resolution").unwrap_or(false),
+                )))
+            }
             "sootie_annotate" => self.annotate(args),
             "sootie_ground" => self.ground(args),
             "sootie_parse_screen" => {
                 let app = optional_app_arg(args);
+                let window = screenshot_window_arg(args, app.as_deref())?;
                 let context = self.backend.context(app.as_deref())?;
                 let screenshot = match self.backend.screenshot(
                     app.as_deref(),
+                    window.as_deref(),
                     bool_arg(args, "full_resolution").unwrap_or(false),
                 ) {
                     Ok(screenshot) => screenshot,
@@ -553,7 +652,7 @@ impl McpServer {
                 let button = mouse_button_arg(args)?;
                 let count = positive_u32_arg(args, "count", 1)?;
                 if let Some(result) = self.vision_first_click(x, y, &query, &button, count)? {
-                    return Ok(self.action_result(result, query.app.as_deref()));
+                    return Ok(self.action_result_for_args(result, query.app.as_deref(), args));
                 }
                 self.focus_app_for_explicit_pointer_coordinates(&query, x.zip(y))?;
                 let result = match self.backend.click(x, y, &query, &button, count) {
@@ -565,13 +664,13 @@ impl McpServer {
                         }
                     }
                 };
-                Ok(self.action_result(result, query.app.as_deref()))
+                Ok(self.action_result_for_args(result, query.app.as_deref(), args))
             }
             "sootie_hover" => {
                 let query = find_query(args);
                 let (x, y) = xy_args(args, "x", "y", "target")?;
                 if let Some(result) = self.vision_first_hover(x, y, &query)? {
-                    return Ok(self.action_result(result, query.app.as_deref()));
+                    return Ok(self.action_result_for_args(result, query.app.as_deref(), args));
                 }
                 self.focus_app_for_explicit_pointer_coordinates(&query, x.zip(y))?;
                 let result = match self.backend.hover(x, y, &query) {
@@ -581,7 +680,7 @@ impl McpServer {
                         None => return Err(error),
                     },
                 };
-                Ok(self.action_result(result, query.app.as_deref()))
+                Ok(self.action_result_for_args(result, query.app.as_deref(), args))
             }
             "sootie_long_press" => {
                 let query = find_query(args);
@@ -591,7 +690,7 @@ impl McpServer {
                 if let Some(result) =
                     self.vision_first_long_press(x, y, &query, duration_secs, &button)?
                 {
-                    return Ok(self.action_result(result, query.app.as_deref()));
+                    return Ok(self.action_result_for_args(result, query.app.as_deref(), args));
                 }
                 self.focus_app_for_explicit_pointer_coordinates(&query, x.zip(y))?;
                 let result = match self
@@ -613,7 +712,7 @@ impl McpServer {
                         }
                     }
                 };
-                Ok(self.action_result(result, query.app.as_deref()))
+                Ok(self.action_result_for_args(result, query.app.as_deref(), args))
             }
             "sootie_drag" => {
                 let query = find_query_with_target(args, "from_target");
@@ -631,7 +730,7 @@ impl McpServer {
                     non_negative_seconds_arg(args, "duration", "duration_ms", 0.5)?,
                     non_negative_seconds_arg(args, "hold_duration", "hold_duration_ms", 0.1)?,
                 )?;
-                Ok(self.action_result(result, query.app.as_deref()))
+                Ok(self.action_result_for_args(result, query.app.as_deref(), args))
             }
             "sootie_type" => {
                 let mut query = find_query(args);
@@ -643,7 +742,7 @@ impl McpServer {
                         .or_else(|| bool_arg(args, "clear_first"))
                         .unwrap_or(false),
                 )?;
-                Ok(self.action_result(result, query.app.as_deref()))
+                Ok(self.action_result_for_args(result, query.app.as_deref(), args))
             }
             "sootie_press" => {
                 let app = optional_app_arg(args);
@@ -652,14 +751,14 @@ impl McpServer {
                     &string_array_arg(args, "modifiers"),
                     app.as_deref(),
                 )?;
-                Ok(self.action_result(result, app.as_deref()))
+                Ok(self.action_result_for_args(result, app.as_deref(), args))
             }
             "sootie_hotkey" => {
                 let app = optional_app_arg(args);
                 let result = self
                     .backend
                     .hotkey(&string_array_required(args, "keys")?, app.as_deref())?;
-                Ok(self.action_result(result, app.as_deref()))
+                Ok(self.action_result_for_args(result, app.as_deref(), args))
             }
             "sootie_scroll" => {
                 let query = find_query(args);
@@ -671,7 +770,7 @@ impl McpServer {
                     query.app.as_deref(),
                     at,
                 )?;
-                Ok(self.action_result(result, query.app.as_deref()))
+                Ok(self.action_result_for_args(result, query.app.as_deref(), args))
             }
             "sootie_focus" => {
                 let app = required_app_arg(args)?;
@@ -681,7 +780,7 @@ impl McpServer {
                     platform_app_id.as_deref(),
                     str_arg(args, "window").as_deref(),
                 )?;
-                Ok(self.action_result(result, Some(&app)))
+                Ok(self.action_result_for_args(result, Some(&app), args))
             }
             "sootie_window" => {
                 let app = required_app_arg(args)?;
@@ -695,7 +794,7 @@ impl McpServer {
                     str_arg(args, "window").as_deref(),
                     bounds,
                 )?;
-                Ok(self.action_result(result, Some(&app)))
+                Ok(self.action_result_for_args(result, Some(&app), args))
             }
             "sootie_wait" => self.wait(args),
             "sootie_recipes" => Ok(ToolResult::ok(json!({ "recipes": self.recipes.list()? }))),
@@ -735,13 +834,19 @@ impl McpServer {
                     .as_ref()
                     .map(|session| session.started.elapsed().as_millis())
                     .unwrap_or(0);
+                let recipe = learned_recipe_from_actions(&task_description, &actions);
+                let recipe_json = recipe
+                    .as_ref()
+                    .and_then(|recipe| serde_json::to_string_pretty(recipe).ok());
                 Ok(ToolResult::ok(json!({
                     "actions": actions,
                     "task_description": task_description,
                     "action_count": action_count,
                     "duration_seconds": duration_ms / 1000,
                     "apps": learned_apps(&actions),
-                    "urls": learned_urls(&actions)
+                    "urls": learned_urls(&actions),
+                    "recipe": recipe,
+                    "recipe_json": recipe_json
                 })))
             }
             "sootie_learn_status" => Ok(ToolResult::ok(json!({
@@ -757,7 +862,7 @@ impl McpServer {
         let app = optional_app_arg(args);
         let roles = string_array_arg(args, "roles");
         let max_labels = positive_u32_arg(args, "max_labels", 50)?.min(100) as usize;
-        let screenshot = match self.backend.screenshot(app.as_deref(), false) {
+        let screenshot = match self.backend.screenshot(app.as_deref(), None, false) {
             Ok(screenshot) => screenshot,
             Err(error) => return Ok(screenshot_error_result(error)),
         };
@@ -1011,7 +1116,8 @@ impl McpServer {
                 missing_params.join(", ")
             )));
         }
-        if self.backend.screen_locked()? == Some(true) && recipe_requires_unlocked_screen(&recipe) {
+        let locked_requirements = recipe_unlocked_screen_requirements(&recipe);
+        if self.backend.screen_locked()? == Some(true) && !locked_requirements.is_empty() {
             return Ok(locked_recipe_result(&recipe));
         }
         if let Some(precondition_error) = self.check_recipe_preconditions(&recipe)? {
@@ -1023,6 +1129,9 @@ impl McpServer {
             let step_started_at = Instant::now();
             let (tool, raw_args) = recipe_step_tool_call(step, recipe.app.as_deref())?;
             let rendered_args = substitute_params(&raw_args, &params);
+            let rendered_args = self.resolve_recipe_coordinates(rendered_args)?;
+            let mut fallback_used = false;
+            let mut fallback_reason = None;
             let result = if tool == "__delay" {
                 let seconds = rendered_args
                     .get("seconds")
@@ -1030,8 +1139,13 @@ impl McpServer {
                     .unwrap_or(0.5);
                 std::thread::sleep(Duration::from_secs_f64(seconds.max(0.0)));
                 ToolResult::ok(json!({ "matched": true, "delay_seconds": seconds }))
+            } else if tool == "__set_clipboard" {
+                self.recipe_set_clipboard(&rendered_args)?
             } else {
-                self.dispatch(&tool, &rendered_args)?
+                let outcome = self.dispatch_recipe_tool(&tool, &rendered_args)?;
+                fallback_used = outcome.fallback_used;
+                fallback_reason = outcome.fallback_reason;
+                outcome.result
             };
             let success = result.success;
             let mut step_result = json!({
@@ -1044,6 +1158,12 @@ impl McpServer {
                 "suggestion": result.suggestion,
                 "context": result.context,
             });
+            if fallback_used {
+                step_result["fallback_used"] = json!(true);
+                if let Some(reason) = fallback_reason {
+                    step_result["fallback_reason"] = json!(reason);
+                }
+            }
             step_result["duration_ms"] = json!(step_started_at.elapsed().as_millis() as u64);
             results.push(step_result.clone());
             if !success {
@@ -1065,7 +1185,9 @@ impl McpServer {
                     std::thread::sleep(Duration::from_secs_f64(seconds));
                     ToolResult::ok(json!({ "matched": true, "delay_seconds": seconds }))
                 } else {
-                    self.dispatch(&wait_tool, &substitute_params(&wait_args, &params))?
+                    let wait_args =
+                        self.resolve_recipe_coordinates(substitute_params(&wait_args, &params))?;
+                    self.dispatch(&wait_tool, &wait_args)?
                 };
                 let wait_failed = tool_wait_failed(&wait_result);
                 step_result["wait_after"] = json!({
@@ -1091,6 +1213,70 @@ impl McpServer {
             }
         }
         Ok(ToolResult::ok(recipe_success_payload(&recipe, results)))
+    }
+
+    fn recipe_set_clipboard(&self, args: &Value) -> SootieResult<ToolResult> {
+        let text = required_str(args, "text")?;
+        let result = self.backend.set_clipboard_text(&text)?;
+        Ok(ToolResult::ok(json!({
+            "method": result.method,
+            "details": result.details,
+            "bytes": text.len(),
+            "chars": text.chars().count(),
+        })))
+    }
+
+    fn dispatch_recipe_tool(
+        &mut self,
+        tool: &str,
+        args: &Value,
+    ) -> SootieResult<RecipeDispatchOutcome> {
+        let mut primary_args = recipe_primary_dispatch_args(args);
+        let mut fallback_args = recipe_coordinate_fallback_args(args);
+        suppress_recipe_action_context(tool, &mut primary_args);
+        if let Some(fallback_args) = fallback_args.as_mut() {
+            suppress_recipe_action_context(tool, fallback_args);
+        }
+        match self.dispatch(tool, &primary_args) {
+            Ok(result) if result.success => Ok(RecipeDispatchOutcome {
+                result,
+                fallback_used: false,
+                fallback_reason: None,
+            }),
+            Ok(result) => {
+                let fallback_reason = result
+                    .error
+                    .as_deref()
+                    .and_then(recipe_coordinate_fallback_reason);
+                if let (Some(fallback_args), Some(reason)) = (fallback_args, fallback_reason) {
+                    let fallback = self.dispatch(tool, &fallback_args)?;
+                    return Ok(RecipeDispatchOutcome {
+                        result: fallback,
+                        fallback_used: true,
+                        fallback_reason: Some(reason.to_string()),
+                    });
+                }
+                Ok(RecipeDispatchOutcome {
+                    result,
+                    fallback_used: false,
+                    fallback_reason: None,
+                })
+            }
+            Err(error) => {
+                if let (Some(fallback_args), Some(reason)) = (
+                    fallback_args,
+                    recipe_error_coordinate_fallback_reason(&error),
+                ) {
+                    let fallback = self.dispatch(tool, &fallback_args)?;
+                    return Ok(RecipeDispatchOutcome {
+                        result: fallback,
+                        fallback_used: true,
+                        fallback_reason: Some(reason),
+                    });
+                }
+                Err(error)
+            }
+        }
     }
 
     fn check_recipe_preconditions(&self, recipe: &Recipe) -> SootieResult<Option<ToolResult>> {
@@ -1184,12 +1370,33 @@ impl McpServer {
         }
     }
 
-    fn action_result(&self, result: ActionResult, app: Option<&str>) -> ToolResult {
-        let context = self
-            .backend
-            .context(app)
-            .ok()
-            .and_then(|context| serde_json::to_value(context).ok());
+    fn action_result_for_args(
+        &self,
+        result: ActionResult,
+        app: Option<&str>,
+        args: &Value,
+    ) -> ToolResult {
+        self.action_result_with_context(
+            result,
+            app,
+            bool_arg(args, "__include_context").unwrap_or(true),
+        )
+    }
+
+    fn action_result_with_context(
+        &self,
+        result: ActionResult,
+        app: Option<&str>,
+        include_context: bool,
+    ) -> ToolResult {
+        let context = include_context
+            .then(|| {
+                self.backend
+                    .context(app)
+                    .ok()
+                    .and_then(|context| serde_json::to_value(context).ok())
+            })
+            .flatten();
         ToolResult {
             success: true,
             data: Some(action_payload(result)),
@@ -1498,7 +1705,7 @@ impl McpServer {
         if !self.vision.is_enabled() {
             return Ok(None);
         }
-        let screenshot = match self.backend.screenshot(app, false) {
+        let screenshot = match self.backend.screenshot(app, None, false) {
             Ok(screenshot) => screenshot,
             Err(error) => {
                 tracing::debug!(%error, "vision fallback skipped because screenshot failed");
@@ -1632,15 +1839,28 @@ impl McpServer {
             .into_iter()
             .flat_map(|app| app.windows.into_iter())
             .collect::<Vec<_>>();
-        let selected = window
-            .and_then(|needle| {
-                windows
-                    .iter()
-                    .find(|candidate| candidate.title.contains(needle))
-            })
-            .or_else(|| windows.iter().find(|candidate| candidate.focused))
-            .or_else(|| windows.first());
+        let selected = if let Some(needle) = window {
+            windows
+                .iter()
+                .find(|candidate| candidate.title.contains(needle))
+        } else {
+            windows
+                .iter()
+                .find(|candidate| candidate.focused)
+                .or_else(|| windows.first())
+        };
         Ok(selected.and_then(|window| window.bounds.clone()))
+    }
+
+    fn resolve_recipe_coordinates(&self, args: Value) -> SootieResult<Value> {
+        let app = optional_app_arg(&args);
+        let window = args
+            .get("window")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        resolve_recipe_coordinate_spaces(args, app.as_deref(), window.as_deref(), |app, window| {
+            self.current_window_bounds(app, window)
+        })
     }
 }
 
@@ -1946,12 +2166,23 @@ fn recipe_url_precondition_url_context(
     }
 }
 
-fn recipe_requires_unlocked_screen(recipe: &Recipe) -> bool {
-    recipe.steps.iter().any(|step| {
-        recipe_step_tool_call(step, recipe.app.as_deref())
-            .map(|(tool, args)| tool_requires_unlocked_screen(&tool, &args))
-            .unwrap_or(false)
-    })
+fn recipe_unlocked_screen_requirements(recipe: &Recipe) -> Vec<Value> {
+    recipe
+        .steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| {
+            let (tool, args) = recipe_step_tool_call(step, recipe.app.as_deref()).ok()?;
+            tool_requires_unlocked_screen(&tool, &args).then(|| {
+                json!({
+                    "step_index": index,
+                    "step_id": step.id,
+                    "tool": tool,
+                    "action": step.action,
+                })
+            })
+        })
+        .collect()
 }
 
 fn tool_requires_unlocked_screen(tool: &str, args: &Value) -> bool {
@@ -1978,11 +2209,16 @@ fn tool_requires_unlocked_screen(tool: &str, args: &Value) -> bool {
 }
 
 fn locked_recipe_result(recipe: &Recipe) -> ToolResult {
-    ToolResult::error(format!(
+    let blocked_steps = recipe_unlocked_screen_requirements(recipe);
+    let mut result = ToolResult::error(format!(
         "recipe '{}' requires an unlocked macOS screen",
         recipe.name
-    ))
-    .with_suggestion(
+    ));
+    result.data = Some(json!({
+        "locked": true,
+        "blocked_steps": blocked_steps,
+    }));
+    result.with_suggestion(
         "macOS is locked, so UI actions or screenshots would affect the lock screen instead of the target app. Unlock the Mac, verify the target window is visible, then retry.",
     )
 }
@@ -2238,6 +2474,32 @@ fn learned_action_event(name: &str, args: &Value) -> Option<Value> {
     Some(event)
 }
 
+fn learned_event_is_paste_hotkey(event: &Value) -> bool {
+    if event.get("action_type").and_then(Value::as_str) != Some("hotkey") {
+        return false;
+    }
+    let key = event
+        .get("key_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !key.eq_ignore_ascii_case("v") {
+        return false;
+    }
+    event
+        .get("modifiers")
+        .and_then(Value::as_array)
+        .is_some_and(|modifiers| {
+            modifiers.iter().any(|modifier| {
+                modifier.as_str().is_some_and(|value| {
+                    matches!(
+                        value.to_ascii_lowercase().as_str(),
+                        "cmd" | "command" | "meta" | "ctrl" | "control"
+                    )
+                })
+            })
+        })
+}
+
 fn enrich_learned_event_from_context(event: &mut Value, context: Option<&Value>) {
     let Some(context) = context else {
         return;
@@ -2249,6 +2511,32 @@ fn enrich_learned_event_from_context(event: &mut Value, context: Option<&Value>)
         if let Some(element) = context.get("focused_element") {
             event["element"] = element.clone();
         }
+    }
+}
+
+fn enrich_point_coordinate_fields(
+    event: &mut Value,
+    bounds: &Bounds,
+    x_key: &str,
+    y_key: &str,
+    prefix: &str,
+) {
+    let Some(x) = event.get(x_key).and_then(Value::as_f64) else {
+        return;
+    };
+    let Some(y) = event.get(y_key).and_then(Value::as_f64) else {
+        return;
+    };
+    let window_x = x - bounds.x;
+    let window_y = y - bounds.y;
+    event[format!("{prefix}screen_coordinate")] = json!({ "x": x, "y": y });
+    event[format!("{prefix}window_coordinate")] = json!({ "x": window_x, "y": window_y });
+    event[format!("{prefix}window_normalized_coordinate")] = json!({
+        "x": window_x / bounds.width,
+        "y": window_y / bounds.height,
+    });
+    if prefix.is_empty() {
+        event["coordinate_space"] = json!("screen");
     }
 }
 
@@ -2665,6 +2953,7 @@ fn find_query_with_target(args: &Value, target_key: &str) -> FindQuery {
             .or_else(|| target_selector_string(target, "identifier")),
         app: optional_app_arg(args).or_else(|| target_app(target)),
         depth: u32_arg(args, "depth"),
+        max_results: u32_arg(args, "max_results").map(|value| value.clamp(1, 500)),
     }
 }
 
@@ -4112,6 +4401,16 @@ fn optional_app_arg(args: &Value) -> Option<String> {
     app_arg(args).or_else(|| bundle_arg(args))
 }
 
+fn screenshot_window_arg(args: &Value, app: Option<&str>) -> SootieResult<Option<String>> {
+    let window = str_arg(args, "window");
+    if window.is_some() && app.is_none() {
+        return Err(SootieError::InvalidArguments(
+            "window requires app for app-scoped screenshot capture".to_string(),
+        ));
+    }
+    Ok(window)
+}
+
 fn bundle_arg(args: &Value) -> Option<String> {
     str_arg(args, "platform_app_id")
         .or_else(|| str_arg(args, "to_platform_app_id"))
@@ -4485,6 +4784,42 @@ mod tests {
             if query.query.as_deref() == Some("Ellipse") {
                 return Ok(vec![]);
             }
+            if query.query.as_deref() == Some("Many") {
+                return Ok(vec![
+                    ElementInfo {
+                        id: Some("fake-button".into()),
+                        role: "button".into(),
+                        title: Some("Submit".into()),
+                        name: Some("Submit".into()),
+                        text: None,
+                        bounds: Some(Bounds {
+                            x: 10.0,
+                            y: 20.0,
+                            width: 100.0,
+                            height: 40.0,
+                        }),
+                        actions: vec!["click".into()],
+                        editable: Some(false),
+                        enabled: Some(true),
+                    },
+                    ElementInfo {
+                        id: Some("fake-link".into()),
+                        role: "link".into(),
+                        title: Some("Learn more".into()),
+                        name: Some("Learn more".into()),
+                        text: None,
+                        bounds: Some(Bounds {
+                            x: 120.0,
+                            y: 20.0,
+                            width: 100.0,
+                            height: 40.0,
+                        }),
+                        actions: vec!["click".into()],
+                        editable: Some(false),
+                        enabled: Some(true),
+                    },
+                ]);
+            }
             Ok(vec![ElementInfo {
                 id: Some("fake-button".into()),
                 role: "button".into(),
@@ -4519,6 +4854,7 @@ mod tests {
         fn screenshot(
             &self,
             _app: Option<&str>,
+            _window: Option<&str>,
             full_resolution: bool,
         ) -> SootieResult<Screenshot> {
             Ok(Screenshot {
@@ -4574,15 +4910,20 @@ mod tests {
         }
         fn drag(
             &self,
-            _from: Option<(f64, f64)>,
-            _to: (f64, f64),
+            from: Option<(f64, f64)>,
+            to: (f64, f64),
             _query: &FindQuery,
             duration_secs: f64,
             hold_duration_secs: f64,
         ) -> SootieResult<ActionResult> {
             Ok(ActionResult {
                 method: "fake-drag".into(),
-                details: json!({ "duration": duration_secs, "hold_duration": hold_duration_secs }),
+                details: json!({
+                    "from": from,
+                    "to": to,
+                    "duration": duration_secs,
+                    "hold_duration": hold_duration_secs
+                }),
             })
         }
         fn type_text(
@@ -4612,6 +4953,9 @@ mod tests {
                 method: "fake".into(),
                 details: json!({}),
             })
+        }
+        fn clipboard_text(&self) -> SootieResult<String> {
+            Ok("<svg/>".to_string())
         }
         fn scroll(
             &self,
@@ -4689,8 +5033,13 @@ mod tests {
         fn element_at(&self, x: f64, y: f64) -> SootieResult<Option<ElementInfo>> {
             FakeBackend.element_at(x, y)
         }
-        fn screenshot(&self, app: Option<&str>, full_resolution: bool) -> SootieResult<Screenshot> {
-            FakeBackend.screenshot(app, full_resolution)
+        fn screenshot(
+            &self,
+            app: Option<&str>,
+            window: Option<&str>,
+            full_resolution: bool,
+        ) -> SootieResult<Screenshot> {
+            FakeBackend.screenshot(app, window, full_resolution)
         }
         fn click(
             &self,
@@ -4799,8 +5148,26 @@ mod tests {
             })
         }
 
-        fn state(&self, _app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
-            Ok(vec![])
+        fn state(&self, app: Option<&str>) -> SootieResult<Vec<AppInfo>> {
+            Ok(vec![AppInfo {
+                name: app.unwrap_or("Fake").into(),
+                app_id: Some(app.unwrap_or("Fake").into()),
+                platform_app_id: Some("fake".into()),
+                pid: Some(42),
+                bundle_id: None,
+                is_frontmost: true,
+                windows: vec![WindowInfo {
+                    id: Some("win-1".into()),
+                    title: "Main".into(),
+                    bounds: Some(Bounds {
+                        x: 10.0,
+                        y: 20.0,
+                        width: 400.0,
+                        height: 300.0,
+                    }),
+                    focused: true,
+                }],
+            }])
         }
 
         fn find(&self, _query: &FindQuery) -> SootieResult<Vec<ElementInfo>> {
@@ -4827,6 +5194,7 @@ mod tests {
         fn screenshot(
             &self,
             _app: Option<&str>,
+            _window: Option<&str>,
             _full_resolution: bool,
         ) -> SootieResult<Screenshot> {
             Ok(Screenshot {
@@ -4943,11 +5311,18 @@ mod tests {
 
         fn focus(
             &self,
-            _app: &str,
-            _platform_app_id: Option<&str>,
-            _window: Option<&str>,
+            app: &str,
+            platform_app_id: Option<&str>,
+            window: Option<&str>,
         ) -> SootieResult<ActionResult> {
-            Err(SootieError::Unsupported("focus".into()))
+            Ok(ActionResult {
+                method: "fake-focus".into(),
+                details: json!({
+                    "app": app,
+                    "platform_app_id": platform_app_id,
+                    "window": window
+                }),
+            })
         }
 
         fn window(
@@ -4965,6 +5340,8 @@ mod tests {
     struct RecordingBackend {
         events: Arc<Mutex<Vec<String>>>,
         fail_focus: bool,
+        record_context: bool,
+        record_screenshot: bool,
     }
 
     impl RecordingBackend {
@@ -4979,6 +5356,9 @@ mod tests {
         }
 
         fn context(&self, app: Option<&str>) -> SootieResult<ContextSnapshot> {
+            if self.record_context {
+                self.record(format!("context:{}", app.unwrap_or("<none>")));
+            }
             Ok(ContextSnapshot {
                 app: Some(app.unwrap_or("Fake").into()),
                 app_id: Some(app.unwrap_or("Fake").into()),
@@ -5027,9 +5407,18 @@ mod tests {
 
         fn screenshot(
             &self,
-            _app: Option<&str>,
-            _full_resolution: bool,
+            app: Option<&str>,
+            window: Option<&str>,
+            full_resolution: bool,
         ) -> SootieResult<Screenshot> {
+            if self.record_screenshot {
+                self.record(format!(
+                    "screenshot:{}:{}:{}",
+                    app.unwrap_or("<none>"),
+                    window.unwrap_or("<none>"),
+                    full_resolution
+                ));
+            }
             Ok(Screenshot {
                 mime_type: "image/png".into(),
                 data_base64: "abc123".into(),
@@ -5108,6 +5497,18 @@ mod tests {
                 method: "recording-type".into(),
                 details: json!({}),
             })
+        }
+
+        fn set_clipboard_text(&self, text: &str) -> SootieResult<ActionResult> {
+            self.record(format!("clipboard:{text}"));
+            Ok(ActionResult {
+                method: "recording-clipboard".into(),
+                details: json!({ "bytes": text.len() }),
+            })
+        }
+
+        fn clipboard_text(&self) -> SootieResult<String> {
+            Ok("<svg/>".to_string())
         }
 
         fn press(
@@ -5786,6 +6187,22 @@ mod tests {
     }
 
     #[test]
+    fn find_tool_limits_elements_without_losing_total_matches() {
+        let mut server = McpServer::new(Box::new(FakeBackend));
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({"name":"sootie_find","arguments":{"query":"Many","max_results":1}}),
+        });
+        let result = response.result.unwrap();
+        let data = &result["structuredContent"]["data"];
+        assert_eq!(data["count"], 1);
+        assert_eq!(data["total_matches"], 2);
+        assert_eq!(data["elements"][0]["name"], "Submit");
+    }
+
+    #[test]
     fn find_tool_falls_back_to_context_elements() {
         let mut server = McpServer::new(Box::new(FakeBackend));
         let response = server.handle_request(JsonRpcRequest {
@@ -6045,6 +6462,89 @@ mod tests {
         assert_eq!(data["height"], 1200);
         assert_eq!(data["element_count"], 2);
         assert_eq!(data["elements"][0]["role"], "AXButton");
+    }
+
+    #[test]
+    fn parse_screen_uses_app_scope_for_context_and_screenshot() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut server = McpServer::new(Box::new(RecordingBackend {
+            events: events.clone(),
+            fail_focus: false,
+            record_context: true,
+            record_screenshot: true,
+        }));
+
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_parse_screen",
+                "arguments": { "app": "Safari", "window": "Excalidraw", "full_resolution": true }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        let data = &result["structuredContent"]["data"];
+        assert_eq!(data["source"], "platform-context");
+        assert_eq!(data["window_title"], "Main");
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            [
+                "context:Safari".to_string(),
+                "screenshot:Safari:Excalidraw:true".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn screenshot_uses_window_scope_for_capture() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut server = McpServer::new(Box::new(RecordingBackend {
+            events: events.clone(),
+            fail_focus: false,
+            record_context: false,
+            record_screenshot: true,
+        }));
+
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_screenshot",
+                "arguments": { "app": "Safari", "window": "Excalidraw" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            ["screenshot:Safari:Excalidraw:false".to_string()]
+        );
+    }
+
+    #[test]
+    fn screenshot_window_requires_app_scope() {
+        let mut server = McpServer::new(Box::new(FakeBackend));
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_screenshot",
+                "arguments": { "window": "Excalidraw" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("window requires app"));
     }
 
     #[test]
@@ -6758,6 +7258,8 @@ mod tests {
         let mut server = McpServer::new(Box::new(RecordingBackend {
             events: events.clone(),
             fail_focus: false,
+            record_context: false,
+            record_screenshot: false,
         }));
 
         let response = server.handle_request(JsonRpcRequest {
@@ -6784,6 +7286,8 @@ mod tests {
         let mut server = McpServer::new(Box::new(RecordingBackend {
             events: events.clone(),
             fail_focus: true,
+            record_context: false,
+            record_screenshot: false,
         }));
 
         let response = server.handle_request(JsonRpcRequest {
@@ -6810,6 +7314,8 @@ mod tests {
         let mut server = McpServer::new(Box::new(RecordingBackend {
             events: events.clone(),
             fail_focus: false,
+            record_context: false,
+            record_screenshot: false,
         }));
 
         let response = server.handle_request(JsonRpcRequest {
@@ -7396,8 +7902,102 @@ mod tests {
         assert_eq!(data["task_description"], "record a shortcut");
         assert_eq!(data["apps"], json!(["Fake"]));
         assert_eq!(data["urls"], json!(["https://example.com/current"]));
-        assert!(data.get("recipe").is_none());
-        assert!(data.get("recipe_json").is_none());
+        assert_eq!(data["recipe"]["name"], "record-a-shortcut");
+        assert_eq!(data["recipe"]["app"], "Fake");
+        assert_eq!(data["recipe"]["steps"][0]["action"], "press");
+        assert_eq!(data["recipe"]["steps"][0]["key"], "tab");
+        assert_eq!(
+            data["recipe"]["steps"][0]["params"]["modifiers"],
+            json!(["shift"])
+        );
+        assert!(data["recipe_json"]
+            .as_str()
+            .is_some_and(|text| text.contains("\"record-a-shortcut\"")));
+    }
+
+    #[test]
+    fn learning_mode_records_clipboard_payload_before_paste_hotkey() {
+        let mut server = McpServer::new(Box::new(FakeBackend));
+        let _ = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name":"sootie_learn_start",
+                "arguments":{"task_description":"paste svg"}
+            }),
+        });
+        let _ = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(2)),
+            method: "tools/call".into(),
+            params: json!({
+                "name":"sootie_hotkey",
+                "arguments":{"keys":["cmd","v"],"app":"Fake"}
+            }),
+        });
+        let stop = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(3)),
+            method: "tools/call".into(),
+            params: json!({"name":"sootie_learn_stop","arguments":{}}),
+        });
+        let data = &stop.result.unwrap()["structuredContent"]["data"];
+        assert_eq!(data["actions"][0]["clipboard_text"], "<svg/>");
+        assert_eq!(data["recipe"]["steps"][0]["action"], "set_clipboard");
+        assert_eq!(data["recipe"]["steps"][0]["text"], "<svg/>");
+        assert_eq!(data["recipe"]["steps"][1]["action"], "hotkey");
+        assert_eq!(data["recipe"]["steps"][1]["keys"], json!(["cmd", "v"]));
+    }
+
+    #[test]
+    fn learning_mode_records_window_relative_coordinate_metadata() {
+        let mut server = McpServer::new(Box::new(FakeBackend));
+        let _ = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name":"sootie_learn_start",
+                "arguments":{"task_description":"record a click"}
+            }),
+        });
+        let _ = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(2)),
+            method: "tools/call".into(),
+            params: json!({
+                "name":"sootie_click",
+                "arguments":{"app":"Fake","x":41.0,"y":62.0}
+            }),
+        });
+
+        let stop = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(3)),
+            method: "tools/call".into(),
+            params: json!({"name":"sootie_learn_stop","arguments":{}}),
+        });
+        let stop_result = stop.result.unwrap();
+        let data = &stop_result["structuredContent"]["data"];
+        let action = &data["actions"][0];
+        assert_eq!(action["action_type"], "click");
+        assert_eq!(action["coordinate_space"], "screen");
+        assert_eq!(action["screen_coordinate"], json!({"x":41.0,"y":62.0}));
+        assert_eq!(action["window_frame"]["x"], 1.0);
+        assert_eq!(action["window_frame"]["y"], 2.0);
+        assert_eq!(action["window_coordinate"], json!({"x":40.0,"y":60.0}));
+        assert_eq!(
+            action["window_normalized_coordinate"],
+            json!({"x":0.05,"y":0.1})
+        );
+        let recipe = &data["recipe"];
+        assert_eq!(recipe["name"], "record-a-click");
+        assert_eq!(recipe["steps"][0]["action"], "click");
+        assert_eq!(
+            recipe["steps"][0]["target"]["window_normalized_coordinate"],
+            json!({"x":0.05,"y":0.1})
+        );
     }
 
     #[test]
@@ -7636,6 +8236,301 @@ mod tests {
     }
 
     #[test]
+    fn recipe_run_suppresses_per_action_context_snapshots() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "fast-click-recipe",
+            "app": "Fake",
+            "steps": [{
+                "id": 1,
+                "action": "click",
+                "target": { "coordinate": { "x": 41.0, "y": 62.0 } }
+            }]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "fast-click-recipe" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["structuredContent"]["success"], true);
+        let step = &result["structuredContent"]["data"]["steps"][0];
+        assert_eq!(step["data"]["x"], 41.0);
+        assert_eq!(step["context"], Value::Null);
+    }
+
+    #[test]
+    fn recipe_run_sets_clipboard_before_paste_hotkey() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "paste-svg",
+            "app": "Safari",
+            "steps": [
+                { "id": 1, "action": "set_clipboard", "text": "<svg/>" },
+                { "id": 2, "action": "hotkey", "keys": ["cmd", "v"] }
+            ]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let backend = RecordingBackend {
+            events: events.clone(),
+            fail_focus: false,
+            record_context: false,
+            record_screenshot: false,
+        };
+        let mut server = McpServer::with_recipe_store(Box::new(backend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "paste-svg" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(result["structuredContent"]["success"], true);
+        assert_eq!(
+            result["structuredContent"]["data"]["steps"][0]["tool"],
+            "__set_clipboard"
+        );
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            &["clipboard:<svg/>".to_string()]
+        );
+    }
+
+    #[test]
+    fn recipe_run_remaps_window_relative_coordinates_to_current_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "window-relative-click",
+            "steps": [{
+                "id": 1,
+                "action": "click",
+                "target": {
+                    "app": { "name": "Fake" },
+                    "window": "Main",
+                    "window_coordinate": { "x": 40.0, "y": 90.0 }
+                }
+            }]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "window-relative-click" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        let data = &result["structuredContent"]["data"]["steps"][0]["data"];
+        assert_eq!(data["x"], 41.0);
+        assert_eq!(data["y"], 92.0);
+    }
+
+    #[test]
+    fn recipe_run_remaps_window_normalized_coordinates_to_current_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "window-normalized-drag",
+            "steps": [{
+                "id": 1,
+                "action": "drag",
+                "target": {
+                    "app": { "name": "Fake" },
+                    "window": "Main",
+                    "window_normalized_coordinate": { "x": 0.25, "y": 0.5 }
+                },
+                "to_target": {
+                    "window": "Main",
+                    "window_normalized_coordinate": { "x": 0.75, "y": 0.8 }
+                }
+            }]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "window-normalized-drag" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        let data = &result["structuredContent"]["data"]["steps"][0]["data"];
+        assert_eq!(data["from"][0], 201.0);
+        assert_eq!(data["from"][1], 302.0);
+        assert_eq!(data["to"][0], 601.0);
+        assert_eq!(data["to"][1], 482.0);
+    }
+
+    #[test]
+    fn recipe_run_prefers_semantic_target_before_coordinate_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "semantic-first-click",
+            "steps": [{
+                "id": 1,
+                "action": "click",
+                "target": {
+                    "app": { "name": "Fake" },
+                    "window": "Main",
+                    "dom_id": "submit-button",
+                    "window_coordinate": { "x": 40.0, "y": 90.0 }
+                }
+            }]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "semantic-first-click" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(
+            result["isError"],
+            false,
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
+        let step = &result["structuredContent"]["data"]["steps"][0];
+        let data = &step["data"];
+        assert_eq!(step["fallback_used"], Value::Null);
+        assert_eq!(data["x"], Value::Null);
+        assert_eq!(data["y"], Value::Null);
+    }
+
+    #[test]
+    fn recipe_run_falls_back_to_window_coordinate_when_semantic_target_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "semantic-fallback-click",
+            "steps": [{
+                "id": 1,
+                "action": "click",
+                "target": {
+                    "app": { "name": "Fake" },
+                    "window": "Main",
+                    "dom_id": "missing-button",
+                    "window_coordinate": { "x": 40.0, "y": 90.0 }
+                }
+            }]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(VisionOnlyBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "semantic-fallback-click" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(
+            result["isError"],
+            false,
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
+        let step = &result["structuredContent"]["data"]["steps"][0];
+        let data = &step["data"];
+        assert_eq!(step["fallback_used"], true);
+        assert_eq!(data["x"], 50.0);
+        assert_eq!(data["y"], 110.0);
+    }
+
+    #[test]
+    fn recipe_run_does_not_remap_explicit_window_coordinates_to_another_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecipeStore::new(dir.path().to_path_buf());
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "missing-window-click",
+            "steps": [{
+                "id": 1,
+                "action": "click",
+                "target": {
+                    "app": { "name": "Fake" },
+                    "window": "Missing",
+                    "window_coordinate": { "x": 40.0, "y": 90.0 }
+                }
+            }]
+        }))
+        .unwrap();
+        store.save(&recipe).unwrap();
+
+        let mut server = McpServer::with_recipe_store(Box::new(FakeBackend), store);
+        let response = server.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "sootie_run",
+                "arguments": { "recipe": "missing-window-click" }
+            }),
+        });
+
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(result["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("no window bounds available"));
+    }
+
+    #[test]
     fn recipe_failure_uses_failed_step_suggestion() {
         let recipe = parse_recipe(&json!({
             "schema_version": 1,
@@ -7699,6 +8594,19 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Unlock the Mac"));
+        assert_eq!(result["structuredContent"]["data"]["locked"], true);
+        assert_eq!(
+            result["structuredContent"]["data"]["blocked_steps"][0]["tool"],
+            "sootie_window"
+        );
+        assert_eq!(
+            result["structuredContent"]["data"]["blocked_steps"][0]["step_index"],
+            0
+        );
+        assert_eq!(
+            result["structuredContent"]["data"]["blocked_steps"][1]["tool"],
+            "sootie_click"
+        );
     }
 
     #[test]

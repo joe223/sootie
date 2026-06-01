@@ -169,7 +169,7 @@ fn runtime_readiness_report() -> RuntimeReadinessReport {
     let backend = create_backend();
     let state = backend.state(None);
     let context = backend.context(None);
-    let screenshot = backend.screenshot(None, false);
+    let screenshot = backend.screenshot(None, None, false);
     let diagnostics = backend.diagnostics();
     let context_app = context
         .as_ref()

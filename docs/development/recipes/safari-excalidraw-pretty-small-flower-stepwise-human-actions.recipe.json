@@ -1,0 +1,446 @@
+{
+  "schema_version": 4,
+  "name": "safari-excalidraw-pretty-small-flower-stepwise-human-actions",
+  "description": "Safari Excalidraw recipe recorded from human-like UI actions: open Excalidraw, choose tools and colors, draw four big red petals, a yellow center, a green stem, and two green leaves.",
+  "app": "Safari",
+  "steps": [
+    {
+      "id": 1,
+      "action": "focus",
+      "params": {
+        "app": "Safari"
+      }
+    },
+    {
+      "id": 2,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "l"
+      ]
+    },
+    {
+      "id": 3,
+      "action": "type",
+      "text": "https://excalidraw.com/",
+      "clear_first": true
+    },
+    {
+      "id": 4,
+      "action": "press",
+      "key": "Return"
+    },
+    {
+      "id": 5,
+      "action": "wait",
+      "params": {
+        "condition": "urlContains",
+        "value": "excalidraw.com",
+        "timeout": 15,
+        "interval": 0.25
+      }
+    },
+    {
+      "id": 6,
+      "action": "wait",
+      "timeout": 2
+    },
+    {
+      "id": 7,
+      "action": "press",
+      "key": "Escape"
+    },
+    {
+      "id": 8,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.453416149068323,
+          "y": 0.11780104712041885
+        }
+      }
+    },
+    {
+      "id": 9,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.049689440993788817,
+          "y": 0.193717277486911
+        }
+      }
+    },
+    {
+      "id": 10,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.3204968944099379,
+          "y": 0.34424083769633507
+        }
+      }
+    },
+    {
+      "id": 11,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.049689440993788817,
+          "y": 0.25654450261780104
+        }
+      }
+    },
+    {
+      "id": 12,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.3204968944099379,
+          "y": 0.40706806282722513
+        }
+      }
+    },
+    {
+      "id": 13,
+      "action": "press",
+      "key": "Escape"
+    },
+    {
+      "id": 14,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.613664596273292,
+          "y": 0.299738219895288
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6881987577639752,
+          "y": 0.4175392670157068
+        }
+      }
+    },
+    {
+      "id": 15,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6881987577639752,
+          "y": 0.3782722513089005
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.8,
+          "y": 0.46335078534031415
+        }
+      }
+    },
+    {
+      "id": 16,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.613664596273292,
+          "y": 0.46335078534031415
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6881987577639752,
+          "y": 0.581151832460733
+        }
+      }
+    },
+    {
+      "id": 17,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.5018633540372671,
+          "y": 0.3782722513089005
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.613664596273292,
+          "y": 0.46335078534031415
+        }
+      }
+    },
+    {
+      "id": 18,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.049689440993788817,
+          "y": 0.19895287958115182
+        }
+      }
+    },
+    {
+      "id": 19,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.2360248447204969,
+          "y": 0.34424083769633507
+        }
+      }
+    },
+    {
+      "id": 20,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.049689440993788817,
+          "y": 0.25654450261780104
+        }
+      }
+    },
+    {
+      "id": 21,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.2360248447204969,
+          "y": 0.40706806282722513
+        }
+      }
+    },
+    {
+      "id": 22,
+      "action": "press",
+      "key": "Escape"
+    },
+    {
+      "id": 23,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.613664596273292,
+          "y": 0.39790575916230364
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6881987577639752,
+          "y": 0.47643979057591623
+        }
+      }
+    },
+    {
+      "id": 24,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.5478260869565217,
+          "y": 0.11780104712041885
+        }
+      }
+    },
+    {
+      "id": 25,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.049689440993788817,
+          "y": 0.19895287958115182
+        }
+      }
+    },
+    {
+      "id": 26,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.1515527950310559,
+          "y": 0.34424083769633507
+        }
+      }
+    },
+    {
+      "id": 27,
+      "action": "press",
+      "key": "Escape"
+    },
+    {
+      "id": 28,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6509316770186335,
+          "y": 0.47643979057591623
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6509316770186335,
+          "y": 0.725130890052356
+        }
+      }
+    },
+    {
+      "id": 29,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.453416149068323,
+          "y": 0.11780104712041885
+        }
+      }
+    },
+    {
+      "id": 30,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.049689440993788817,
+          "y": 0.25654450261780104
+        }
+      }
+    },
+    {
+      "id": 31,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.1515527950310559,
+          "y": 0.40706806282722513
+        }
+      }
+    },
+    {
+      "id": 32,
+      "action": "press",
+      "key": "Escape"
+    },
+    {
+      "id": 33,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.5639751552795031,
+          "y": 0.581151832460733
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6447204968944099,
+          "y": 0.6531413612565445
+        }
+      }
+    },
+    {
+      "id": 34,
+      "action": "drag",
+      "params": {
+        "duration": 0.25,
+        "hold_duration": 0.1
+      },
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.6633540372670808,
+          "y": 0.6138743455497382
+        }
+      },
+      "to_target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.7440993788819876,
+          "y": 0.6858638743455497
+        }
+      }
+    }
+  ]
+}

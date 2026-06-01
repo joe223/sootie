@@ -95,6 +95,14 @@ pub struct RecipeTarget {
     pub coordinate: Option<Point>,
     #[serde(default, rename = "window_coordinate")]
     pub window_coordinate: Option<Point>,
+    #[serde(
+        default,
+        rename = "window_normalized_coordinate",
+        alias = "normalized_coordinate"
+    )]
+    pub window_normalized_coordinate: Option<Point>,
+    #[serde(default)]
+    pub window: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
     #[serde(default)]
@@ -318,7 +326,12 @@ pub fn recipe_step_tool_call(
     );
 
     match action {
-        "screenshot" => Ok(("sootie_screenshot".to_string(), Value::Object(args))),
+        "screenshot" => {
+            if let Some(target) = step.target.as_ref() {
+                insert_target_window(&mut args, target);
+            }
+            Ok(("sootie_screenshot".to_string(), Value::Object(args)))
+        }
         "click" => {
             insert_target_args(&mut args, step.target.as_ref());
             insert_string_alias(&mut args, &step.params, "query", &["query", "target"]);
@@ -372,6 +385,10 @@ pub fn recipe_step_tool_call(
             insert_bool(&mut args, &step.params, "clear");
             insert_bool_with_fallback(&mut args, &step.params, "clear", step.clear_first.as_ref());
             Ok(("sootie_type".to_string(), Value::Object(args)))
+        }
+        "set_clipboard" | "clipboard_set" => {
+            insert_string_with_fallback(&mut args, &step.params, "text", step.text.as_ref());
+            Ok(("__set_clipboard".to_string(), Value::Object(args)))
         }
         "press" => {
             insert_string_with_fallback(&mut args, &step.params, "key", step.key.as_ref());
@@ -511,7 +528,8 @@ fn insert_target_args(args: &mut serde_json::Map<String, Value>, target: Option<
         return;
     };
     insert_target_app(args, target);
-    insert_target_coordinate(args, target, "x", "y");
+    insert_target_window(args, target);
+    insert_target_coordinate_or_fallback(args, target, "x", "y");
     if let Some(query) = &target.computed_name_contains {
         args.insert("query".to_string(), json!(query));
     } else if let Some(query) = target.name.as_ref().or(target.text.as_ref()) {
@@ -529,6 +547,7 @@ fn insert_target_into_args(
         return;
     };
     insert_target_app(args, target);
+    insert_target_window(args, target);
     if let Some(query) = &target.computed_name_contains {
         args.insert("into".to_string(), json!(query));
     } else if let Some(query) = target.name.as_ref().or(target.text.as_ref()) {
@@ -546,7 +565,8 @@ fn insert_from_target_args(
         return;
     };
     insert_target_app(args, target);
-    if insert_target_coordinate(args, target, "from_x", "from_y") {
+    insert_target_window(args, target);
+    if insert_target_coordinate_or_fallback(args, target, "from_x", "from_y") {
         return;
     }
     if let Some(query) = &target.computed_name_contains {
@@ -562,7 +582,8 @@ fn insert_to_target_args(args: &mut serde_json::Map<String, Value>, target: Opti
     let Some(target) = target else {
         return;
     };
-    if insert_target_coordinate(args, target, "to_x", "to_y") {
+    insert_target_window(args, target);
+    if insert_target_coordinate_or_fallback(args, target, "to_x", "to_y") {
         return;
     }
     if let Some(target_value) = target_value(target) {
@@ -579,22 +600,119 @@ fn insert_target_app(args: &mut serde_json::Map<String, Value>, target: &RecipeT
     }
 }
 
+fn insert_target_window(args: &mut serde_json::Map<String, Value>, target: &RecipeTarget) {
+    if args.contains_key("window") {
+        return;
+    }
+    if let Some(window) = target
+        .window
+        .as_ref()
+        .filter(|window| !window.trim().is_empty())
+    {
+        args.insert("window".to_string(), json!(window));
+    }
+}
+
 fn insert_target_coordinate(
     args: &mut serde_json::Map<String, Value>,
     target: &RecipeTarget,
     x_key: &str,
     y_key: &str,
 ) -> bool {
-    let point = target
-        .coordinate
-        .as_ref()
-        .or(target.window_coordinate.as_ref());
-    if let Some(point) = point {
+    if let Some(point) = &target.coordinate {
         args.insert(x_key.to_string(), json!(point.x));
         args.insert(y_key.to_string(), json!(point.y));
         true
+    } else if let Some(point) = &target.window_coordinate {
+        args.insert(x_key.to_string(), json!(point.x));
+        args.insert(y_key.to_string(), json!(point.y));
+        args.insert(coordinate_space_key(x_key).to_string(), json!("window"));
+        true
+    } else if let Some(point) = &target.window_normalized_coordinate {
+        args.insert(x_key.to_string(), json!(point.x));
+        args.insert(y_key.to_string(), json!(point.y));
+        args.insert(
+            coordinate_space_key(x_key).to_string(),
+            json!("window_normalized"),
+        );
+        true
     } else {
         false
+    }
+}
+
+fn insert_target_coordinate_or_fallback(
+    args: &mut serde_json::Map<String, Value>,
+    target: &RecipeTarget,
+    x_key: &str,
+    y_key: &str,
+) -> bool {
+    if target_has_semantic_selector(target) && target_has_coordinate(target) {
+        insert_target_coordinate_fallback(args, target, x_key, y_key);
+        false
+    } else {
+        insert_target_coordinate(args, target, x_key, y_key)
+    }
+}
+
+fn insert_target_coordinate_fallback(
+    args: &mut serde_json::Map<String, Value>,
+    target: &RecipeTarget,
+    x_key: &str,
+    y_key: &str,
+) -> bool {
+    if let Some(point) = &target.coordinate {
+        args.insert(fallback_coordinate_key(x_key), json!(point.x));
+        args.insert(fallback_coordinate_key(y_key), json!(point.y));
+        true
+    } else if let Some(point) = &target.window_coordinate {
+        args.insert(fallback_coordinate_key(x_key), json!(point.x));
+        args.insert(fallback_coordinate_key(y_key), json!(point.y));
+        args.insert(
+            fallback_coordinate_key(coordinate_space_key(x_key)),
+            json!("window"),
+        );
+        true
+    } else if let Some(point) = &target.window_normalized_coordinate {
+        args.insert(fallback_coordinate_key(x_key), json!(point.x));
+        args.insert(fallback_coordinate_key(y_key), json!(point.y));
+        args.insert(
+            fallback_coordinate_key(coordinate_space_key(x_key)),
+            json!("window_normalized"),
+        );
+        true
+    } else {
+        false
+    }
+}
+
+fn fallback_coordinate_key(key: &str) -> String {
+    format!("__fallback_{key}")
+}
+
+fn target_has_coordinate(target: &RecipeTarget) -> bool {
+    target.coordinate.is_some()
+        || target.window_coordinate.is_some()
+        || target.window_normalized_coordinate.is_some()
+}
+
+fn target_has_semantic_selector(target: &RecipeTarget) -> bool {
+    target.computed_name_contains.is_some()
+        || target.name.is_some()
+        || target.text.is_some()
+        || target.role.is_some()
+        || target.id.is_some()
+        || target.identifier.is_some()
+        || target.dom_id.is_some()
+        || target.dom_class.is_some()
+        || !target.criteria.is_empty()
+}
+
+fn coordinate_space_key(x_key: &str) -> &'static str {
+    match x_key {
+        "from_x" => "from_coordinate_space",
+        "to_x" => "to_coordinate_space",
+        _ => "coordinate_space",
     }
 }
 
@@ -606,6 +724,13 @@ fn target_value(target: &RecipeTarget) -> Option<Value> {
         .and_then(|app| legacy_app_name(Some(app)))
     {
         value.insert("app".to_string(), json!(app));
+    }
+    if let Some(window) = target
+        .window
+        .as_ref()
+        .filter(|window| !window.trim().is_empty())
+    {
+        value.insert("window".to_string(), json!(window));
     }
     let mut selector = serde_json::Map::new();
     if let Some(query) = target
@@ -1022,6 +1147,26 @@ mod tests {
     }
 
     #[test]
+    fn maps_clipboard_asset_step_to_internal_recipe_action() {
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "paste-svg-asset",
+            "steps": [
+                {
+                    "id": 1,
+                    "action": "set_clipboard",
+                    "text": "<svg/>"
+                }
+            ]
+        }))
+        .unwrap();
+
+        let (tool, args) = recipe_step_tool_call(&recipe.steps[0], recipe.app.as_deref()).unwrap();
+        assert_eq!(tool, "__set_clipboard");
+        assert_eq!(args["text"], "<svg/>");
+    }
+
+    #[test]
     fn parses_legacy_empty_param_shapes() {
         let recipe = parse_recipe(&json!({
             "schema_version": 4,
@@ -1125,7 +1270,7 @@ mod tests {
                 },
                 {
                     "action": "screenshot",
-                    "target": { "app": { "name": "Chrome" } },
+                    "target": { "app": { "name": "Chrome" }, "window": "Checkout" },
                     "params": null
                 },
                 {
@@ -1178,6 +1323,7 @@ mod tests {
         let (tool, args) = recipe_step_tool_call(&recipe.steps[5], None).unwrap();
         assert_eq!(tool, "sootie_screenshot");
         assert_eq!(args["app"], "Chrome");
+        assert_eq!(args["window"], "Checkout");
 
         let (tool, args) = recipe_step_tool_call(&recipe.steps[6], None).unwrap();
         assert_eq!(tool, "sootie_wait");
@@ -1218,6 +1364,92 @@ mod tests {
         assert_eq!(args["to_y"], 600.0);
         assert_eq!(args["duration"], 0.75);
         assert_eq!(args["hold_duration"], 0.3);
+    }
+
+    #[test]
+    fn maps_window_relative_target_coordinates_as_recipe_metadata() {
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "window-relative-click",
+            "steps": [{
+                "action": "click",
+                "target": {
+                    "app": { "name": "Safari" },
+                    "window": "Excalidraw",
+                    "window_coordinate": { "x": 40.0, "y": 90.0 }
+                }
+            }]
+        }))
+        .unwrap();
+
+        let (tool, args) = recipe_step_tool_call(&recipe.steps[0], None).unwrap();
+        assert_eq!(tool, "sootie_click");
+        assert_eq!(args["app"], "Safari");
+        assert_eq!(args["window"], "Excalidraw");
+        assert_eq!(args["coordinate_space"], "window");
+        assert_eq!(args["x"], 40.0);
+        assert_eq!(args["y"], 90.0);
+    }
+
+    #[test]
+    fn maps_window_normalized_target_coordinates_as_recipe_metadata() {
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "window-normalized-drag",
+            "steps": [{
+                "action": "drag",
+                "target": {
+                    "app": { "name": "Safari" },
+                    "window": "Excalidraw",
+                    "window_normalized_coordinate": { "x": 0.25, "y": 0.5 }
+                },
+                "to_target": {
+                    "window": "Excalidraw",
+                    "normalized_coordinate": { "x": 0.75, "y": 0.8 }
+                }
+            }]
+        }))
+        .unwrap();
+
+        let (tool, args) = recipe_step_tool_call(&recipe.steps[0], None).unwrap();
+        assert_eq!(tool, "sootie_drag");
+        assert_eq!(args["app"], "Safari");
+        assert_eq!(args["window"], "Excalidraw");
+        assert_eq!(args["from_coordinate_space"], "window_normalized");
+        assert_eq!(args["from_x"], 0.25);
+        assert_eq!(args["from_y"], 0.5);
+        assert_eq!(args["to_coordinate_space"], "window_normalized");
+        assert_eq!(args["to_x"], 0.75);
+        assert_eq!(args["to_y"], 0.8);
+    }
+
+    #[test]
+    fn semantic_target_coordinates_are_compiled_as_fallback_metadata() {
+        let recipe = parse_recipe(&json!({
+            "schema_version": 4,
+            "name": "semantic-first-click",
+            "steps": [{
+                "action": "click",
+                "target": {
+                    "app": { "name": "Safari" },
+                    "window": "Checkout",
+                    "dom_id": "submit-button",
+                    "window_coordinate": { "x": 12.0, "y": 34.0 }
+                }
+            }]
+        }))
+        .unwrap();
+
+        let (tool, args) = recipe_step_tool_call(&recipe.steps[0], None).unwrap();
+        assert_eq!(tool, "sootie_click");
+        assert_eq!(args["app"], "Safari");
+        assert_eq!(args["window"], "Checkout");
+        assert_eq!(args["dom_id"], "submit-button");
+        assert!(args.get("x").is_none());
+        assert!(args.get("y").is_none());
+        assert_eq!(args["__fallback_coordinate_space"], "window");
+        assert_eq!(args["__fallback_x"], 12.0);
+        assert_eq!(args["__fallback_y"], 34.0);
     }
 
     #[test]

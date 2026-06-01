@@ -88,6 +88,29 @@ structured content follows this shape:
 On failure, `success` is `false`, `error` contains the user-facing failure, and
 `suggestion` is populated when Sootie can identify a likely recovery path.
 
+For desktop UI recipes, `sootie_run` performs a lock-screen preflight before
+executing mutating steps. If the macOS screen is locked, the result fails before
+any UI action runs and includes a recovery payload:
+
+```json
+{
+  "success": false,
+  "error": "recipe 'draw-flower' requires an unlocked macOS screen",
+  "suggestion": "macOS is locked, so UI actions or screenshots would affect the lock screen instead of the target app. Unlock the Mac, verify the target window is visible, then retry.",
+  "data": {
+    "locked": true,
+    "blocked_steps": [
+      {
+        "step_index": 0,
+        "step_id": 1,
+        "tool": "sootie_focus",
+        "action": "focus"
+      }
+    ]
+  }
+}
+```
+
 Screenshot-producing tools return image data on two paths:
 
 - MCP `content` includes an `image` item with base64 data and `mimeType` for
@@ -126,11 +149,11 @@ read-only inspection from mutating desktop actions before dispatch:
 | --- | --- | --- | --- |
 | `sootie_context` | none | `app` | `app`, `window`, `url`, `focused_element`, `interactive_elements` |
 | `sootie_state` | none | `app` | `apps`, `app_count` |
-| `sootie_find` | none | `app`, `query`, `role`, `identifier`, `dom_id`, `dom_class`, `depth` | `elements`, `count`, `total_matches` |
+| `sootie_find` | none | `app`, `query`, `role`, `identifier`, `dom_id`, `dom_class`, `depth`, `max_results` | `elements`, `count`, `total_matches` |
 | `sootie_read` | none | `app`, `query`, `depth` | `content`, `item_count` |
 | `sootie_inspect` | `query` | `app`, `role`, `dom_id` | one full element |
 | `sootie_element_at` | `x`, `y` | none | one full element |
-| `sootie_screenshot` | none | `app`, `full_resolution` | `image`, `mime_type`, `width`, `height`, `window_title`, `window_frame`, `artifact_path`, `artifact_uri` |
+| `sootie_screenshot` | none | `app`, `window`, `full_resolution` | `image`, `mime_type`, `width`, `height`, `window_title`, `window_frame`, `artifact_path`, `artifact_uri` |
 | `sootie_click` | none | `app`, `query`, `role`, `dom_id`, `x`, `y`, `button`, `count` | action result plus context |
 | `sootie_type` | `text` | `app`, `into`, `dom_id`, `clear` | action result plus context |
 | `sootie_press` | `key` | `app`, `modifiers` | action result plus context |
@@ -147,7 +170,7 @@ read-only inspection from mutating desktop actions before dispatch:
 | `sootie_recipe_show` | `name` | none | recipe object |
 | `sootie_recipe_save` | `recipe_json` | none | saved recipe metadata. See [Recipe Schema](recipe-schema.md). |
 | `sootie_recipe_delete` | `name` | none | `deleted` |
-| `sootie_parse_screen` | none | `app`, `full_resolution` | screenshot payload plus `elements`, `element_count`, `source` |
+| `sootie_parse_screen` | none | `app`, `window`, `full_resolution` | screenshot payload plus `elements`, `element_count`, `source` |
 | `sootie_ground` | `description` | `app`, `crop_box` | ranked candidates or vision-grounded point |
 | `sootie_annotate` | none | `app`, `roles`, `max_labels` | annotated image payload and text index |
 | `sootie_browser_connect` | none | `port`, `ws_url`, `browser`, `profile` | `connected`, `browser_id`, `endpoint`, `pages` |
@@ -177,7 +200,7 @@ read-only inspection from mutating desktop actions before dispatch:
 | `sootie_cdp_send` | `method` | `browser_id`, `port`, `ws_url`, `page_id`, `domain`, `params`, `timeout_ms`, `unsafe` | raw CDP result |
 | `sootie_cdp_subscribe` | `domain` | `browser_id`, `port`, `ws_url`, `page_id`, `event`, `timeout_ms`, `max_events`, `unsafe` | bounded event batch |
 | `sootie_learn_start` | none | `task_description` | recording status |
-| `sootie_learn_stop` | none | none | recorded actions, apps, urls, duration |
+| `sootie_learn_stop` | none | none | recorded actions, generated `recipe`, generated `recipe_json`, apps, urls, duration |
 | `sootie_learn_status` | none | none | recording status and action count |
 
 ## Wait Conditions

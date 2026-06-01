@@ -1,0 +1,164 @@
+{
+  "schema_version": 4,
+  "name": "safari-excalidraw-stepwise-red-flower",
+  "description": "Safari Excalidraw demo recipe: open a clean canvas, draw stem and leaves first, then petals, then flower center with visible pauses for fullscreen recording.",
+  "app": "Safari",
+  "steps": [
+    {
+      "id": 1,
+      "action": "focus",
+      "params": {
+        "app": "Safari"
+      }
+    },
+    {
+      "id": 2,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "l"
+      ]
+    },
+    {
+      "id": 3,
+      "action": "set_clipboard",
+      "text": "https://excalidraw.com/"
+    },
+    {
+      "id": 4,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "v"
+      ]
+    },
+    {
+      "id": 5,
+      "action": "press",
+      "key": "Enter"
+    },
+    {
+      "id": 6,
+      "action": "wait",
+      "params": {
+        "condition": "urlContains",
+        "value": "excalidraw.com",
+        "timeout": 10,
+        "interval": 0.25
+      }
+    },
+    {
+      "id": 7,
+      "action": "wait",
+      "timeout": 2
+    },
+    {
+      "id": 8,
+      "action": "click",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard",
+        "window_normalized_coordinate": {
+          "x": 0.4985754985754986,
+          "y": 0.5432098765432098
+        }
+      }
+    },
+    {
+      "id": 9,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "a"
+      ]
+    },
+    {
+      "id": 10,
+      "action": "press",
+      "key": "Delete"
+    },
+    {
+      "id": 11,
+      "action": "wait",
+      "timeout": 1
+    },
+    {
+      "id": 12,
+      "action": "set_clipboard",
+      "text": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"560\" height=\"620\" viewBox=\"0 0 560 620\">\n  <rect width=\"560\" height=\"620\" fill=\"#ffffff\"/>\n  <line x1=\"280\" y1=\"555\" x2=\"280\" y2=\"315\" stroke=\"#12822b\" stroke-width=\"24\" stroke-linecap=\"round\"/>\n  <path d=\"M278 455 C205 408 138 422 84 472 C154 526 226 523 284 466 Z\" fill=\"#58ba55\" stroke=\"#108126\" stroke-width=\"14\" stroke-linejoin=\"round\"/>\n  <path d=\"M284 466 C344 410 424 421 482 468 C408 528 336 530 280 480 Z\" fill=\"#64c764\" stroke=\"#108126\" stroke-width=\"14\" stroke-linejoin=\"round\"/>\n</svg>\n"
+    },
+    {
+      "id": 13,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "v"
+      ]
+    },
+    {
+      "id": 14,
+      "action": "wait",
+      "timeout": 3
+    },
+    {
+      "id": 15,
+      "action": "screenshot",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard"
+      }
+    },
+    {
+      "id": 16,
+      "action": "set_clipboard",
+      "text": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"560\" height=\"620\" viewBox=\"0 0 560 620\">\n  <rect width=\"560\" height=\"620\" fill=\"#ffffff\"/>\n  <line x1=\"280\" y1=\"555\" x2=\"280\" y2=\"382\" stroke=\"#177f2c\" stroke-width=\"24\" stroke-linecap=\"round\"/>\n  <path d=\"M278 455 C205 408 138 422 84 472 C154 526 226 523 284 466 Z\" fill=\"#58ba55\" stroke=\"#16862c\" stroke-width=\"14\" stroke-linejoin=\"round\"/>\n  <path d=\"M284 466 C344 410 424 421 482 468 C408 528 336 530 280 480 Z\" fill=\"#64c764\" stroke=\"#16862c\" stroke-width=\"14\" stroke-linejoin=\"round\"/>\n  <g transform=\"translate(280 290)\">\n    <ellipse cx=\"0\" cy=\"-118\" rx=\"48\" ry=\"78\" fill=\"#e73333\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"-78\" cy=\"-68\" rx=\"52\" ry=\"78\" transform=\"rotate(-48 -78 -68)\" fill=\"#f14b48\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"78\" cy=\"-68\" rx=\"52\" ry=\"78\" transform=\"rotate(48 78 -68)\" fill=\"#f14b48\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"-112\" cy=\"22\" rx=\"45\" ry=\"70\" transform=\"rotate(-80 -112 22)\" fill=\"#ff3a31\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"112\" cy=\"22\" rx=\"45\" ry=\"70\" transform=\"rotate(80 112 22)\" fill=\"#ff3a31\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"-58\" cy=\"82\" rx=\"54\" ry=\"76\" transform=\"rotate(40 -58 82)\" fill=\"#dc272d\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"58\" cy=\"82\" rx=\"54\" ry=\"76\" transform=\"rotate(-40 58 82)\" fill=\"#dc272d\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"0\" cy=\"110\" rx=\"43\" ry=\"68\" fill=\"#ea332e\" stroke=\"#a81620\" stroke-width=\"13\"/>\n  </g>\n</svg>\n"
+    },
+    {
+      "id": 17,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "v"
+      ]
+    },
+    {
+      "id": 18,
+      "action": "wait",
+      "timeout": 3
+    },
+    {
+      "id": 19,
+      "action": "screenshot",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard"
+      }
+    },
+    {
+      "id": 20,
+      "action": "set_clipboard",
+      "text": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"560\" height=\"620\" viewBox=\"0 0 560 620\">\n  <rect width=\"560\" height=\"620\" fill=\"#ffffff\"/>\n  <line x1=\"280\" y1=\"555\" x2=\"280\" y2=\"382\" stroke=\"#177f2c\" stroke-width=\"24\" stroke-linecap=\"round\"/>\n  <path d=\"M278 455 C205 408 138 422 84 472 C154 526 226 523 284 466 Z\" fill=\"#58ba55\" stroke=\"#16862c\" stroke-width=\"14\" stroke-linejoin=\"round\"/>\n  <path d=\"M284 466 C344 410 424 421 482 468 C408 528 336 530 280 480 Z\" fill=\"#64c764\" stroke=\"#16862c\" stroke-width=\"14\" stroke-linejoin=\"round\"/>\n  <g transform=\"translate(280 290)\">\n    <ellipse cx=\"0\" cy=\"-118\" rx=\"48\" ry=\"78\" fill=\"#e73333\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"-78\" cy=\"-68\" rx=\"52\" ry=\"78\" transform=\"rotate(-48 -78 -68)\" fill=\"#f14b48\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"78\" cy=\"-68\" rx=\"52\" ry=\"78\" transform=\"rotate(48 78 -68)\" fill=\"#f14b48\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"-112\" cy=\"22\" rx=\"45\" ry=\"70\" transform=\"rotate(-80 -112 22)\" fill=\"#ff3a31\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"112\" cy=\"22\" rx=\"45\" ry=\"70\" transform=\"rotate(80 112 22)\" fill=\"#ff3a31\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"-58\" cy=\"82\" rx=\"54\" ry=\"76\" transform=\"rotate(40 -58 82)\" fill=\"#dc272d\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"58\" cy=\"82\" rx=\"54\" ry=\"76\" transform=\"rotate(-40 58 82)\" fill=\"#dc272d\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <ellipse cx=\"0\" cy=\"110\" rx=\"43\" ry=\"68\" fill=\"#ea332e\" stroke=\"#a81620\" stroke-width=\"13\"/>\n    <circle cx=\"0\" cy=\"0\" r=\"66\" fill=\"#f9ad1e\" stroke=\"#5f8712\" stroke-width=\"13\"/>\n    <circle cx=\"-23\" cy=\"-15\" r=\"13\" fill=\"#ffe68b\" opacity=\"0.85\"/>\n    <circle cx=\"23\" cy=\"-11\" r=\"11\" fill=\"#fff1a5\" opacity=\"0.9\"/>\n  </g>\n</svg>\n"
+    },
+    {
+      "id": 21,
+      "action": "hotkey",
+      "keys": [
+        "cmd",
+        "v"
+      ]
+    },
+    {
+      "id": 22,
+      "action": "wait",
+      "timeout": 4
+    },
+    {
+      "id": 23,
+      "action": "screenshot",
+      "target": {
+        "app": "Safari",
+        "window": "Excalidraw Whiteboard"
+      }
+    }
+  ]
+}

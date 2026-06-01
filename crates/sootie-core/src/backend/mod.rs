@@ -41,7 +41,12 @@ pub trait DesktopBackend: Send + Sync {
     ) -> SootieResult<String>;
     fn inspect(&self, query: &FindQuery) -> SootieResult<Option<ElementInfo>>;
     fn element_at(&self, x: f64, y: f64) -> SootieResult<Option<ElementInfo>>;
-    fn screenshot(&self, app: Option<&str>, full_resolution: bool) -> SootieResult<Screenshot>;
+    fn screenshot(
+        &self,
+        app: Option<&str>,
+        window: Option<&str>,
+        full_resolution: bool,
+    ) -> SootieResult<Screenshot>;
     fn click(
         &self,
         x: Option<f64>,
@@ -73,6 +78,12 @@ pub trait DesktopBackend: Send + Sync {
         hold_duration_secs: f64,
     ) -> SootieResult<ActionResult>;
     fn type_text(&self, text: &str, target: &FindQuery, clear: bool) -> SootieResult<ActionResult>;
+    fn set_clipboard_text(&self, _text: &str) -> SootieResult<ActionResult> {
+        Err(unsupported(self.platform(), "set_clipboard_text"))
+    }
+    fn clipboard_text(&self) -> SootieResult<String> {
+        Err(unsupported(self.platform(), "clipboard_text"))
+    }
     fn press(
         &self,
         key: &str,

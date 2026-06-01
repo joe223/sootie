@@ -133,7 +133,7 @@ Or it can use a compatible action name that Sootie maps to a tool:
 | `params` | Action step argument map. |
 | `target` | Source selector or element target. |
 | `to_target` | Destination selector for drag steps. |
-| `text`, `key`, `keys`, `direction`, `amount`, `button`, `count`, `timeout`, `clear_first` | Compatible scalar aliases used by action steps. |
+| `text`, `key`, `keys`, `direction`, `amount`, `button`, `count`, `timeout`, `clear_first` | Compatible scalar aliases used by action steps. `set_clipboard` uses `text` as the clipboard payload. |
 | `wait_after` | Optional wait condition after the step completes. |
 | `note` | Human note. |
 | `on_failure` | Step-level failure policy. `skip` continues after this step fails. |
@@ -143,9 +143,18 @@ Or it can use a compatible action name that Sootie maps to a tool:
 ```json
 {
   "app": "Google Chrome",
+  "window": "Checkout",
   "coordinate": {
     "x": 100,
     "y": 200
+  },
+  "window_coordinate": {
+    "x": 40,
+    "y": 90
+  },
+  "window_normalized_coordinate": {
+    "x": 0.5,
+    "y": 0.5
   },
   "role": "button",
   "name": "Submit",
@@ -166,8 +175,31 @@ Or it can use a compatible action name that Sootie maps to a tool:
 
 Sootie maps `name`, `text`, `computedNameContains`, and criteria values into
 the selector fields used by MCP tools. `coordinate` maps to screen `x` and `y`.
-`window_coordinate` is accepted for compatibility and maps to the same point
-shape.
+`window_coordinate` maps to a point relative to the current app window.
+`window_normalized_coordinate` maps to a point inside the current app window
+where `0.0, 0.0` is the top-left corner and `1.0, 1.0` is the bottom-right
+corner. `normalized_coordinate` is accepted as an alias for
+`window_normalized_coordinate`.
+
+When a target contains both semantic selectors and a coordinate, `sootie_run`
+uses the semantic selector first. The coordinate is retained as a fallback and
+is remapped against the current app/window frame when the semantic target cannot
+be resolved. Durable recipes should therefore prefer `name`, `role`, `dom_id`,
+or other semantic fields, with `window_normalized_coordinate` as the coordinate
+fallback for resized or moved windows.
+If `window` is provided for a coordinate target, that window title must match
+the current app state. Sootie will not remap coordinates against a different
+focused or first window when the explicit window is missing.
+
+`sootie_learn_stop` returns both the raw recorded `actions` and a generated
+`recipe`/`recipe_json` draft. The generated recipe follows the same rule:
+semantic information is preserved when available, and pointer coordinates are
+stored as window-normalized fallbacks when Sootie can identify the active window
+frame. When learning mode records a successful paste hotkey and the current
+clipboard contains text, the raw action includes `clipboard_text` and the
+generated recipe inserts a recipe-scoped `set_clipboard` step immediately before
+the paste. This makes learned text/SVG paste workflows reproducible without
+adding a public clipboard MCP tool.
 
 ## Action Mapping
 
@@ -180,12 +212,25 @@ shape.
 | `drag` | `sootie_drag` |
 | `type` | `sootie_type` |
 | `paste_text` | `sootie_type` |
+| `set_clipboard` / `clipboard_set` | Internal recipe clipboard step |
 | `press` | `sootie_press` |
 | `hotkey` | `sootie_hotkey` |
 | `scroll` | `sootie_scroll` |
 | `focus` | `sootie_focus` |
 | `window` | `sootie_window` |
 | `wait` | `sootie_wait` or a delay step |
+
+`set_clipboard` is intentionally recipe-scoped rather than a public MCP tool. It
+lets a durable recipe stage text, SVG, or other text-based paste payloads before
+a normal keyboard paste action:
+
+```json
+{
+  "id": 1,
+  "action": "set_clipboard",
+  "text": "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+}
+```
 
 ## Wait Conditions
 
