@@ -67,6 +67,7 @@ Browser-native tools are meant for browser-first agents and web automation:
 
 | Tool | Purpose |
 | --- | --- |
+| `sootie_browser_launch` | Launch Chrome, Edge, or Chromium with a managed CDP endpoint and return a `launch_id`. |
 | `sootie_browser_connect` | Connect to a CDP endpoint and return pages. |
 | `sootie_browser_pages` | List current pages/tabs. |
 | `sootie_browser_select_page` | Set the default page for later browser calls. |
@@ -84,6 +85,7 @@ Browser-native tools are meant for browser-first agents and web automation:
 | `sootie_browser_forward` | Navigate forward. |
 | `sootie_browser_reload` | Reload the page. |
 | `sootie_browser_close_page` | Close a page by id. |
+| `sootie_browser_shutdown` | Stop a browser process previously started by `sootie_browser_launch`. |
 | `sootie_browser_network` | Inspect performance/resource entries or guarded response bodies. |
 | `sootie_browser_console` | Read console entries captured by the page hook. |
 | `sootie_browser_storage` | List, read, or mutate localStorage/sessionStorage. |

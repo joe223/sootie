@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+use std::env;
+use std::net::TcpListener;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -12,6 +16,16 @@ pub struct BrowserService {
     port: Option<u16>,
     selected_page_id: Option<String>,
     registry: BrowserElementRegistry,
+    launches: HashMap<String, ManagedBrowser>,
+}
+
+#[derive(Debug)]
+struct ManagedBrowser {
+    child: Child,
+    port: u16,
+    browser: String,
+    profile: Option<String>,
+    user_data_dir: PathBuf,
 }
 
 #[derive(Debug, Default)]
@@ -36,9 +50,102 @@ struct BrowserElementRecord {
 }
 
 impl BrowserService {
+    pub fn launch(&mut self, args: &Value) -> SootieResult<Value> {
+        let browser = str_arg(args, "browser").unwrap_or_else(|| "chrome".into());
+        let profile = str_arg(args, "profile");
+        let mode = str_arg(args, "mode");
+        let incognito = profile
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("incognito"))
+            || mode
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case("incognito"));
+        let port = u32_arg(args, "port")
+            .and_then(|port| u16::try_from(port).ok())
+            .unwrap_or_else(free_local_port);
+        let timeout = timeout_arg(args, 15_000)?;
+        let executable = browser_executable(&browser)?;
+        let user_data_dir = str_arg(args, "user_data_dir")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| managed_user_data_dir(port));
+        std::fs::create_dir_all(&user_data_dir).map_err(|error| {
+            SootieError::Platform(format!(
+                "BROWSER_LAUNCH_FAILED: failed to create user data dir '{}': {error}",
+                user_data_dir.display()
+            ))
+        })?;
+
+        let mut command = Command::new(&executable);
+        command
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(format!("--user-data-dir={}", user_data_dir.display()))
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if incognito {
+            command.arg("--incognito");
+        }
+        if let Some(url) = str_arg(args, "url") {
+            command.arg(url);
+        }
+
+        let child = command.spawn().map_err(|error| {
+            SootieError::Platform(format!(
+                "BROWSER_LAUNCH_FAILED: failed to start '{}': {error}",
+                executable.display()
+            ))
+        })?;
+        let launch_id = format!("launch:{port}:{}", child.id());
+        let pages = match wait_for_browser_pages(port, timeout) {
+            Some(pages) => pages,
+            None => {
+                let mut child = child;
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SootieError::Platform(format!(
+                    "BROWSER_LAUNCH_TIMEOUT: no reachable CDP endpoint on 127.0.0.1:{port} after {}ms",
+                    timeout.as_millis()
+                )));
+            }
+        };
+
+        self.port = Some(port);
+        self.selected_page_id = pages
+            .iter()
+            .find(|page| page.page_type == "page")
+            .or_else(|| pages.first())
+            .map(|page| page.target_id.clone());
+        self.launches.insert(
+            launch_id.clone(),
+            ManagedBrowser {
+                child,
+                port,
+                browser: browser.clone(),
+                profile: profile.clone().or_else(|| mode.clone()),
+                user_data_dir: user_data_dir.clone(),
+            },
+        );
+
+        Ok(json!({
+            "connected": true,
+            "browser_id": browser_id(port),
+            "launch_id": launch_id,
+            "endpoint": format!("http://127.0.0.1:{port}"),
+            "browser": browser,
+            "is_incognito": incognito,
+            "profile": profile.or(mode),
+            "user_data_dir": user_data_dir,
+            "pages": pages_payload(&pages, self.selected_page_id.as_deref()),
+        }))
+    }
+
     pub fn connect(&mut self, args: &Value) -> SootieResult<Value> {
         let port = self.port_from_args(args);
-        let pages = cdp::browser_pages(port).ok_or_else(|| browser_not_connected(port))?;
+        let timeout = timeout_arg(args, 1_000)?;
+        let pages = wait_for_browser_pages(port, timeout)
+            .ok_or_else(|| browser_not_connected(port, timeout))?;
         self.port = Some(port);
         if self.selected_page_id.is_none() {
             self.selected_page_id = pages
@@ -55,9 +162,44 @@ impl BrowserService {
         }))
     }
 
+    pub fn shutdown(&mut self, args: &Value) -> SootieResult<Value> {
+        let launch_id = str_arg(args, "launch_id").or_else(|| {
+            let port = self.port_from_args(args);
+            self.launches
+                .iter()
+                .find_map(|(launch_id, launch)| (launch.port == port).then_some(launch_id.clone()))
+        });
+        let launch_id = launch_id.ok_or_else(|| {
+            SootieError::InvalidArguments(
+                "launch_id or browser_id/port for a managed launch is required".into(),
+            )
+        })?;
+        let mut launch = self.launches.remove(&launch_id).ok_or_else(|| {
+            SootieError::NotFound(format!(
+                "BROWSER_LAUNCH_NOT_FOUND: no managed browser launch '{launch_id}'"
+            ))
+        })?;
+        let _ = launch.child.kill();
+        let status = launch.child.wait().ok();
+        if self.port == Some(launch.port) {
+            self.port = None;
+            self.selected_page_id = None;
+        }
+        Ok(json!({
+            "shutdown": true,
+            "launch_id": launch_id,
+            "browser_id": browser_id(launch.port),
+            "browser": launch.browser,
+            "profile": launch.profile,
+            "user_data_dir": launch.user_data_dir,
+            "exit_status": status.map(|status| status.to_string()),
+        }))
+    }
+
     pub fn pages(&mut self, args: &Value) -> SootieResult<Value> {
         let port = self.port_from_args(args);
-        let pages = cdp::browser_pages(port).ok_or_else(|| browser_not_connected(port))?;
+        let pages =
+            cdp::browser_pages(port).ok_or_else(|| browser_not_connected(port, Duration::ZERO))?;
         self.port = Some(port);
         Ok(json!({
             "browser_id": browser_id(port),
@@ -93,7 +235,7 @@ impl BrowserService {
             }
             cdp::navigate_page(port, page_id.as_deref(), &url, timeout)
         }
-        .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: failed to open URL".into()))?;
+        .ok_or_else(|| cdp_failed("open URL", port, None))?;
         let wait_until = str_arg(args, "wait_until").unwrap_or_else(|| "domcontentloaded".into());
         let navigation_completed =
             cdp::wait_for_page_ready(port, Some(&page.target_id), &wait_until, timeout);
@@ -123,7 +265,7 @@ impl BrowserService {
             false,
             Duration::from_secs(3),
         )
-        .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: observe failed".into()))?;
+        .ok_or_else(|| cdp_failed("observe", port, Some(&page)))?;
         payload["page"]["page_id"] = json!(page.target_id);
         payload["page"]["url"] = json!(page.url);
         payload["page"]["title"] = json!(page.title.unwrap_or_default());
@@ -167,7 +309,7 @@ impl BrowserService {
             false,
             Duration::from_secs(3),
         )
-        .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: find failed".into()))?;
+        .ok_or_else(|| cdp_failed("find", port, Some(&page)))?;
         let mut elements = elements;
         self.registry
             .remember_elements(&page.target_id, &mut elements);
@@ -258,7 +400,7 @@ impl BrowserService {
                 })
         } else {
             cdp::scroll_page_by_id(port, Some(&page.target_id), &direction, amount)
-                .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: scroll failed".into()))?
+                .ok_or_else(|| cdp_failed("scroll", port, Some(&page)))?
         };
         self.port = Some(port);
         Ok(action_payload("scroll", &page, result, None))
@@ -314,7 +456,7 @@ impl BrowserService {
             false,
             Duration::from_secs(3),
         )
-        .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: extract failed".into()))?;
+        .ok_or_else(|| cdp_failed("extract", port, Some(&page)))?;
         if extracted.get("ok").and_then(Value::as_bool) == Some(false) {
             return Err(SootieError::NotFound(format!(
                 "TARGET_NOT_FOUND: {}",
@@ -347,7 +489,7 @@ impl BrowserService {
             Some(&page.target_id),
             bool_arg(args, "full_page").unwrap_or(false),
         )
-        .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: screenshot failed".into()))
+        .ok_or_else(|| cdp_failed("screenshot", port, Some(&page)))
     }
 
     pub fn history(&mut self, args: &Value, action: &str) -> SootieResult<Value> {
@@ -355,9 +497,7 @@ impl BrowserService {
         let page = self.selected_page(port, args)?;
         let timeout = timeout_arg(args, 10_000)?;
         let latest = cdp::browser_history_action(port, Some(&page.target_id), action, timeout)
-            .ok_or_else(|| {
-                SootieError::Platform("CDP_COMMAND_FAILED: history action failed".into())
-            })?;
+            .ok_or_else(|| cdp_failed("history action", port, Some(&page)))?;
         self.port = Some(port);
         Ok(json!({ "action": action, "page": page_payload(&latest, true) }))
     }
@@ -420,7 +560,7 @@ impl BrowserService {
             false,
             Duration::from_secs(3),
         )
-        .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: network failed".into()))?;
+        .ok_or_else(|| cdp_failed("network", port, Some(&page)))?;
         self.port = Some(port);
         Ok(json!({ "page": page_payload(&page, true), "requests": requests }))
     }
@@ -445,7 +585,7 @@ impl BrowserService {
             false,
             Duration::from_secs(3),
         )
-        .ok_or_else(|| SootieError::Platform("CDP_COMMAND_FAILED: console failed".into()))?;
+        .ok_or_else(|| cdp_failed("console", port, Some(&page)))?;
         self.port = Some(port);
         Ok(json!({ "page": page_payload(&page, true), "entries": entries }))
     }
@@ -689,9 +829,7 @@ impl BrowserService {
             params.clone(),
             timeout_arg(args, 10_000)?,
         )
-        .ok_or_else(|| {
-            SootieError::Platform("CDP_COMMAND_FAILED: raw CDP command failed".into())
-        })?;
+        .ok_or_else(|| cdp_failed("raw CDP command", port, page.as_ref()))?;
         self.port = Some(port);
         Ok(json!({
             "method": method,
@@ -1079,9 +1217,113 @@ fn string_vec_field(value: &Value, key: &str) -> Vec<String> {
         .collect()
 }
 
-fn browser_not_connected(port: u16) -> SootieError {
+fn browser_not_connected(port: u16, timeout: Duration) -> SootieError {
+    let waited = if timeout.is_zero() {
+        String::new()
+    } else {
+        format!(" after {}ms", timeout.as_millis())
+    };
     SootieError::Platform(format!(
-        "BROWSER_NOT_CONNECTED: no reachable CDP endpoint on 127.0.0.1:{port}"
+        "BROWSER_NOT_CONNECTED: no reachable CDP endpoint on 127.0.0.1:{port}{waited}"
+    ))
+}
+
+fn wait_for_browser_pages(port: u16, timeout: Duration) -> Option<Vec<cdp::PageInfo>> {
+    let started = Instant::now();
+    loop {
+        if let Some(pages) = cdp::browser_pages(port) {
+            return Some(pages);
+        }
+        if started.elapsed() >= timeout {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn free_local_port() -> u16 {
+    TcpListener::bind(("127.0.0.1", 0))
+        .ok()
+        .and_then(|listener| listener.local_addr().ok())
+        .map(|addr| addr.port())
+        .unwrap_or(9222)
+}
+
+fn managed_user_data_dir(port: u16) -> PathBuf {
+    let stamp = Instant::now().elapsed().as_nanos();
+    env::temp_dir().join(format!("sootie-cdp-{port}-{}-{stamp}", std::process::id()))
+}
+
+fn browser_executable(browser: &str) -> SootieResult<PathBuf> {
+    let normalized = browser.to_ascii_lowercase();
+    let candidates = browser_executable_candidates(&normalized);
+    candidates
+        .into_iter()
+        .find(|path| path.exists() || path.components().count() == 1)
+        .ok_or_else(|| {
+            SootieError::Platform(format!(
+                "BROWSER_LAUNCH_FAILED: no executable found for browser '{browser}'"
+            ))
+        })
+}
+
+fn browser_executable_candidates(browser: &str) -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        match browser {
+            "edge" | "msedge" => vec![PathBuf::from(
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            )],
+            "chromium" => vec![
+                PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+                PathBuf::from("chromium"),
+            ],
+            _ => vec![
+                PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                PathBuf::from("google-chrome"),
+                PathBuf::from("chromium"),
+            ],
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        match browser {
+            "edge" | "msedge" => vec![PathBuf::from("msedge.exe")],
+            "chromium" => vec![PathBuf::from("chromium.exe")],
+            _ => vec![
+                PathBuf::from("chrome.exe"),
+                PathBuf::from("google-chrome.exe"),
+            ],
+        }
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        match browser {
+            "edge" | "msedge" => vec![PathBuf::from("microsoft-edge"), PathBuf::from("msedge")],
+            "chromium" => vec![PathBuf::from("chromium"), PathBuf::from("chromium-browser")],
+            _ => vec![
+                PathBuf::from("google-chrome"),
+                PathBuf::from("chrome"),
+                PathBuf::from("chromium"),
+                PathBuf::from("chromium-browser"),
+            ],
+        }
+    }
+}
+
+fn cdp_failed(operation: &str, port: u16, page: Option<&cdp::PageInfo>) -> SootieError {
+    let page_context = page
+        .map(|page| {
+            format!(
+                "; page_id={}; url={}; title={}",
+                page.target_id,
+                page.url,
+                page.title.as_deref().unwrap_or("")
+            )
+        })
+        .unwrap_or_default();
+    SootieError::Platform(format!(
+        "CDP_COMMAND_FAILED: {operation} failed; port={port}{page_context}; suggested_next_call=sootie_browser_pages"
     ))
 }
 

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a>
   ·
-  <a href="#tool-surface">55 MCP tools</a>
+  <a href="#tool-surface">57 MCP tools</a>
   ·
   <a href="#recipes-and-learning">Recipes</a>
   ·
@@ -199,13 +199,13 @@ is:
 
 ## Tool Surface
 
-Sootie exposes 55 MCP tools.
+Sootie exposes 57 MCP tools.
 
 | Area | Tools |
 | --- | --- |
 | Orientation and perception | `sootie_context`, `sootie_state`, `sootie_find`, `sootie_read`, `sootie_inspect`, `sootie_element_at`, `sootie_screenshot`, `sootie_parse_screen`, `sootie_ground`, `sootie_annotate` |
 | Actions | `sootie_click`, `sootie_type`, `sootie_press`, `sootie_hotkey`, `sootie_scroll`, `sootie_hover`, `sootie_long_press`, `sootie_drag`, `sootie_focus`, `sootie_window`, `sootie_wait` |
-| Browser-native CDP | `sootie_browser_connect`, `sootie_browser_pages`, `sootie_browser_select_page`, `sootie_browser_open`, `sootie_browser_observe`, `sootie_browser_find`, `sootie_browser_click`, `sootie_browser_type`, `sootie_browser_press`, `sootie_browser_scroll`, `sootie_browser_wait`, `sootie_browser_extract`, `sootie_browser_screenshot`, `sootie_browser_back`, `sootie_browser_forward`, `sootie_browser_reload`, `sootie_browser_close_page`, `sootie_browser_network`, `sootie_browser_console`, `sootie_browser_storage`, `sootie_browser_cookies`, `sootie_browser_downloads`, `sootie_browser_upload`, `sootie_browser_pdf` |
+| Browser-native CDP | `sootie_browser_launch`, `sootie_browser_connect`, `sootie_browser_pages`, `sootie_browser_select_page`, `sootie_browser_open`, `sootie_browser_observe`, `sootie_browser_find`, `sootie_browser_click`, `sootie_browser_type`, `sootie_browser_press`, `sootie_browser_scroll`, `sootie_browser_wait`, `sootie_browser_extract`, `sootie_browser_screenshot`, `sootie_browser_back`, `sootie_browser_forward`, `sootie_browser_reload`, `sootie_browser_close_page`, `sootie_browser_shutdown`, `sootie_browser_network`, `sootie_browser_console`, `sootie_browser_storage`, `sootie_browser_cookies`, `sootie_browser_downloads`, `sootie_browser_upload`, `sootie_browser_pdf` |
 | Guarded raw CDP | `sootie_cdp_send`, `sootie_cdp_subscribe` |
 | Recipes and learning | `sootie_recipes`, `sootie_run`, `sootie_recipe_show`, `sootie_recipe_save`, `sootie_recipe_delete`, `sootie_learn_start`, `sootie_learn_stop`, `sootie_learn_status` |
 

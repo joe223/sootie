@@ -271,7 +271,7 @@ async function main() {
     step("tools/list");
     const toolsList = await client.request("tools/list", {});
     evidence.tool_count = toolsList.result.tools.length;
-    assert(evidence.tool_count === 55, `expected 55 tools, got ${evidence.tool_count}`);
+    assert(evidence.tool_count === 57, `expected 57 tools, got ${evidence.tool_count}`);
 
     step("sootie_browser_connect");
     const connect = await client.call("sootie_browser_connect", { port: cdpPort });

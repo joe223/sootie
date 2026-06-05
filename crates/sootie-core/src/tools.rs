@@ -49,6 +49,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "sootie_parse_screen",
     "sootie_ground",
     "sootie_annotate",
+    "sootie_browser_launch",
     "sootie_browser_connect",
     "sootie_browser_pages",
     "sootie_browser_select_page",
@@ -66,6 +67,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "sootie_browser_forward",
     "sootie_browser_reload",
     "sootie_browser_close_page",
+    "sootie_browser_shutdown",
     "sootie_browser_network",
     "sootie_browser_console",
     "sootie_browser_storage",
@@ -278,6 +280,12 @@ fn tool_definition(name: &str) -> ToolDefinition {
             browser_connect_props(),
             &[],
         ),
+        "sootie_browser_launch" => tool(
+            name,
+            "Launch a browser with a managed CDP endpoint and connect to it.",
+            browser_launch_props(),
+            &[],
+        ),
         "sootie_browser_pages" => tool(
             name,
             "List browser pages and tabs from the connected CDP endpoint.",
@@ -384,6 +392,12 @@ fn tool_definition(name: &str) -> ToolDefinition {
             name,
             "Close a browser page by page id.",
             browser_session_props(&[("page_id", "string", "Browser page id.")]),
+            &[],
+        ),
+        "sootie_browser_shutdown" => tool(
+            name,
+            "Shut down a browser process launched by sootie_browser_launch.",
+            browser_shutdown_props(),
             &[],
         ),
         "sootie_browser_network" => tool(
@@ -685,6 +699,60 @@ fn browser_connect_props() -> Value {
         ("ws_url", "string", "Direct page WebSocket URL."),
         ("browser", "string", "chrome/edge/chromium/auto."),
         ("profile", "string", "Browser profile hint."),
+        (
+            "timeout_ms",
+            "integer",
+            "Connection wait timeout in milliseconds.",
+        ),
+    ])
+}
+
+fn browser_launch_props() -> Value {
+    props(&[
+        ("browser", "string", "chrome/edge/chromium/auto."),
+        (
+            "profile",
+            "string",
+            "Browser profile hint, for example incognito.",
+        ),
+        ("mode", "string", "normal/incognito."),
+        (
+            "port",
+            "integer",
+            "CDP HTTP port. Uses a free local port by default.",
+        ),
+        ("url", "string", "Optional initial URL."),
+        (
+            "user_data_dir",
+            "string",
+            "Optional browser user data directory.",
+        ),
+        (
+            "timeout_ms",
+            "integer",
+            "Launch and connection timeout in milliseconds.",
+        ),
+    ])
+}
+
+fn browser_shutdown_props() -> Value {
+    props(&[
+        (
+            "browser_id",
+            "string",
+            "Browser connection id returned by launch.",
+        ),
+        (
+            "launch_id",
+            "string",
+            "Managed launch id returned by launch.",
+        ),
+        ("port", "integer", "CDP HTTP port for the launched browser."),
+        (
+            "timeout_ms",
+            "integer",
+            "Shutdown wait timeout in milliseconds.",
+        ),
     ])
 }
 
@@ -1129,12 +1197,13 @@ mod tests {
     #[test]
     fn exposes_sootie_tool_surface() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 55);
+        assert_eq!(tools.len(), 57);
         assert!(tools.iter().any(|tool| tool.name == "sootie_context"));
         assert!(tools
             .iter()
             .any(|tool| tool.name == "sootie_browser_observe"));
         for name in [
+            "sootie_browser_launch",
             "sootie_browser_network",
             "sootie_browser_console",
             "sootie_browser_storage",
@@ -1142,6 +1211,7 @@ mod tests {
             "sootie_browser_downloads",
             "sootie_browser_upload",
             "sootie_browser_pdf",
+            "sootie_browser_shutdown",
             "sootie_cdp_send",
             "sootie_cdp_subscribe",
         ] {
@@ -1154,7 +1224,7 @@ mod tests {
     #[test]
     fn tool_contract_is_exact() {
         let tools = tool_definitions();
-        assert_eq!(TOOL_NAMES.len(), 55);
+        assert_eq!(TOOL_NAMES.len(), 57);
         assert_eq!(
             tools
                 .iter()
@@ -1287,8 +1357,21 @@ mod tests {
             ),
             ("sootie_annotate", app_scope!["roles", "max_labels"], &[]),
             (
+                "sootie_browser_launch",
+                &[
+                    "browser",
+                    "profile",
+                    "mode",
+                    "port",
+                    "url",
+                    "user_data_dir",
+                    "timeout_ms",
+                ],
+                &[],
+            ),
+            (
                 "sootie_browser_connect",
-                &["port", "ws_url", "browser", "profile"],
+                &["port", "ws_url", "browser", "profile", "timeout_ms"],
                 &[],
             ),
             (
@@ -1387,6 +1470,11 @@ mod tests {
             (
                 "sootie_browser_close_page",
                 browser_session!["page_id"],
+                &[],
+            ),
+            (
+                "sootie_browser_shutdown",
+                &["browser_id", "launch_id", "port", "timeout_ms"],
                 &[],
             ),
             (
@@ -1529,6 +1617,7 @@ mod tests {
             ("sootie_parse_screen", &[]),
             ("sootie_ground", &["description"]),
             ("sootie_annotate", &[]),
+            ("sootie_browser_launch", &[]),
             ("sootie_browser_connect", &[]),
             ("sootie_browser_pages", &[]),
             ("sootie_browser_select_page", &["page_id"]),
@@ -1546,6 +1635,7 @@ mod tests {
             ("sootie_browser_forward", &[]),
             ("sootie_browser_reload", &[]),
             ("sootie_browser_close_page", &[]),
+            ("sootie_browser_shutdown", &[]),
             ("sootie_browser_network", &[]),
             ("sootie_browser_console", &[]),
             ("sootie_browser_storage", &["area", "action"]),

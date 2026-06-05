@@ -162,8 +162,13 @@ const expectedTools = [
     [],
   ],
   [
+    "sootie_browser_launch",
+    { browser: "string", mode: "string", port: "integer", profile: "string", timeout_ms: "integer", url: "string", user_data_dir: "string" },
+    [],
+  ],
+  [
     "sootie_browser_connect",
-    { browser: "string", port: "integer", profile: "string", ws_url: "string" },
+    { browser: "string", port: "integer", profile: "string", timeout_ms: "integer", ws_url: "string" },
     [],
   ],
   [
@@ -230,6 +235,7 @@ const expectedTools = [
   ["sootie_browser_forward", { browser_id: "string", page_id: "string", port: "integer", timeout_ms: "integer", ws_url: "string" }, []],
   ["sootie_browser_reload", { browser_id: "string", page_id: "string", port: "integer", timeout_ms: "integer", ws_url: "string" }, []],
   ["sootie_browser_close_page", { browser_id: "string", page_id: "string", port: "integer", ws_url: "string" }, []],
+  ["sootie_browser_shutdown", { browser_id: "string", launch_id: "string", port: "integer", timeout_ms: "integer" }, []],
   [
     "sootie_browser_network",
     { browser_id: "string", include_body: "boolean", max_entries: "integer", page_id: "string", port: "integer", request_id: "string", resource_type: "string", since_ms: "integer", unsafe: "boolean", url_contains: "string", ws_url: "string" },

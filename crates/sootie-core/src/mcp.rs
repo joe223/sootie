@@ -608,6 +608,7 @@ impl McpServer {
                 payload["source"] = json!("platform-context");
                 Ok(ToolResult::ok(payload))
             }
+            "sootie_browser_launch" => Ok(ToolResult::ok(self.browser.launch(args)?)),
             "sootie_browser_connect" => Ok(ToolResult::ok(self.browser.connect(args)?)),
             "sootie_browser_pages" => Ok(ToolResult::ok(self.browser.pages(args)?)),
             "sootie_browser_select_page" => Ok(ToolResult::ok(self.browser.select_page(args)?)),
@@ -637,6 +638,7 @@ impl McpServer {
             "sootie_browser_forward" => Ok(ToolResult::ok(self.browser.history(args, "forward")?)),
             "sootie_browser_reload" => Ok(ToolResult::ok(self.browser.history(args, "reload")?)),
             "sootie_browser_close_page" => Ok(ToolResult::ok(self.browser.close_page(args)?)),
+            "sootie_browser_shutdown" => Ok(ToolResult::ok(self.browser.shutdown(args)?)),
             "sootie_browser_network" => Ok(ToolResult::ok(self.browser.network(args)?)),
             "sootie_browser_console" => Ok(ToolResult::ok(self.browser.console(args)?)),
             "sootie_browser_storage" => Ok(ToolResult::ok(self.browser.storage(args)?)),
@@ -1968,13 +1970,17 @@ fn normalize_tool_args(name: &str, raw: Value) -> Value {
         }
     }
 
-    if name != "sootie_run" {
+    if !tool_uses_params_field(name) {
         if let Some(inner) = map.remove("params") {
             return merge_argument_envelope(inner, map);
         }
     }
 
     Value::Object(map)
+}
+
+fn tool_uses_params_field(name: &str) -> bool {
+    matches!(name, "sootie_run" | "sootie_cdp_send")
 }
 
 fn merge_argument_envelope(inner: Value, rest: serde_json::Map<String, Value>) -> Value {
@@ -5872,6 +5878,7 @@ mod tests {
             "sootie_recipe_delete" => json!({ "name": "saved" }),
             "sootie_ground" => json!({ "description": "Submit" }),
             "sootie_annotate" => json!({ "max_labels": 3 }),
+            "sootie_browser_launch" => json!({ "browser": "chrome", "timeout_ms": 100 }),
             "sootie_browser_connect"
             | "sootie_browser_pages"
             | "sootie_browser_observe"
@@ -5881,7 +5888,8 @@ mod tests {
             | "sootie_browser_back"
             | "sootie_browser_forward"
             | "sootie_browser_reload"
-            | "sootie_browser_close_page" => json!({ "port": 9 }),
+            | "sootie_browser_close_page"
+            | "sootie_browser_shutdown" => json!({ "port": 9 }),
             "sootie_browser_select_page" => json!({ "port": 9, "page_id": "missing" }),
             "sootie_browser_open" => json!({ "port": 9, "url": "https://example.com" }),
             "sootie_browser_click" => json!({ "port": 9, "query": "Submit" }),
@@ -7374,6 +7382,24 @@ mod tests {
             assert_eq!(data["button"], "right");
             assert_eq!(data["count"], 2);
         }
+    }
+
+    #[test]
+    fn cdp_send_preserves_params_argument() {
+        let args = normalize_tool_args(
+            "sootie_cdp_send",
+            json!({
+                "method": "Runtime.evaluate",
+                "params": {"expression": "1 + 1", "returnByValue": true},
+                "unsafe": true
+            }),
+        );
+
+        assert_eq!(args["method"], "Runtime.evaluate");
+        assert_eq!(args["params"]["expression"], "1 + 1");
+        assert_eq!(args["params"]["returnByValue"], true);
+        assert!(args.get("expression").is_none());
+        assert!(args.get("returnByValue").is_none());
     }
 
     #[test]

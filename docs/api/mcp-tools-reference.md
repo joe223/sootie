@@ -173,7 +173,8 @@ read-only inspection from mutating desktop actions before dispatch:
 | `sootie_parse_screen` | none | `app`, `window`, `full_resolution` | screenshot payload plus `elements`, `element_count`, `source` |
 | `sootie_ground` | `description` | `app`, `crop_box` | ranked candidates or vision-grounded point |
 | `sootie_annotate` | none | `app`, `roles`, `max_labels` | annotated image payload and text index |
-| `sootie_browser_connect` | none | `port`, `ws_url`, `browser`, `profile` | `connected`, `browser_id`, `endpoint`, `pages` |
+| `sootie_browser_launch` | none | `browser`, `profile`, `mode`, `port`, `url`, `user_data_dir`, `timeout_ms` | `connected`, `browser_id`, `launch_id`, `endpoint`, `is_incognito`, `pages` |
+| `sootie_browser_connect` | none | `port`, `ws_url`, `browser`, `profile`, `timeout_ms` | `connected`, `browser_id`, `endpoint`, `pages` |
 | `sootie_browser_pages` | none | `browser_id`, `port`, `ws_url`, `include_inactive` | `browser_id`, `pages` |
 | `sootie_browser_select_page` | `page_id` | `browser_id`, `port`, `ws_url` | selected `page` |
 | `sootie_browser_open` | `url` | `browser_id`, `port`, `ws_url`, `page_id`, `new_page`, `wait_until`, `timeout_ms` | `page_id`, `url`, `title`, `navigation_status` |
@@ -190,6 +191,7 @@ read-only inspection from mutating desktop actions before dispatch:
 | `sootie_browser_forward` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
 | `sootie_browser_reload` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
 | `sootie_browser_close_page` | none | `browser_id`, `port`, `ws_url`, `page_id` | `closed`, `page_id` |
+| `sootie_browser_shutdown` | none | `browser_id`, `launch_id`, `port`, `timeout_ms` | `shutdown`, `launch_id`, `browser_id`, `exit_status` |
 | `sootie_browser_network` | none | `browser_id`, `port`, `ws_url`, `page_id`, `since_ms`, `include_body`, `request_id`, `url_contains`, `resource_type`, `max_entries`, `unsafe` | `requests`, optional `body` |
 | `sootie_browser_console` | none | `browser_id`, `port`, `ws_url`, `page_id`, `level`, `since_ms`, `max_entries` | `entries` |
 | `sootie_browser_storage` | `area`, `action` | `browser_id`, `port`, `ws_url`, `page_id`, `origin`, `key`, `value`, `unsafe` | storage action result |
