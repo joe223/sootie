@@ -91,6 +91,17 @@ grounding path directly.
 
 ## Install
 
+Sootie currently publishes package-manager installs for macOS and Linux amd64.
+Windows users install from source while the package-manager path is being
+finalized.
+
+| Platform | Install path | Notes |
+| --- | --- | --- |
+| macOS arm64/x64 | Homebrew | Requires a GUI session plus Accessibility and Screen Recording permissions for desktop actions. |
+| Linux amd64 | apt | Requires an interactive X11 desktop for desktop actions. The apt package currently targets amd64. |
+| Linux arm64 | Cargo source install | No public apt package yet. |
+| Windows | Cargo source install | No public package-manager path yet. |
+
 macOS:
 
 ```bash
@@ -101,8 +112,12 @@ sootie setup
 Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe223/sootie/apt/sootie.list \
-  | sudo tee /etc/apt/sources.list.d/sootie.list >/dev/null
+sudo install -d -m 0755 /usr/share/keyrings
+curl -fsSL https://raw.githubusercontent.com/joe223/sootie/apt/sootie-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/sootie-archive-keyring.gpg >/dev/null
+sudo chmod 0644 /usr/share/keyrings/sootie-archive-keyring.gpg
+curl -fsSL https://raw.githubusercontent.com/joe223/sootie/apt/sootie.sources \
+  | sudo tee /etc/apt/sources.list.d/sootie.sources >/dev/null
 sudo apt-get update
 sudo apt-get install sootie
 sootie setup
@@ -143,7 +158,11 @@ runtime, MCP initialization, tool listing, sidecar startup, and model preload
 before returning success.
 
 Vision setup needs a Python 3.10-3.13 interpreter. If your default `python3` is
-outside that range, install a compatible Python first.
+outside that range, install a compatible Python first. The first setup run also
+needs network access to install Python packages and download the ShowUI model,
+plus enough disk and memory to preload that model. If you only need browser CDP
+or native desktop structure and do not need vision grounding yet, use
+`sootie setup --skip-sidecar` and run full setup later.
 
 CLI commands print a readable summary by default. Add `--raw` when a script
 needs the original JSON payload, for example `sootie setup --raw`.

@@ -12,9 +12,37 @@ SUITE="${2:-stable}"
 COMPONENT="${3:-main}"
 REPO="$ROOT/dist/apt"
 BASE_URL="${SOOTIE_APT_BASE_URL:-}"
+SIGNING_KEY="${SOOTIE_APT_SIGNING_KEY:-}"
+PUBLIC_KEY_FILE="${SOOTIE_APT_PUBLIC_KEY_FILE:-}"
+PUBLIC_KEY_NAME="${SOOTIE_APT_PUBLIC_KEY_NAME:-sootie-archive-keyring.gpg}"
+KEYRING_PATH="${SOOTIE_APT_KEYRING_PATH:-/usr/share/keyrings/$PUBLIC_KEY_NAME}"
+ALLOW_UNSIGNED="${SOOTIE_APT_ALLOW_UNSIGNED:-0}"
+GPG_HOMEDIR="${SOOTIE_APT_GPG_HOMEDIR:-}"
+GPG_PASSPHRASE_FILE="${SOOTIE_APT_GPG_PASSPHRASE_FILE:-}"
 
 if [[ ! -f "$DEB_PATH" ]]; then
   echo "Debian package not found: $DEB_PATH" >&2
+  exit 1
+fi
+
+SIGNED_APT=0
+if [[ -n "$SIGNING_KEY" || -n "$PUBLIC_KEY_FILE" ]]; then
+  if [[ -z "$SIGNING_KEY" || -z "$PUBLIC_KEY_FILE" ]]; then
+    echo "Set both SOOTIE_APT_SIGNING_KEY and SOOTIE_APT_PUBLIC_KEY_FILE to build a signed apt repository." >&2
+    exit 1
+  fi
+  if [[ ! -f "$PUBLIC_KEY_FILE" ]]; then
+    echo "Apt public keyring file not found: $PUBLIC_KEY_FILE" >&2
+    exit 1
+  fi
+  if ! command -v gpg >/dev/null 2>&1; then
+    echo "gpg is required to build a signed apt repository." >&2
+    exit 1
+  fi
+  SIGNED_APT=1
+elif [[ "$ALLOW_UNSIGNED" != "1" ]]; then
+  echo "A signed apt repository requires SOOTIE_APT_SIGNING_KEY and SOOTIE_APT_PUBLIC_KEY_FILE." >&2
+  echo "Set SOOTIE_APT_ALLOW_UNSIGNED=1 only for local dry-run metadata." >&2
   exit 1
 fi
 
@@ -121,12 +149,51 @@ $(release_entry sha256sum "$PACKAGES_REL")
 $(release_entry sha256sum "$PACKAGES_GZ_REL")
 EOF
 
+if [[ "$SIGNED_APT" == "1" ]]; then
+  GPG_ARGS=(gpg --batch --yes)
+  if [[ -n "$GPG_HOMEDIR" ]]; then
+    GPG_ARGS+=(--homedir "$GPG_HOMEDIR")
+  fi
+  if [[ -n "$GPG_PASSPHRASE_FILE" ]]; then
+    GPG_ARGS+=(--pinentry-mode loopback --passphrase-file "$GPG_PASSPHRASE_FILE")
+  fi
+
+  "${GPG_ARGS[@]}" \
+    --local-user "$SIGNING_KEY" \
+    --digest-algo SHA256 \
+    --clearsign \
+    --output "$RELEASE_DIR/InRelease" \
+    "$RELEASE_DIR/Release"
+  "${GPG_ARGS[@]}" \
+    --local-user "$SIGNING_KEY" \
+    --digest-algo SHA256 \
+    --detach-sign \
+    --armor \
+    --output "$RELEASE_DIR/Release.gpg" \
+    "$RELEASE_DIR/Release"
+  cp "$PUBLIC_KEY_FILE" "$REPO/$PUBLIC_KEY_NAME"
+fi
+
 if [[ -n "$BASE_URL" ]]; then
-  cat > "$REPO/sootie.list" <<EOF
+  if [[ "$SIGNED_APT" == "1" ]]; then
+    cat > "$REPO/sootie.list" <<EOF
+deb [signed-by=$KEYRING_PATH arch=$ARCH] $BASE_URL $SUITE $COMPONENT
+EOF
+
+    cat > "$REPO/sootie.sources" <<EOF
+Types: deb
+URIs: $BASE_URL
+Suites: $SUITE
+Components: $COMPONENT
+Architectures: $ARCH
+Signed-By: $KEYRING_PATH
+EOF
+  else
+    cat > "$REPO/sootie.list" <<EOF
 deb [trusted=yes arch=$ARCH] $BASE_URL $SUITE $COMPONENT
 EOF
 
-  cat > "$REPO/sootie.sources" <<EOF
+    cat > "$REPO/sootie.sources" <<EOF
 Types: deb
 URIs: $BASE_URL
 Suites: $SUITE
@@ -134,6 +201,7 @@ Components: $COMPONENT
 Architectures: $ARCH
 Trusted: yes
 EOF
+  fi
 fi
 
 cat <<EOF
@@ -141,6 +209,7 @@ repo=$REPO
 suite=$SUITE
 component=$COMPONENT
 arch=$ARCH
+signed=$SIGNED_APT
 packages=$BINARY_DIR/Packages
 release=$RELEASE_DIR/Release
 EOF

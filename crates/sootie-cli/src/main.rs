@@ -622,6 +622,17 @@ struct SetupSidecarServerReport {
 }
 
 impl SetupSidecarServerReport {
+    fn skipped(port: u16) -> Self {
+        Self {
+            ready: true,
+            port,
+            already_running: false,
+            model_ready: false,
+            model_loaded: false,
+            status: "sidecar server check skipped".to_string(),
+        }
+    }
+
     fn payload(&self) -> serde_json::Value {
         serde_json::json!({
             "ready": self.ready,
@@ -682,11 +693,17 @@ fn run_setup(options: SetupOptions, raw: bool) -> anyhow::Result<()> {
     };
 
     let sidecar_port = port_from_vision_url(&options.vision_url).unwrap_or(DEFAULT_VISION_PORT);
-    progress.step(format!(
-        "Checking sidecar command can serve HTTP on 127.0.0.1:{sidecar_port}"
-    ));
-    let sidecar_server = verify_sidecar_server_ready(&sidecar_dir, &model_path, sidecar_port)?;
-    progress.ok(&sidecar_server.status);
+    let sidecar_server = if options.skip_sidecar {
+        progress.step("Skipping vision sidecar server check");
+        SetupSidecarServerReport::skipped(sidecar_port)
+    } else {
+        progress.step(format!(
+            "Checking sidecar command can serve HTTP on 127.0.0.1:{sidecar_port}"
+        ));
+        let report = verify_sidecar_server_ready(&sidecar_dir, &model_path, sidecar_port)?;
+        progress.ok(&report.status);
+        report
+    };
 
     progress.step("Checking desktop runtime permissions and screenshot access");
     let runtime = runtime_readiness_report();
@@ -708,7 +725,8 @@ fn run_setup(options: SetupOptions, raw: bool) -> anyhow::Result<()> {
     } else {
         "platform-first"
     };
-    let ready = sidecar.ready() && sidecar_server.ready && runtime.ready && serve.ready;
+    let vision_ready = options.skip_sidecar || (sidecar.ready() && sidecar_server.ready);
+    let ready = vision_ready && runtime.ready && serve.ready;
     let payload = serde_json::json!({
         "config_path": path.display().to_string(),
         "created": written && !existed,
@@ -880,12 +898,9 @@ fn sidecar_http_health(port: u16) -> anyhow::Result<serde_json::Value> {
 
 fn setup_failure_message(payload: &serde_json::Value) -> String {
     let mut failures = Vec::new();
-    if !json_bool(
-        payload.get("sidecar").unwrap_or(&serde_json::Value::Null),
-        "ready",
-    )
-    .unwrap_or(false)
-    {
+    let sidecar = payload.get("sidecar").unwrap_or(&serde_json::Value::Null);
+    let sidecar_skipped = json_bool(sidecar, "skipped").unwrap_or(false);
+    if !sidecar_skipped && !json_bool(sidecar, "ready").unwrap_or(false) {
         failures.push("vision sidecar setup is not ready".to_string());
     }
     if !json_bool(
@@ -2027,6 +2042,24 @@ mod tests {
 
         assert!(text.contains("strategy = \"vision-only\""));
         assert!(text.contains("url = \"http://localhost:9999/vision\""));
+    }
+
+    #[test]
+    fn setup_failure_message_ignores_skipped_sidecar() {
+        let payload = serde_json::json!({
+            "sidecar": { "ready": false, "skipped": true },
+            "sidecar_server": { "ready": true },
+            "serve": { "ready": true },
+            "runtime": {
+                "runtime_ready": false,
+                "runtime_blockers": ["desktop runtime is not ready"]
+            }
+        });
+
+        let message = setup_failure_message(&payload);
+
+        assert!(!message.contains("vision sidecar setup is not ready"));
+        assert_eq!(message, "desktop runtime is not ready");
     }
 
     #[test]

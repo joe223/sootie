@@ -16,7 +16,7 @@ screenshot call, one action call, and one browser CDP call or an explicit
 reason CDP is unavailable.
 
 The minimum smoke above is only a triage gate. A platform is not fully verified
-until the full 55-tool coverage suite below has a captured response for every
+until the full 57-tool coverage suite below has a captured response for every
 public `sootie_*` tool, or a documented platform/environment reason for any
 unavailable CDP-backed browser step.
 
@@ -108,7 +108,7 @@ Required framed calls:
 Expected evidence:
 
 - `initialize` returns `serverInfo.name: "sootie"`.
-- `tools/list` returns exactly 55 tools.
+- `tools/list` returns exactly 57 tools.
 - `tools/list` marks `sootie_learn_status` with `readOnlyHint: true`.
 - `sootie_learn_status` returns `success: true`.
 
@@ -680,7 +680,7 @@ and screenshot paths in `build_artifacts` and `artifacts`. Relative artifact
 paths are resolved from the evidence JSON file's directory. The runtime
 evidence gate checks that referenced files exist, that passing build logs contain
 `exit_status=0`, that runtime-mode `doctor` agrees with the runtime summary, that the framed
-log includes the initialize response, `tools/list` with 55 tools and
+log includes the initialize response, `tools/list` with 57 tools and
 `sootie_learn_status.readOnlyHint: true`, plus a successful
 `sootie_learn_status` report, and that the raw JSON-RPC log includes
 successful tool reports for the full public surface with request/response ids

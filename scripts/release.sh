@@ -25,6 +25,8 @@ Environment:
   SOOTIE_REPO                  GitHub repo slug, default: joe223/sootie
   SOOTIE_RELEASE_ASSETS_BRANCH Asset branch, default: release-assets
   SOOTIE_APT_BRANCH            Apt repository branch, default: apt
+  SOOTIE_APT_SIGNING_KEY       GPG key id or fingerprint for signed apt metadata
+  SOOTIE_APT_PUBLIC_KEY_FILE   Public apt keyring copied to the apt branch
   SOOTIE_HOMEBREW_TAP_DIR      Homebrew tap checkout path
 EOF
 }
@@ -115,6 +117,21 @@ ensure_version_matches_workspace() {
   workspace_version="$(awk -F'"' '/^version = / { print $2; exit }' "$ROOT/Cargo.toml")"
   if [[ "$VERSION" != "$workspace_version" ]]; then
     die "requested version $VERSION does not match Cargo.toml version $workspace_version"
+  fi
+}
+
+ensure_signed_apt_for_publish() {
+  if [[ "$PUSH" != "1" ]]; then
+    return
+  fi
+  if [[ -z "${SOOTIE_APT_SIGNING_KEY:-}" ]]; then
+    die "SOOTIE_APT_SIGNING_KEY is required for --push so the apt repository is signed"
+  fi
+  if [[ -z "${SOOTIE_APT_PUBLIC_KEY_FILE:-}" ]]; then
+    die "SOOTIE_APT_PUBLIC_KEY_FILE is required for --push so apt users can install with signed-by"
+  fi
+  if [[ ! -f "$SOOTIE_APT_PUBLIC_KEY_FILE" ]]; then
+    die "SOOTIE_APT_PUBLIC_KEY_FILE does not exist: $SOOTIE_APT_PUBLIC_KEY_FILE"
   fi
 }
 
@@ -219,6 +236,7 @@ publish_tag() {
 
 ensure_version_matches_workspace
 ensure_clean_repo "$ROOT" "Sootie"
+ensure_signed_apt_for_publish
 
 if [[ "$SKIP_BUILD" == "0" ]]; then
   log "building macOS arm64 tarball"
@@ -239,7 +257,12 @@ ASSET_BASE="https://raw.githubusercontent.com/$REPO/$ASSETS_BRANCH/v$VERSION"
 APT_BASE="https://raw.githubusercontent.com/$REPO/$APT_BRANCH"
 
 log "building apt repository metadata"
-SOOTIE_APT_BASE_URL="$APT_BASE" \
+APT_REPO_ENV=(SOOTIE_APT_BASE_URL="$APT_BASE")
+if [[ -z "${SOOTIE_APT_SIGNING_KEY:-}" && -z "${SOOTIE_APT_PUBLIC_KEY_FILE:-}" ]]; then
+  log "building unsigned apt metadata for dry-run only"
+  APT_REPO_ENV+=(SOOTIE_APT_ALLOW_UNSIGNED=1)
+fi
+env "${APT_REPO_ENV[@]}" \
   "$ROOT/scripts/build-apt-repo.sh" "$ROOT/dist/sootie_${VERSION}_amd64.deb"
 
 log "rendering Homebrew formula"

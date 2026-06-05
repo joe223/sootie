@@ -16,8 +16,12 @@ apt repository reachable before the release is considered installable.
 Linux users add the apt source once:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe223/sootie/apt/sootie.list \
-  | sudo tee /etc/apt/sources.list.d/sootie.list >/dev/null
+sudo install -d -m 0755 /usr/share/keyrings
+curl -fsSL https://raw.githubusercontent.com/joe223/sootie/apt/sootie-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/sootie-archive-keyring.gpg >/dev/null
+sudo chmod 0644 /usr/share/keyrings/sootie-archive-keyring.gpg
+curl -fsSL https://raw.githubusercontent.com/joe223/sootie/apt/sootie.sources \
+  | sudo tee /etc/apt/sources.list.d/sootie.sources >/dev/null
 sudo apt-get update
 sudo apt-get install sootie
 ```
@@ -37,24 +41,34 @@ payload must add `--raw`, for example `sootie doctor --check --raw`.
 Run the release script from a clean Sootie checkout:
 
 ```bash
-scripts/release.sh 0.1.0 --push
+SOOTIE_APT_SIGNING_KEY=<gpg-key-id-or-fingerprint> \
+SOOTIE_APT_PUBLIC_KEY_FILE=/path/to/sootie-archive-keyring.gpg \
+  scripts/release.sh <version> --push
 ```
 
-The version must match the workspace version in `Cargo.toml`. The script builds
-and publishes:
+The version must match the workspace version in `Cargo.toml`. The `--push`
+release path requires apt signing configuration so Linux users install with a
+normal `signed-by` keyring instead of `trusted=yes`. The script builds and
+publishes:
 
 ```text
-release-assets/v0.1.0/sootie-0.1.0-macos-arm64.tar.gz
-release-assets/v0.1.0/sootie-0.1.0-macos-x64.tar.gz
-release-assets/v0.1.0/sootie_0.1.0_amd64.deb
+release-assets/v<version>/sootie-<version>-macos-arm64.tar.gz
+release-assets/v<version>/sootie-<version>-macos-x64.tar.gz
+release-assets/v<version>/sootie_<version>_amd64.deb
+apt/sootie-archive-keyring.gpg
 apt/dists/stable/Release
+apt/dists/stable/InRelease
+apt/dists/stable/Release.gpg
 apt/dists/stable/main/binary-amd64/Packages.gz
 apt/sootie.list
+apt/sootie.sources
 ```
 
 It also updates `joe223/homebrew-sootie` with a checksum-pinned formula for
 macOS arm64 and x64, then runs `scripts/check-distribution-entrypoints.sh`
-against the public URLs.
+against the public URLs. The public check downloads the package for the current
+host platform when possible and runs `sootie tools --raw` from the published
+binary so stale release assets fail the release gate.
 
 The `release-assets` branch is versioned by directory. Do not create a new
 asset branch for every version. Release assets are immutable: never overwrite
@@ -86,11 +100,11 @@ Generate a Homebrew formula after both macOS tarballs exist:
 
 ```bash
 scripts/render-homebrew-formula.sh \
-  0.1.0 \
-  https://raw.githubusercontent.com/joe223/sootie/release-assets/v0.1.0/sootie-0.1.0-macos-arm64.tar.gz \
-  dist/sootie-0.1.0-macos-arm64.tar.gz \
-  https://raw.githubusercontent.com/joe223/sootie/release-assets/v0.1.0/sootie-0.1.0-macos-x64.tar.gz \
-  dist/sootie-0.1.0-macos-x64.tar.gz
+  <version> \
+  https://raw.githubusercontent.com/joe223/sootie/release-assets/v<version>/sootie-<version>-macos-arm64.tar.gz \
+  dist/sootie-<version>-macos-arm64.tar.gz \
+  https://raw.githubusercontent.com/joe223/sootie/release-assets/v<version>/sootie-<version>-macos-x64.tar.gz \
+  dist/sootie-<version>-macos-x64.tar.gz
 ```
 
 Build a Debian package on Linux:
@@ -102,15 +116,20 @@ scripts/build-deb.sh
 The script emits:
 
 ```text
-dist/sootie_0.1.0_amd64.deb
+dist/sootie_<version>_amd64.deb
 ```
 
 Build apt repository metadata:
 
 ```bash
 SOOTIE_APT_BASE_URL=https://raw.githubusercontent.com/joe223/sootie/apt \
-  scripts/build-apt-repo.sh dist/sootie_0.1.0_amd64.deb
+SOOTIE_APT_SIGNING_KEY=<gpg-key-id-or-fingerprint> \
+SOOTIE_APT_PUBLIC_KEY_FILE=/path/to/sootie-archive-keyring.gpg \
+  scripts/build-apt-repo.sh dist/sootie_<version>_amd64.deb
 ```
+
+For local dry-run metadata only, set `SOOTIE_APT_ALLOW_UNSIGNED=1`. Do not
+publish unsigned apt metadata.
 
 ## Verification
 
@@ -130,3 +149,9 @@ After publishing, verify the public installation entrypoints:
 ```bash
 scripts/check-distribution-entrypoints.sh
 ```
+
+The public check verifies the Homebrew formula version, release asset URLs, apt
+source signing, apt metadata version, Debian package metadata, and the published
+binary tool contract on compatible hosts. Local unsigned dry-run repositories can
+be checked with `SOOTIE_REQUIRE_SIGNED_APT=0`; public release checks should keep
+the default signed-source requirement.
