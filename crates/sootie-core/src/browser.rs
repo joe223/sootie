@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,7 @@ struct ManagedBrowser {
     port: u16,
     browser: String,
     profile: Option<String>,
+    headless: bool,
     user_data_dir: PathBuf,
 }
 
@@ -54,12 +55,9 @@ impl BrowserService {
         let browser = str_arg(args, "browser").unwrap_or_else(|| "chrome".into());
         let profile = str_arg(args, "profile");
         let mode = str_arg(args, "mode");
-        let incognito = profile
-            .as_deref()
-            .is_some_and(|value| value.eq_ignore_ascii_case("incognito"))
-            || mode
-                .as_deref()
-                .is_some_and(|value| value.eq_ignore_ascii_case("incognito"));
+        let incognito = launch_value_has_token(profile.as_deref(), "incognito")
+            || launch_value_has_token(mode.as_deref(), "incognito");
+        let headless = browser_launch_headless(args, mode.as_deref(), profile.as_deref());
         let port = u32_arg(args, "port")
             .and_then(|port| u16::try_from(port).ok())
             .unwrap_or_else(free_local_port);
@@ -77,15 +75,11 @@ impl BrowserService {
 
         let mut command = Command::new(&executable);
         command
-            .arg(format!("--remote-debugging-port={port}"))
-            .arg(format!("--user-data-dir={}", user_data_dir.display()))
-            .arg("--no-first-run")
-            .arg("--no-default-browser-check")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        if incognito {
-            command.arg("--incognito");
+        for arg in browser_launch_args(port, &user_data_dir, incognito, headless) {
+            command.arg(arg);
         }
         if let Some(url) = str_arg(args, "url") {
             command.arg(url);
@@ -124,6 +118,7 @@ impl BrowserService {
                 port,
                 browser: browser.clone(),
                 profile: profile.clone().or_else(|| mode.clone()),
+                headless,
                 user_data_dir: user_data_dir.clone(),
             },
         );
@@ -135,6 +130,7 @@ impl BrowserService {
             "endpoint": format!("http://127.0.0.1:{port}"),
             "browser": browser,
             "is_incognito": incognito,
+            "is_headless": headless,
             "profile": profile.or(mode),
             "user_data_dir": user_data_dir,
             "pages": pages_payload(&pages, self.selected_page_id.as_deref()),
@@ -191,6 +187,7 @@ impl BrowserService {
             "browser_id": browser_id(launch.port),
             "browser": launch.browser,
             "profile": launch.profile,
+            "is_headless": launch.headless,
             "user_data_dir": launch.user_data_dir,
             "exit_status": status.map(|status| status.to_string()),
         }))
@@ -1361,6 +1358,63 @@ fn browser_target(args: &Value) -> Value {
     Value::Object(target)
 }
 
+fn browser_launch_headless(args: &Value, mode: Option<&str>, profile: Option<&str>) -> bool {
+    if let Some(value) = bool_arg(args, "headless") {
+        return value;
+    }
+    if let Some(mode) = mode {
+        return launch_value_has_token(Some(mode), "headless");
+    }
+    if let Some(profile) = profile {
+        if launch_value_has_token(Some(profile), "headless") {
+            return true;
+        }
+        if launch_value_has_token(Some(profile), "visible")
+            || launch_value_has_token(Some(profile), "normal")
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn launch_value_has_token(value: Option<&str>, token: &str) -> bool {
+    value
+        .map(|value| {
+            value
+                .split(|character: char| {
+                    character == '-'
+                        || character == '_'
+                        || character == ','
+                        || character.is_whitespace()
+                })
+                .any(|part| part.eq_ignore_ascii_case(token))
+        })
+        .unwrap_or(false)
+}
+
+fn browser_launch_args(
+    port: u16,
+    user_data_dir: &Path,
+    incognito: bool,
+    headless: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        format!("--remote-debugging-port={port}"),
+        format!("--user-data-dir={}", user_data_dir.display()),
+        "--no-first-run".to_string(),
+        "--no-default-browser-check".to_string(),
+    ];
+    if headless {
+        args.push("--headless=new".to_string());
+        args.push("--disable-gpu".to_string());
+    }
+    if incognito {
+        args.push("--incognito".to_string());
+    }
+    args
+}
+
 fn has_target(args: &Value) -> bool {
     browser_target(args)
         .as_object()
@@ -1976,6 +2030,47 @@ mod tests {
             "target": { "page": true }
         }));
         assert_eq!(target, json!({ "page": true }));
+    }
+
+    #[test]
+    fn browser_launch_defaults_to_headless() {
+        assert!(browser_launch_headless(&json!({}), None, None));
+
+        let args = browser_launch_args(9222, Path::new("/tmp/sootie-headless"), false, true);
+        assert!(args.contains(&"--headless=new".to_string()));
+        assert!(args.contains(&"--disable-gpu".to_string()));
+        assert!(!args.contains(&"--incognito".to_string()));
+    }
+
+    #[test]
+    fn browser_launch_can_request_visible_mode() {
+        assert!(!browser_launch_headless(&json!({}), Some("normal"), None));
+        assert!(!browser_launch_headless(
+            &json!({ "headless": false }),
+            None,
+            Some("incognito"),
+        ));
+
+        let args = browser_launch_args(9222, Path::new("/tmp/sootie-visible"), true, false);
+        assert!(!args.contains(&"--headless=new".to_string()));
+        assert!(args.contains(&"--incognito".to_string()));
+    }
+
+    #[test]
+    fn browser_launch_accepts_headless_incognito_mode() {
+        assert!(browser_launch_headless(
+            &json!({}),
+            Some("headless-incognito"),
+            None,
+        ));
+        assert!(launch_value_has_token(
+            Some("headless-incognito"),
+            "incognito"
+        ));
+
+        let args = browser_launch_args(9222, Path::new("/tmp/sootie-private"), true, true);
+        assert!(args.contains(&"--headless=new".to_string()));
+        assert!(args.contains(&"--incognito".to_string()));
     }
 
     #[test]

@@ -245,6 +245,11 @@ endpoint:
 SOOTIE_CDP_PORT=9222 sootie serve
 ```
 
+For browser-only work, `sootie_browser_launch` starts a managed headless browser
+by default so pages, screenshots, and extraction do not interrupt the user's
+visible desktop. Pass `mode: "normal"` or `headless: false` when the user needs
+to see or manually help with the browser.
+
 macOS Chrome example:
 
 ```bash

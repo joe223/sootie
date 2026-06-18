@@ -27,7 +27,7 @@
 {"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"sootie_long_press","arguments":{"x":100,"y":100,"duration":0.05,"button":"left"}}}
 {"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"sootie_drag","arguments":{"from_x":100,"from_y":100,"to_x":110,"to_y":110,"duration":0.05,"hold_duration":0}}}
 {"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"sootie_wait","arguments":{"app":"<disposable app>","condition":"titleContains","value":"<visible window title>","timeout":1}}}
-{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"sootie_browser_launch","arguments":{"browser":"chrome","mode":"incognito","url":"<browser smoke url>","timeout_ms":10000}}}
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"sootie_browser_launch","arguments":{"browser":"chrome","mode":"headless-incognito","url":"<browser smoke url>","timeout_ms":10000}}}
 {"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"sootie_browser_connect","arguments":{"port":"<cdp port>"}}}
 {"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"sootie_browser_pages","arguments":{"port":"<cdp port>"}}}
 {"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"sootie_browser_open","arguments":{"port":"<cdp port>","url":"<browser smoke url>","new_page":true,"wait_until":"load"}}}

@@ -163,7 +163,7 @@ const expectedTools = [
   ],
   [
     "sootie_browser_launch",
-    { browser: "string", mode: "string", port: "integer", profile: "string", timeout_ms: "integer", url: "string", user_data_dir: "string" },
+    { browser: "string", headless: "boolean", mode: "string", port: "integer", profile: "string", timeout_ms: "integer", url: "string", user_data_dir: "string" },
     [],
   ],
   [

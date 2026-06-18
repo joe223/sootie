@@ -67,7 +67,7 @@ Browser-native tools are meant for browser-first agents and web automation:
 
 | Tool | Purpose |
 | --- | --- |
-| `sootie_browser_launch` | Launch Chrome, Edge, or Chromium with a managed CDP endpoint and return a `launch_id`. |
+| `sootie_browser_launch` | Launch headless-by-default Chrome, Edge, or Chromium with a managed CDP endpoint and return a `launch_id`. |
 | `sootie_browser_connect` | Connect to a CDP endpoint and return pages. |
 | `sootie_browser_pages` | List current pages/tabs. |
 | `sootie_browser_select_page` | Set the default page for later browser calls. |
@@ -95,6 +95,11 @@ Browser-native tools are meant for browser-first agents and web automation:
 | `sootie_browser_pdf` | Render the page as PDF. |
 | `sootie_cdp_send` | Send a guarded raw CDP command. |
 | `sootie_cdp_subscribe` | Collect a bounded batch of CDP events. |
+
+`sootie_browser_launch` defaults to headless so browser-only browsing,
+screenshots, extraction, and form work do not interrupt the user's visible
+desktop session. Pass `mode: "normal"` or `headless: false` only when the user
+needs to see or manually help with the browser.
 
 `sootie_browser_observe` and `sootie_browser_find` return compact browser
 elements with a stable short-lived `ref` such as `br_17`. The browser element

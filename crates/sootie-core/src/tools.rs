@@ -282,7 +282,7 @@ fn tool_definition(name: &str) -> ToolDefinition {
         ),
         "sootie_browser_launch" => tool(
             name,
-            "Launch a browser with a managed CDP endpoint and connect to it.",
+            "Launch a browser with a managed CDP endpoint and connect to it. Prefer headless for browser-only work unless the user needs a visible window.",
             browser_launch_props(),
             &[],
         ),
@@ -715,7 +715,16 @@ fn browser_launch_props() -> Value {
             "string",
             "Browser profile hint, for example incognito.",
         ),
-        ("mode", "string", "normal/incognito."),
+        (
+            "mode",
+            "string",
+            "headless/headless-incognito/normal/incognito. Defaults to headless.",
+        ),
+        (
+            "headless",
+            "boolean",
+            "Run without opening a visible browser window. Defaults to true unless mode is normal or incognito.",
+        ),
         (
             "port",
             "integer",
@@ -1362,6 +1371,7 @@ mod tests {
                     "browser",
                     "profile",
                     "mode",
+                    "headless",
                     "port",
                     "url",
                     "user_data_dir",

@@ -173,7 +173,7 @@ read-only inspection from mutating desktop actions before dispatch:
 | `sootie_parse_screen` | none | `app`, `window`, `full_resolution` | screenshot payload plus `elements`, `element_count`, `source` |
 | `sootie_ground` | `description` | `app`, `crop_box` | ranked candidates or vision-grounded point |
 | `sootie_annotate` | none | `app`, `roles`, `max_labels` | annotated image payload and text index |
-| `sootie_browser_launch` | none | `browser`, `profile`, `mode`, `port`, `url`, `user_data_dir`, `timeout_ms` | `connected`, `browser_id`, `launch_id`, `endpoint`, `is_incognito`, `pages` |
+| `sootie_browser_launch` | none | `browser`, `profile`, `mode`, `headless`, `port`, `url`, `user_data_dir`, `timeout_ms` | `connected`, `browser_id`, `launch_id`, `endpoint`, `is_incognito`, `is_headless`, `pages` |
 | `sootie_browser_connect` | none | `port`, `ws_url`, `browser`, `profile`, `timeout_ms` | `connected`, `browser_id`, `endpoint`, `pages` |
 | `sootie_browser_pages` | none | `browser_id`, `port`, `ws_url`, `include_inactive` | `browser_id`, `pages` |
 | `sootie_browser_select_page` | `page_id` | `browser_id`, `port`, `ws_url` | selected `page` |
