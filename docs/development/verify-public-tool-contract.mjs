@@ -3,7 +3,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
-const expectedTools = [
+function publicToolName(name) {
+  return name.startsWith("sootie_") ? name.slice("sootie_".length) : name;
+}
+
+const expectedLegacyTools = [
   ["sootie_context", { app: "string" }, []],
   ["sootie_state", { app: "string" }, []],
   [
@@ -254,6 +258,12 @@ const expectedTools = [
   ["sootie_learn_status", {}, []],
 ];
 
+const expectedTools = expectedLegacyTools.map(([name, properties, required]) => [
+  publicToolName(name),
+  properties,
+  required,
+]);
+
 const forbiddenPublicFields = [
   "target",
   "from_target",
@@ -358,14 +368,14 @@ function main() {
       }
     }
 
-    if (!name.startsWith("sootie_browser_") && !name.startsWith("sootie_cdp_")) {
+    if (!name.startsWith("browser_") && !name.startsWith("cdp_")) {
       for (const property of forbiddenPublicFields) {
         if (Object.hasOwn(properties || {}, property)) {
           errors.push(`${name}: unexpectedly advertises ${property}`);
         }
       }
     }
-    if (name !== "sootie_ground" && Object.hasOwn(properties || {}, "description")) {
+    if (name !== "ground" && Object.hasOwn(properties || {}, "description")) {
       errors.push(`${name}: unexpectedly advertises description`);
     }
   }

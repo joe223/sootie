@@ -250,14 +250,14 @@ function verifyFramedJsonRpcLog(file, expectedToolCount) {
   const entries = parseJsonLines(file);
   const reports = entries.map(responseReport).filter(Boolean);
   const learnStatus = reports.find(
-    (report) => report.tool === "sootie_learn_status",
+    (report) => report.tool === "learn_status",
   );
   const toolsListResponse = entries.find(
     (entry) => entry.value.id === "framed-tools-list",
   )?.value;
   const tools = toolsListResponse?.result?.tools;
   const learnStatusTool = Array.isArray(tools)
-    ? tools.find((tool) => tool?.name === "sootie_learn_status")
+    ? tools.find((tool) => tool?.name === "learn_status")
     : null;
   const ids = entries
     .map((entry) => entry.value.id)
@@ -281,16 +281,16 @@ function verifyFramedJsonRpcLog(file, expectedToolCount) {
     );
   }
   if (!learnStatusTool) {
-    errors.push("framed tools/list must include sootie_learn_status");
+    errors.push("framed tools/list must include learn_status");
   } else if (learnStatusTool.annotations?.readOnlyHint !== true) {
     errors.push(
-      "framed tools/list must mark sootie_learn_status readOnlyHint true",
+      "framed tools/list must mark learn_status readOnlyHint true",
     );
   }
   if (!learnStatus) {
-    errors.push("framed log must include sootie_learn_status report");
+    errors.push("framed log must include learn_status report");
   } else if (!learnStatus.success) {
-    errors.push("framed sootie_learn_status report must be successful");
+    errors.push("framed learn_status report must be successful");
   }
   if (duplicate_response_ids.length > 0) {
     errors.push(
@@ -495,7 +495,7 @@ function validateEvidence(file, evidence, expectedTools, templateById, buildOnly
       build_artifacts,
       artifact_checks,
       doctor_json: null,
-      sootie_runtime_log: null,
+      runtime_log: null,
       screenshot: null,
       raw_json_rpc_log: null,
       framed_json_rpc_log: null,
@@ -557,7 +557,7 @@ function validateEvidence(file, evidence, expectedTools, templateById, buildOnly
     "doctor_json",
     "raw_json_rpc_log",
     "framed_json_rpc_log",
-    "sootie_runtime_log",
+    "runtime_log",
     "screenshot",
   ]) {
     if (!isNonEmptyString(artifacts[name])) {
@@ -586,14 +586,14 @@ function validateEvidence(file, evidence, expectedTools, templateById, buildOnly
     }
   }
 
-  let sootie_runtime_log = null;
-  const runtimeLogPath = artifacts.sootie_runtime_log;
+  let runtime_log = null;
+  const runtimeLogPath = artifacts.runtime_log;
   if (isNonEmptyString(runtimeLogPath)) {
     const runtimeLogFile = resolveEvidencePath(file, runtimeLogPath);
     if (fileExists(runtimeLogFile)) {
-      sootie_runtime_log = verifyRuntimeLog(runtimeLogFile);
-      for (const error of sootie_runtime_log.errors) {
-        errors.push(`artifacts.sootie_runtime_log ${error}`);
+      runtime_log = verifyRuntimeLog(runtimeLogFile);
+      for (const error of runtime_log.errors) {
+        errors.push(`artifacts.runtime_log ${error}`);
       }
     }
   }
@@ -688,7 +688,7 @@ function validateEvidence(file, evidence, expectedTools, templateById, buildOnly
     build_artifacts,
     artifact_checks,
     doctor_json,
-    sootie_runtime_log,
+    runtime_log,
     screenshot,
     raw_json_rpc_log,
     framed_json_rpc_log,

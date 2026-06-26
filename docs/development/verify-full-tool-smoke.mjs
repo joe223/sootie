@@ -62,7 +62,7 @@ function readToolNames() {
   if (end === -1) {
     throw new Error("TOOL_NAMES block terminator not found");
   }
-  return [...source.slice(start, end).matchAll(/"(sootie_[a-z_]+)"/g)].map(
+  return [...source.slice(start, end).matchAll(/"([a-z][a-z_]+)"/g)].map(
     (match) => match[1],
   );
 }
@@ -129,21 +129,21 @@ function compareTemplateResponses(templateById, reports) {
 }
 
 function learningOrderErrors(templateTools) {
-  const start = templateTools.indexOf("sootie_learn_start");
-  const status = templateTools.indexOf("sootie_learn_status");
-  const stop = templateTools.indexOf("sootie_learn_stop");
+  const start = templateTools.indexOf("learn_start");
+  const status = templateTools.indexOf("learn_status");
+  const stop = templateTools.indexOf("learn_stop");
   const recordableTools = new Set([
-    "sootie_click",
-    "sootie_type",
-    "sootie_press",
-    "sootie_hotkey",
-    "sootie_scroll",
-    "sootie_hover",
-    "sootie_long_press",
-    "sootie_drag",
-    "sootie_focus",
-    "sootie_window",
-    "sootie_wait",
+    "click",
+    "type",
+    "press",
+    "hotkey",
+    "scroll",
+    "hover",
+    "long_press",
+    "drag",
+    "focus",
+    "window",
+    "wait",
   ]);
   const errors = [];
   if (start === -1 || status === -1 || stop === -1) {

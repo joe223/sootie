@@ -338,7 +338,7 @@ async function main() {
       id: "save-flower-demo-recipe",
       method: "tools/call",
       params: {
-        name: "sootie_recipe_save",
+        name: "recipe_save",
         arguments: { recipe_json: recipeJson },
       },
     });
@@ -348,7 +348,7 @@ async function main() {
       id: "run-flower-demo",
       method: "tools/call",
       params: {
-        name: "sootie_run",
+        name: "run",
         arguments: { recipe },
       },
     });

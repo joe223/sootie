@@ -203,7 +203,7 @@ function responseReport(response) {
 function extractScreenshot(rawLogFile, screenshotFile) {
   for (const response of parseJsonLines(rawLogFile)) {
     const item = responseReport(response);
-    if (item?.report.tool !== "sootie_screenshot") {
+    if (item?.report.tool !== "screenshot") {
       continue;
     }
     const data = item.structured?.data;
@@ -219,7 +219,7 @@ function extractScreenshot(rawLogFile, screenshotFile) {
     };
   }
   throw new Error(
-    `no successful sootie_screenshot PNG payload found in ${rawLogFile}`,
+    `no successful screenshot PNG payload found in ${rawLogFile}`,
   );
 }
 
@@ -451,7 +451,7 @@ function main() {
         jsonrpc: "2.0",
         id: "framed-learn-status",
         method: "tools/call",
-        params: { name: "sootie_learn_status", arguments: {} },
+        params: { name: "learn_status", arguments: {} },
       },
     ]
       .map((request) => JSON.stringify(request))
@@ -521,7 +521,7 @@ function main() {
       doctor_json: relativeToOutput(outputDir, doctorJson),
       raw_json_rpc_log: relativeToOutput(outputDir, rawJsonRpcLog),
       framed_json_rpc_log: relativeToOutput(outputDir, framedJsonRpcLog),
-      sootie_runtime_log: relativeToOutput(outputDir, runtimeLog),
+      runtime_log: relativeToOutput(outputDir, runtimeLog),
       screenshot: relativeToOutput(outputDir, screenshot),
     },
     notes:

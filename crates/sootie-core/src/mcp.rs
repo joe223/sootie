@@ -22,7 +22,7 @@ use crate::recipe_runtime::{
     recipe_error_coordinate_fallback_reason, recipe_primary_dispatch_args,
     resolve_recipe_coordinate_spaces,
 };
-use crate::tools::tool_definitions;
+use crate::tools::{canonical_tool_name, legacy_tool_name, tool_definitions};
 use crate::types::{
     ActionResult, AppInfo, Bounds, ElementInfo, FindQuery, RuntimeDiagnostic, Screenshot,
     SootieError, SootieResult, ToolResult, WindowCommand, WindowInfo,
@@ -383,26 +383,29 @@ impl McpServer {
             .get("name")
             .and_then(Value::as_str)
             .ok_or_else(|| SootieError::InvalidArguments("tools/call requires name".to_string()))?;
+        let dispatch_name = legacy_tool_name(name);
         let args = tool_call_args(name, params);
         let started = Instant::now();
-        let result =
-            validate_public_tool_args(name, &args).and_then(|_| self.dispatch(name, &args));
+        let result = validate_public_tool_args(name, &args)
+            .and_then(|_| self.dispatch(&dispatch_name, &args));
         let elapsed_ms = started.elapsed().as_millis();
         match &result {
             Ok(result) => tracing::info!(
                 tool = name,
+                dispatch_tool = %dispatch_name,
                 success = result.success,
                 elapsed_ms,
                 "Sootie tool call completed"
             ),
             Err(error) => tracing::warn!(
                 tool = name,
+                dispatch_tool = %dispatch_name,
                 elapsed_ms,
                 %error,
                 "Sootie tool call failed"
             ),
         }
-        self.record_learning_event(name, &args, &result);
+        self.record_learning_event(&dispatch_name, &args, &result);
         Ok(format_tool_result(name, args, result, elapsed_ms))
     }
 
@@ -1233,13 +1236,14 @@ impl McpServer {
         tool: &str,
         args: &Value,
     ) -> SootieResult<RecipeDispatchOutcome> {
+        let dispatch_tool = legacy_tool_name(tool);
         let mut primary_args = recipe_primary_dispatch_args(args);
         let mut fallback_args = recipe_coordinate_fallback_args(args);
-        suppress_recipe_action_context(tool, &mut primary_args);
+        suppress_recipe_action_context(&dispatch_tool, &mut primary_args);
         if let Some(fallback_args) = fallback_args.as_mut() {
-            suppress_recipe_action_context(tool, fallback_args);
+            suppress_recipe_action_context(&dispatch_tool, fallback_args);
         }
-        match self.dispatch(tool, &primary_args) {
+        match self.dispatch(&dispatch_tool, &primary_args) {
             Ok(result) if result.success => Ok(RecipeDispatchOutcome {
                 result,
                 fallback_used: false,
@@ -1251,7 +1255,7 @@ impl McpServer {
                     .as_deref()
                     .and_then(recipe_coordinate_fallback_reason);
                 if let (Some(fallback_args), Some(reason)) = (fallback_args, fallback_reason) {
-                    let fallback = self.dispatch(tool, &fallback_args)?;
+                    let fallback = self.dispatch(&dispatch_tool, &fallback_args)?;
                     return Ok(RecipeDispatchOutcome {
                         result: fallback,
                         fallback_used: true,
@@ -1269,7 +1273,7 @@ impl McpServer {
                     fallback_args,
                     recipe_error_coordinate_fallback_reason(&error),
                 ) {
-                    let fallback = self.dispatch(tool, &fallback_args)?;
+                    let fallback = self.dispatch(&dispatch_tool, &fallback_args)?;
                     return Ok(RecipeDispatchOutcome {
                         result: fallback,
                         fallback_used: true,
@@ -1980,7 +1984,7 @@ fn normalize_tool_args(name: &str, raw: Value) -> Value {
 }
 
 fn tool_uses_params_field(name: &str) -> bool {
-    matches!(name, "sootie_run" | "sootie_cdp_send")
+    matches!(canonical_tool_name(name), "run" | "cdp_send")
 }
 
 fn merge_argument_envelope(inner: Value, rest: serde_json::Map<String, Value>) -> Value {
@@ -1999,10 +2003,11 @@ fn validate_public_tool_args(name: &str, args: &Value) -> SootieResult<()> {
             "{name} arguments must be an object"
         )));
     };
+    let public_name = canonical_tool_name(name);
     let definitions = tool_definitions();
     let tool = definitions
         .iter()
-        .find(|tool| tool.name == name)
+        .find(|tool| tool.name == public_name)
         .ok_or_else(|| SootieError::Unsupported(format!("unknown tool '{name}'")))?;
     let properties = tool.input_schema["properties"]
         .as_object()
@@ -5707,17 +5712,14 @@ mod tests {
 
         let status = tools
             .iter()
-            .find(|tool| tool["name"] == "sootie_learn_status")
+            .find(|tool| tool["name"] == "learn_status")
             .unwrap();
         assert_eq!(status["annotations"]["readOnlyHint"], true);
         assert_eq!(status["annotations"]["destructiveHint"], false);
         assert_eq!(status["annotations"]["idempotentHint"], true);
         assert_eq!(status["annotations"]["openWorldHint"], false);
 
-        let click = tools
-            .iter()
-            .find(|tool| tool["name"] == "sootie_click")
-            .unwrap();
+        let click = tools.iter().find(|tool| tool["name"] == "click").unwrap();
         assert_eq!(click["annotations"]["readOnlyHint"], false);
         assert_eq!(click["annotations"]["destructiveHint"], true);
         assert_eq!(click["annotations"]["idempotentHint"], false);
@@ -5837,7 +5839,8 @@ mod tests {
     }
 
     fn smoke_arguments_for_tool(name: &str) -> Value {
-        match name {
+        let legacy_name = legacy_tool_name(name);
+        match legacy_name.as_str() {
             "sootie_context"
             | "sootie_state"
             | "sootie_find"

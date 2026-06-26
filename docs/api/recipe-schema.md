@@ -1,11 +1,11 @@
 # Recipe Schema
 
 Sootie recipes are JSON documents that can be saved with
-`sootie_recipe_save`, listed with `sootie_recipes`, inspected with
-`sootie_recipe_show`, deleted with `sootie_recipe_delete`, and executed with
-`sootie_run`.
+`recipe_save`, listed with `recipes`, inspected with
+`recipe_show`, deleted with `recipe_delete`, and executed with
+`run`.
 
-`sootie_recipe_save.recipe_json` accepts either this JSON object directly or a
+`recipe_save.recipe_json` accepts either this JSON object directly or a
 string containing the same JSON.
 
 ## Top-Level Shape
@@ -38,7 +38,7 @@ string containing the same JSON.
 | `name` | yes | Recipe name. It must not contain path separators. |
 | `description` | no | Human description. |
 | `app` | no | Default app selector applied to steps that do not provide one. |
-| `params` | no | Named runtime parameters accepted by `sootie_run.params`. |
+| `params` | no | Named runtime parameters accepted by `run.params`. |
 | `preconditions` | no | Conditions checked before steps run. |
 | `steps` | no | Ordered recipe steps. |
 | `on_failure` | no | Recipe-level failure policy. `skip` continues after a failed step; the default stops. |
@@ -48,7 +48,7 @@ treated as an empty parameter map for compatibility with older recordings.
 
 ## Parameter Substitution
 
-Runtime params are passed through `sootie_run`:
+Runtime params are passed through `run`:
 
 ```json
 {
@@ -63,7 +63,7 @@ String values in step arguments can reference params with `{{name}}`:
 
 ```json
 {
-  "tool": "sootie_type",
+  "tool": "type",
   "args": {
     "text": "{{query}}"
   }
@@ -71,7 +71,7 @@ String values in step arguments can reference params with `{{name}}`:
 ```
 
 Required params declared with `"required": true` must be present in
-`sootie_run.params`.
+`run.params`.
 
 ## Preconditions
 
@@ -94,7 +94,7 @@ A step can call a Sootie tool directly:
 ```json
 {
   "id": 1,
-  "tool": "sootie_click",
+  "tool": "click",
   "args": {
     "query": "Search"
   },
@@ -181,7 +181,7 @@ where `0.0, 0.0` is the top-left corner and `1.0, 1.0` is the bottom-right
 corner. `normalized_coordinate` is accepted as an alias for
 `window_normalized_coordinate`.
 
-When a target contains both semantic selectors and a coordinate, `sootie_run`
+When a target contains both semantic selectors and a coordinate, `run`
 uses the semantic selector first. The coordinate is retained as a fallback and
 is remapped against the current app/window frame when the semantic target cannot
 be resolved. Durable recipes should therefore prefer `name`, `role`, `dom_id`,
@@ -191,7 +191,7 @@ If `window` is provided for a coordinate target, that window title must match
 the current app state. Sootie will not remap coordinates against a different
 focused or first window when the explicit window is missing.
 
-`sootie_learn_stop` returns both the raw recorded `actions` and a generated
+`learn_stop` returns both the raw recorded `actions` and a generated
 `recipe`/`recipe_json` draft. The generated recipe follows the same rule:
 semantic information is preserved when available, and pointer coordinates are
 stored as window-normalized fallbacks when Sootie can identify the active window
@@ -205,20 +205,20 @@ adding a public clipboard MCP tool.
 
 | Recipe action | Sootie tool |
 | --- | --- |
-| `screenshot` | `sootie_screenshot` |
-| `click` | `sootie_click` |
-| `hover` | `sootie_hover` |
-| `long_press` | `sootie_long_press` |
-| `drag` | `sootie_drag` |
-| `type` | `sootie_type` |
-| `paste_text` | `sootie_type` |
+| `screenshot` | `screenshot` |
+| `click` | `click` |
+| `hover` | `hover` |
+| `long_press` | `long_press` |
+| `drag` | `drag` |
+| `type` | `type` |
+| `paste_text` | `type` |
 | `set_clipboard` / `clipboard_set` | Internal recipe clipboard step |
-| `press` | `sootie_press` |
-| `hotkey` | `sootie_hotkey` |
-| `scroll` | `sootie_scroll` |
-| `focus` | `sootie_focus` |
-| `window` | `sootie_window` |
-| `wait` | `sootie_wait` or a delay step |
+| `press` | `press` |
+| `hotkey` | `hotkey` |
+| `scroll` | `scroll` |
+| `focus` | `focus` |
+| `window` | `window` |
+| `wait` | `wait` or a delay step |
 
 `set_clipboard` is intentionally recipe-scoped rather than a public MCP tool. It
 lets a durable recipe stage text, SVG, or other text-based paste payloads before

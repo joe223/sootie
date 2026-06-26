@@ -2155,14 +2155,11 @@ mod tests {
 
         let status = tools
             .iter()
-            .find(|tool| tool["name"] == "sootie_learn_status")
+            .find(|tool| tool["name"] == "learn_status")
             .unwrap();
         assert_eq!(status["annotations"]["readOnlyHint"].as_bool(), Some(true));
 
-        let click = tools
-            .iter()
-            .find(|tool| tool["name"] == "sootie_click")
-            .unwrap();
+        let click = tools.iter().find(|tool| tool["name"] == "click").unwrap();
         assert_eq!(
             click["annotations"]["destructiveHint"].as_bool(),
             Some(true)

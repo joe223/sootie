@@ -1,8 +1,12 @@
 # MCP Tools Reference
 
-Sootie exposes MCP tools over stdio JSON-RPC. Tool names are Sootie-specific
-and use the `sootie_*` prefix. Input and output data shapes are portable across
-macOS, Linux, and Windows backends.
+Sootie exposes MCP tools over stdio JSON-RPC. Public tool names are short
+Sootie-specific names such as `context`, `click`, and `browser_open`. This
+keeps clients that namespace tools by MCP server from displaying duplicated
+names such as `sootie_sootie_browser_open`. Older `sootie_*` names remain
+accepted as compatibility aliases for direct JSON-RPC callers and saved
+recipes. Input and output data shapes are portable across macOS, Linux, and
+Windows backends.
 
 ## Transport
 
@@ -14,7 +18,7 @@ Clients call tools through `tools/call`:
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "sootie_context",
+    "name": "context",
     "arguments": {}
   }
 }
@@ -29,19 +33,23 @@ For compatibility with common MCP clients and recorded recipes, Sootie accepts
 arguments in these equivalent forms:
 
 ```json
-{ "name": "sootie_click", "arguments": { "query": "Save" } }
+{ "name": "click", "arguments": { "query": "Save" } }
 ```
 
 ```json
-{ "name": "sootie_click", "data": { "query": "Save" } }
+{ "name": "click", "data": { "query": "Save" } }
 ```
 
 ```json
-{ "name": "sootie_click", "input": { "query": "Save" } }
+{ "name": "click", "input": { "query": "Save" } }
 ```
 
 Nested `data`, `input`, and `params` envelopes are flattened before dispatch,
-except `sootie_run.params`, which is preserved as recipe parameter data.
+except `run.params`, which is preserved as recipe parameter data.
+
+Legacy `sootie_*` tool names are also accepted at the same `tools/call`
+boundary. For example, `sootie_browser_open` dispatches to the same tool as
+`browser_open`, but only the short public name is returned from `tools/list`.
 
 The flattened `arguments` object is checked against the public `tools/list`
 field names, required fields, and JSON value types before dispatch. Direct MCP
@@ -76,7 +84,7 @@ structured content follows this shape:
   "error": null,
   "suggestion": null,
   "report": {
-    "tool": "sootie_context",
+    "tool": "context",
     "arguments": {},
     "duration_ms": 12,
     "success": true,
@@ -88,7 +96,7 @@ structured content follows this shape:
 On failure, `success` is `false`, `error` contains the user-facing failure, and
 `suggestion` is populated when Sootie can identify a likely recovery path.
 
-For desktop UI recipes, `sootie_run` performs a lock-screen preflight before
+For desktop UI recipes, `run` performs a lock-screen preflight before
 executing mutating steps. If the macOS screen is locked, the result fails before
 any UI action runs and includes a recovery payload:
 
@@ -103,7 +111,7 @@ any UI action runs and includes a recovery payload:
       {
         "step_index": 0,
         "step_id": 1,
-        "tool": "sootie_focus",
+        "tool": "focus",
         "action": "focus"
       }
     ]
@@ -124,20 +132,20 @@ Screenshot-producing tools return image data on two paths:
 `tools/list` includes MCP tool annotations so clients can distinguish
 read-only inspection from mutating desktop actions before dispatch:
 
-- Read-only tools such as `sootie_context`, `sootie_find`,
-  `sootie_screenshot`, `sootie_browser_observe`, `sootie_browser_find`,
-  `sootie_browser_extract`, `sootie_browser_screenshot`, and
-  `sootie_learn_status` set `readOnlyHint: true`, `destructiveHint: false`,
+- Read-only tools such as `context`, `find`,
+  `screenshot`, `browser_observe`, `browser_find`,
+  `browser_extract`, `browser_screenshot`, and
+  `learn_status` set `readOnlyHint: true`, `destructiveHint: false`,
   and `idempotentHint: true`.
-- Desktop actions such as `sootie_click`, `sootie_type`, `sootie_hotkey`,
-  `sootie_drag`, `sootie_window`, and `sootie_run` set `readOnlyHint: false`
+- Desktop actions such as `click`, `type`, `hotkey`,
+  `drag`, `window`, and `run` set `readOnlyHint: false`
   and are marked as potentially mutating.
-- Browser-native actions such as `sootie_browser_open`,
-  `sootie_browser_click`, `sootie_browser_type`, `sootie_browser_press`,
-  `sootie_browser_scroll`, and browser navigation tools are non-read-only but
-  are not marked destructive except `sootie_browser_close_page`.
-- Browser-native diagnostics such as `sootie_browser_network`,
-  `sootie_browser_console`, and `sootie_browser_pdf` are read-only.
+- Browser-native actions such as `browser_open`,
+  `browser_click`, `browser_type`, `browser_press`,
+  `browser_scroll`, and browser navigation tools are non-read-only but
+  are not marked destructive except `browser_close_page`.
+- Browser-native diagnostics such as `browser_network`,
+  `browser_console`, and `browser_pdf` are read-only.
   Storage, cookie, download, upload, and raw CDP escape-hatch tools are marked
   destructive because their schemas include mutating operations.
 - Local recipe writes use non-read-only annotations even when they do not touch
@@ -147,67 +155,67 @@ read-only inspection from mutating desktop actions before dispatch:
 
 | Tool | Required fields | Optional fields | Result data |
 | --- | --- | --- | --- |
-| `sootie_context` | none | `app` | `app`, `window`, `url`, `focused_element`, `interactive_elements` |
-| `sootie_state` | none | `app` | `apps`, `app_count` |
-| `sootie_find` | none | `app`, `query`, `role`, `identifier`, `dom_id`, `dom_class`, `depth`, `max_results` | `elements`, `count`, `total_matches` |
-| `sootie_read` | none | `app`, `query`, `depth` | `content`, `item_count` |
-| `sootie_inspect` | `query` | `app`, `role`, `dom_id` | one full element |
-| `sootie_element_at` | `x`, `y` | none | one full element |
-| `sootie_screenshot` | none | `app`, `window`, `full_resolution` | `image`, `mime_type`, `width`, `height`, `window_title`, `window_frame`, `artifact_path`, `artifact_uri` |
-| `sootie_click` | none | `app`, `query`, `role`, `dom_id`, `x`, `y`, `button`, `count` | action result plus context |
-| `sootie_type` | `text` | `app`, `into`, `dom_id`, `clear` | action result plus context |
-| `sootie_press` | `key` | `app`, `modifiers` | action result plus context |
-| `sootie_hotkey` | `keys` | `app` | action result plus context |
-| `sootie_scroll` | `direction` | `app`, `amount`, `x`, `y` | action result plus context |
-| `sootie_hover` | none | `app`, `query`, `role`, `dom_id`, `x`, `y` | action result plus context |
-| `sootie_long_press` | none | `app`, `query`, `role`, `dom_id`, `x`, `y`, `duration`, `button` | action result plus context |
-| `sootie_drag` | `to_x`, `to_y` | `app`, `from_x`, `from_y`, `query`, `role`, `dom_id`, `duration`, `hold_duration` | action result plus context |
-| `sootie_focus` | `app` | `window` | action result plus context |
-| `sootie_window` | `action`, `app` | `window`, `x`, `y`, `width`, `height` | action result plus context |
-| `sootie_wait` | `condition` | `app`, `value`, `timeout`, `interval` | wait result |
-| `sootie_recipes` | none | none | `recipes` |
-| `sootie_run` | `recipe` | `params` | recipe step results. See [Recipe Schema](recipe-schema.md). |
-| `sootie_recipe_show` | `name` | none | recipe object |
-| `sootie_recipe_save` | `recipe_json` | none | saved recipe metadata. See [Recipe Schema](recipe-schema.md). |
-| `sootie_recipe_delete` | `name` | none | `deleted` |
-| `sootie_parse_screen` | none | `app`, `window`, `full_resolution` | screenshot payload plus `elements`, `element_count`, `source` |
-| `sootie_ground` | `description` | `app`, `crop_box` | ranked candidates or vision-grounded point |
-| `sootie_annotate` | none | `app`, `roles`, `max_labels` | annotated image payload and text index |
-| `sootie_browser_launch` | none | `browser`, `profile`, `mode`, `headless`, `port`, `url`, `user_data_dir`, `timeout_ms` | `connected`, `browser_id`, `launch_id`, `endpoint`, `is_incognito`, `is_headless`, `pages` |
-| `sootie_browser_connect` | none | `port`, `ws_url`, `browser`, `profile`, `timeout_ms` | `connected`, `browser_id`, `endpoint`, `pages` |
-| `sootie_browser_pages` | none | `browser_id`, `port`, `ws_url`, `include_inactive` | `browser_id`, `pages` |
-| `sootie_browser_select_page` | `page_id` | `browser_id`, `port`, `ws_url` | selected `page` |
-| `sootie_browser_open` | `url` | `browser_id`, `port`, `ws_url`, `page_id`, `new_page`, `wait_until`, `timeout_ms` | `page_id`, `url`, `title`, `navigation_status` |
-| `sootie_browser_observe` | none | `browser_id`, `port`, `ws_url`, `page_id`, `mode`, `include`, `max_elements`, `max_text_chars`, `viewport_only` | `page`, `elements`, `text`, `diagnostics`, optional `screenshot` |
-| `sootie_browser_find` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `visible_only`, `max_results` | `elements`, `count`, `total_matches` |
-| `sootie_browser_click` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `button`, `count`, `wait_after` | browser action result |
-| `sootie_browser_type` | `text` | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `query`, `x`, `y`, `into`, `focused`, `clear`, `submit`, `delay_ms` | browser action result |
-| `sootie_browser_press` | `key` | `browser_id`, `port`, `ws_url`, `page_id`, `modifiers` | browser action result |
-| `sootie_browser_scroll` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `direction`, `amount` | browser action result |
-| `sootie_browser_wait` | `condition` | `browser_id`, `port`, `ws_url`, `page_id`, `value`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `timeout_ms`, `interval_ms` | wait result |
-| `sootie_browser_extract` | none | `browser_id`, `port`, `ws_url`, `page_id`, `format`, `instruction`, `max_chars`, `selector`, `ref`, `target` | `format`, `content`, `truncated`, `source` |
-| `sootie_browser_screenshot` | none | `browser_id`, `port`, `ws_url`, `page_id`, `full_page`, `format` | `image`, `mime_type`, `width`, `height`, `artifact_path`, `artifact_uri` |
-| `sootie_browser_back` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
-| `sootie_browser_forward` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
-| `sootie_browser_reload` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
-| `sootie_browser_close_page` | none | `browser_id`, `port`, `ws_url`, `page_id` | `closed`, `page_id` |
-| `sootie_browser_shutdown` | none | `browser_id`, `launch_id`, `port`, `timeout_ms` | `shutdown`, `launch_id`, `browser_id`, `exit_status` |
-| `sootie_browser_network` | none | `browser_id`, `port`, `ws_url`, `page_id`, `since_ms`, `include_body`, `request_id`, `url_contains`, `resource_type`, `max_entries`, `unsafe` | `requests`, optional `body` |
-| `sootie_browser_console` | none | `browser_id`, `port`, `ws_url`, `page_id`, `level`, `since_ms`, `max_entries` | `entries` |
-| `sootie_browser_storage` | `area`, `action` | `browser_id`, `port`, `ws_url`, `page_id`, `origin`, `key`, `value`, `unsafe` | storage action result |
-| `sootie_browser_cookies` | `action` | `browser_id`, `port`, `ws_url`, `page_id`, `name`, `value`, `url`, `domain`, `path`, `expires`, `http_only`, `secure`, `same_site`, `unsafe` | cookie action result |
-| `sootie_browser_downloads` | `action` | `browser_id`, `port`, `ws_url`, `page_id`, `download_path`, `unsafe` | download behavior result |
-| `sootie_browser_upload` | `file_paths` | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `unsafe` | upload result |
-| `sootie_browser_pdf` | none | `browser_id`, `port`, `ws_url`, `page_id`, `landscape`, `print_background`, `scale`, `paper_width`, `paper_height` | `mime_type`, `data_base64`, `byte_length` |
-| `sootie_cdp_send` | `method` | `browser_id`, `port`, `ws_url`, `page_id`, `domain`, `params`, `timeout_ms`, `unsafe` | raw CDP result |
-| `sootie_cdp_subscribe` | `domain` | `browser_id`, `port`, `ws_url`, `page_id`, `event`, `timeout_ms`, `max_events`, `unsafe` | bounded event batch |
-| `sootie_learn_start` | none | `task_description` | recording status |
-| `sootie_learn_stop` | none | none | recorded actions, generated `recipe`, generated `recipe_json`, apps, urls, duration |
-| `sootie_learn_status` | none | none | recording status and action count |
+| `context` | none | `app` | `app`, `window`, `url`, `focused_element`, `interactive_elements` |
+| `state` | none | `app` | `apps`, `app_count` |
+| `find` | none | `app`, `query`, `role`, `identifier`, `dom_id`, `dom_class`, `depth`, `max_results` | `elements`, `count`, `total_matches` |
+| `read` | none | `app`, `query`, `depth` | `content`, `item_count` |
+| `inspect` | `query` | `app`, `role`, `dom_id` | one full element |
+| `element_at` | `x`, `y` | none | one full element |
+| `screenshot` | none | `app`, `window`, `full_resolution` | `image`, `mime_type`, `width`, `height`, `window_title`, `window_frame`, `artifact_path`, `artifact_uri` |
+| `click` | none | `app`, `query`, `role`, `dom_id`, `x`, `y`, `button`, `count` | action result plus context |
+| `type` | `text` | `app`, `into`, `dom_id`, `clear` | action result plus context |
+| `press` | `key` | `app`, `modifiers` | action result plus context |
+| `hotkey` | `keys` | `app` | action result plus context |
+| `scroll` | `direction` | `app`, `amount`, `x`, `y` | action result plus context |
+| `hover` | none | `app`, `query`, `role`, `dom_id`, `x`, `y` | action result plus context |
+| `long_press` | none | `app`, `query`, `role`, `dom_id`, `x`, `y`, `duration`, `button` | action result plus context |
+| `drag` | `to_x`, `to_y` | `app`, `from_x`, `from_y`, `query`, `role`, `dom_id`, `duration`, `hold_duration` | action result plus context |
+| `focus` | `app` | `window` | action result plus context |
+| `window` | `action`, `app` | `window`, `x`, `y`, `width`, `height` | action result plus context |
+| `wait` | `condition` | `app`, `value`, `timeout`, `interval` | wait result |
+| `recipes` | none | none | `recipes` |
+| `run` | `recipe` | `params` | recipe step results. See [Recipe Schema](recipe-schema.md). |
+| `recipe_show` | `name` | none | recipe object |
+| `recipe_save` | `recipe_json` | none | saved recipe metadata. See [Recipe Schema](recipe-schema.md). |
+| `recipe_delete` | `name` | none | `deleted` |
+| `parse_screen` | none | `app`, `window`, `full_resolution` | screenshot payload plus `elements`, `element_count`, `source` |
+| `ground` | `description` | `app`, `crop_box` | ranked candidates or vision-grounded point |
+| `annotate` | none | `app`, `roles`, `max_labels` | annotated image payload and text index |
+| `browser_launch` | none | `browser`, `profile`, `mode`, `headless`, `port`, `url`, `user_data_dir`, `timeout_ms` | `connected`, `browser_id`, `launch_id`, `endpoint`, `is_incognito`, `is_headless`, `pages` |
+| `browser_connect` | none | `port`, `ws_url`, `browser`, `profile`, `timeout_ms` | `connected`, `browser_id`, `endpoint`, `pages` |
+| `browser_pages` | none | `browser_id`, `port`, `ws_url`, `include_inactive` | `browser_id`, `pages` |
+| `browser_select_page` | `page_id` | `browser_id`, `port`, `ws_url` | selected `page` |
+| `browser_open` | `url` | `browser_id`, `port`, `ws_url`, `page_id`, `new_page`, `wait_until`, `timeout_ms` | `page_id`, `url`, `title`, `navigation_status` |
+| `browser_observe` | none | `browser_id`, `port`, `ws_url`, `page_id`, `mode`, `include`, `max_elements`, `max_text_chars`, `viewport_only` | `page`, `elements`, `text`, `diagnostics`, optional `screenshot` |
+| `browser_find` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `visible_only`, `max_results` | `elements`, `count`, `total_matches` |
+| `browser_click` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `button`, `count`, `wait_after` | browser action result |
+| `browser_type` | `text` | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `query`, `x`, `y`, `into`, `focused`, `clear`, `submit`, `delay_ms` | browser action result |
+| `browser_press` | `key` | `browser_id`, `port`, `ws_url`, `page_id`, `modifiers` | browser action result |
+| `browser_scroll` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `direction`, `amount` | browser action result |
+| `browser_wait` | `condition` | `browser_id`, `port`, `ws_url`, `page_id`, `value`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `timeout_ms`, `interval_ms` | wait result |
+| `browser_extract` | none | `browser_id`, `port`, `ws_url`, `page_id`, `format`, `instruction`, `max_chars`, `selector`, `ref`, `target` | `format`, `content`, `truncated`, `source` |
+| `browser_screenshot` | none | `browser_id`, `port`, `ws_url`, `page_id`, `full_page`, `format` | `image`, `mime_type`, `width`, `height`, `artifact_path`, `artifact_uri` |
+| `browser_back` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
+| `browser_forward` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
+| `browser_reload` | none | `browser_id`, `port`, `ws_url`, `page_id`, `timeout_ms` | navigation result |
+| `browser_close_page` | none | `browser_id`, `port`, `ws_url`, `page_id` | `closed`, `page_id` |
+| `browser_shutdown` | none | `browser_id`, `launch_id`, `port`, `timeout_ms` | `shutdown`, `launch_id`, `browser_id`, `exit_status` |
+| `browser_network` | none | `browser_id`, `port`, `ws_url`, `page_id`, `since_ms`, `include_body`, `request_id`, `url_contains`, `resource_type`, `max_entries`, `unsafe` | `requests`, optional `body` |
+| `browser_console` | none | `browser_id`, `port`, `ws_url`, `page_id`, `level`, `since_ms`, `max_entries` | `entries` |
+| `browser_storage` | `area`, `action` | `browser_id`, `port`, `ws_url`, `page_id`, `origin`, `key`, `value`, `unsafe` | storage action result |
+| `browser_cookies` | `action` | `browser_id`, `port`, `ws_url`, `page_id`, `name`, `value`, `url`, `domain`, `path`, `expires`, `http_only`, `secure`, `same_site`, `unsafe` | cookie action result |
+| `browser_downloads` | `action` | `browser_id`, `port`, `ws_url`, `page_id`, `download_path`, `unsafe` | download behavior result |
+| `browser_upload` | `file_paths` | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `unsafe` | upload result |
+| `browser_pdf` | none | `browser_id`, `port`, `ws_url`, `page_id`, `landscape`, `print_background`, `scale`, `paper_width`, `paper_height` | `mime_type`, `data_base64`, `byte_length` |
+| `cdp_send` | `method` | `browser_id`, `port`, `ws_url`, `page_id`, `domain`, `params`, `timeout_ms`, `unsafe` | raw CDP result |
+| `cdp_subscribe` | `domain` | `browser_id`, `port`, `ws_url`, `page_id`, `event`, `timeout_ms`, `max_events`, `unsafe` | bounded event batch |
+| `learn_start` | none | `task_description` | recording status |
+| `learn_stop` | none | none | recorded actions, generated `recipe`, generated `recipe_json`, apps, urls, duration |
+| `learn_status` | none | none | recording status and action count |
 
 ## Wait Conditions
 
-`sootie_wait.condition` accepts these exact values:
+`wait.condition` accepts these exact values:
 
 - `elementExists`
 - `elementGone`
@@ -222,11 +230,11 @@ via `timeout` and `interval`.
 ## Browser CDP Behavior
 
 When a browser exposes CDP through `SOOTIE_CDP_PORT`, `SOOTIE_CDP_WS_URL`, or a
-discoverable local remote-debugging process, portable `sootie_*` browser DOM
-targets use CDP first and then fall back to the platform backend when CDP is
-unavailable or the target is outside browser content.
+discoverable local remote-debugging process, portable browser DOM targets use
+CDP first and then fall back to the platform backend when CDP is unavailable or
+the target is outside browser content.
 
-Sootie also exposes browser-native `sootie_browser_*` tools. These tools use CDP
+Sootie also exposes browser-native `browser_*` tools. These tools use CDP
 directly and do not fall back to desktop automation. They can list/select pages,
 open URLs, observe browser elements, operate by element `ref`, selector,
 role/name/text, DOM id/class, or viewport coordinates, extract page content,
@@ -247,7 +255,7 @@ require `unsafe: true`. High-risk raw CDP methods such as `Runtime.evaluate`,
 
 ## Vision Grounding Behavior
 
-When `sootie_find` or pointer actions cannot resolve a described target through
+When `find` or pointer actions cannot resolve a described target through
 CDP or the platform accessibility tree, Sootie can call the local vision sidecar
 installed by `sootie setup`. Configure it with `SOOTIE_VISION_URL` or
 `SOOTIE_VISION_PORT`; by default Sootie probes `http://127.0.0.1:9876`. Set
@@ -272,8 +280,8 @@ sidecar_dir = "/path/to/sootie/vision-sidecar"
 model_path = "/path/to/sootie/models/ShowUI-2B"
 ```
 
-In `vision-only` mode, described target resolution for `sootie_ground`,
-`sootie_find`, `sootie_inspect`, target-based pointer actions, and target-based
+In `vision-only` mode, described target resolution for `ground`,
+`find`, `inspect`, target-based pointer actions, and target-based
 drag points uses `/ground` directly instead of platform/CDP lookup. Explicit
 coordinates still execute as coordinates.
 
@@ -282,7 +290,7 @@ under `/tmp/sootie/vision_history/grounding/`. The image overlays the prompt,
 returned bounding boxes, prediction values, and numbered labels for multiple
 matches on top of the screenshot sent to the sidecar. The companion JSON file
 records the request frame, crop box, predictions, and sidecar result.
-`sootie_ground` includes `vision_screenshot_path`, `vision_screenshot_uri`,
+`ground` includes `vision_screenshot_path`, `vision_screenshot_uri`,
 `vision_screenshot_mime_type`, `vision_metadata_path`, and
 `vision_metadata_uri` in `structuredContent.data` when the artifact is written.
 
@@ -313,8 +321,8 @@ The expected response contains either top-level coordinates:
 or a `matches` array with normalized or absolute `point` and `bbox` values.
 `crop_box` is accepted in screen coordinates; Sootie maps it to the screenshot
 frame before sending it to the sidecar and maps returned coordinates back to
-screen coordinates. Vision fallback is used by `sootie_ground`, `sootie_find`,
-`sootie_click`, `sootie_hover`, and `sootie_long_press`.
+screen coordinates. Vision fallback is used by `ground`, `find`,
+`click`, `hover`, and `long_press`.
 
 Use `sootie setup` to install the bundled Python sidecar dependencies into a
 Sootie-managed virtual environment, download the default `showlab/ShowUI-2B`

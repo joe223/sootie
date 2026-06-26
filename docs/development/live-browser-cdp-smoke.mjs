@@ -273,12 +273,12 @@ async function main() {
     evidence.tool_count = toolsList.result.tools.length;
     assert(evidence.tool_count === 57, `expected 57 tools, got ${evidence.tool_count}`);
 
-    step("sootie_browser_connect");
-    const connect = await client.call("sootie_browser_connect", { port: cdpPort });
+    step("browser_connect");
+    const connect = await client.call("browser_connect", { port: cdpPort });
     evidence.connected = connect.data.connected;
 
-    step("sootie_browser_open");
-    const opened = await client.call("sootie_browser_open", {
+    step("browser_open");
+    const opened = await client.call("browser_open", {
       port: cdpPort,
       url: fixture.url,
       new_page: true,
@@ -288,8 +288,8 @@ async function main() {
     const pageId = opened.data.page_id;
     evidence.page_id = pageId;
 
-    step("sootie_browser_observe");
-    const observe = await client.call("sootie_browser_observe", {
+    step("browser_observe");
+    const observe = await client.call("browser_observe", {
       port: cdpPort,
       page_id: pageId,
       mode: "hybrid",
@@ -300,16 +300,16 @@ async function main() {
     evidence.stable_ref_sample = stableRefs.find((ref) => /^br_\d+$/.test(ref));
     assert(evidence.stable_ref_sample, `observe returned no stable br_* refs: ${stableRefs}`);
 
-    step("sootie_browser_find input");
-    const input = await client.call("sootie_browser_find", {
+    step("browser_find input");
+    const input = await client.call("browser_find", {
       port: cdpPort,
       page_id: pageId,
       dom_id: "name",
     });
     const inputRef = input.data.elements[0]?.ref;
     assert(/^br_\d+$/.test(inputRef), `input ref was not stable: ${inputRef}`);
-    step("sootie_browser_type stable ref");
-    await client.call("sootie_browser_type", {
+    step("browser_type stable ref");
+    await client.call("browser_type", {
       port: cdpPort,
       page_id: pageId,
       ref: inputRef,
@@ -317,29 +317,29 @@ async function main() {
       clear: true,
     });
 
-    step("sootie_browser_console install hook");
-    await client.call("sootie_browser_console", {
+    step("browser_console install hook");
+    await client.call("browser_console", {
       port: cdpPort,
       page_id: pageId,
       max_entries: 5,
     });
-    step("sootie_browser_find button");
-    const button = await client.call("sootie_browser_find", {
+    step("browser_find button");
+    const button = await client.call("browser_find", {
       port: cdpPort,
       page_id: pageId,
       dom_id: "set",
     });
     const buttonRef = button.data.elements[0]?.ref;
     assert(/^br_\d+$/.test(buttonRef), `button ref was not stable: ${buttonRef}`);
-    step("sootie_browser_click stable ref");
-    await client.call("sootie_browser_click", {
+    step("browser_click stable ref");
+    await client.call("browser_click", {
       port: cdpPort,
       page_id: pageId,
       ref: buttonRef,
       wait_after: "stable",
     });
-    step("sootie_browser_wait textExists");
-    await client.call("sootie_browser_wait", {
+    step("browser_wait textExists");
+    await client.call("browser_wait", {
       port: cdpPort,
       page_id: pageId,
       condition: "textExists",
@@ -347,8 +347,8 @@ async function main() {
       timeout_ms: 5000,
     });
 
-    step("sootie_browser_extract");
-    const extracted = await client.call("sootie_browser_extract", {
+    step("browser_extract");
+    const extracted = await client.call("browser_extract", {
       port: cdpPort,
       page_id: pageId,
       target: { selector: "#result" },
@@ -360,8 +360,8 @@ async function main() {
       `extract did not read the result: ${JSON.stringify(extracted.data)}`,
     );
 
-    step("sootie_browser_network");
-    const network = await client.call("sootie_browser_network", {
+    step("browser_network");
+    const network = await client.call("browser_network", {
       port: cdpPort,
       page_id: pageId,
       max_entries: 20,
@@ -375,8 +375,8 @@ async function main() {
       `network did not include fixture resources: ${JSON.stringify(network.data.requests)}`,
     );
 
-    step("sootie_browser_console read");
-    const consoleEntries = await client.call("sootie_browser_console", {
+    step("browser_console read");
+    const consoleEntries = await client.call("browser_console", {
       port: cdpPort,
       page_id: pageId,
       max_entries: 20,
@@ -390,8 +390,8 @@ async function main() {
       `console hook missed click log: ${JSON.stringify(consoleEntries.data.entries)}`,
     );
 
-    step("sootie_browser_storage set");
-    await client.call("sootie_browser_storage", {
+    step("browser_storage set");
+    await client.call("browser_storage", {
       port: cdpPort,
       page_id: pageId,
       area: "localStorage",
@@ -400,8 +400,8 @@ async function main() {
       value: "red",
       unsafe: true,
     });
-    step("sootie_browser_storage get");
-    const storage = await client.call("sootie_browser_storage", {
+    step("browser_storage get");
+    const storage = await client.call("browser_storage", {
       port: cdpPort,
       page_id: pageId,
       area: "localStorage",
@@ -414,8 +414,8 @@ async function main() {
       `storage get mismatch: ${JSON.stringify(storage.data)}`,
     );
 
-    step("sootie_browser_cookies list");
-    const cookies = await client.call("sootie_browser_cookies", {
+    step("browser_cookies list");
+    const cookies = await client.call("browser_cookies", {
       port: cdpPort,
       page_id: pageId,
       action: "list",
@@ -428,8 +428,8 @@ async function main() {
       `cookies missing expected names: ${JSON.stringify(cookies.data.cookies.cookies)}`,
     );
 
-    step("sootie_browser_upload");
-    await client.call("sootie_browser_upload", {
+    step("browser_upload");
+    await client.call("browser_upload", {
       port: cdpPort,
       page_id: pageId,
       selector: "#file",
@@ -437,8 +437,8 @@ async function main() {
       unsafe: true,
     });
 
-    step("sootie_browser_screenshot");
-    const screenshot = await client.call("sootie_browser_screenshot", {
+    step("browser_screenshot");
+    const screenshot = await client.call("browser_screenshot", {
       port: cdpPort,
       page_id: pageId,
       format: "png",
@@ -446,8 +446,8 @@ async function main() {
     evidence.screenshot_chars = String(screenshot.data.image || "").length;
     assert(evidence.screenshot_chars > 1000, "screenshot payload is unexpectedly small");
 
-    step("sootie_browser_pdf");
-    const pdf = await client.call("sootie_browser_pdf", {
+    step("browser_pdf");
+    const pdf = await client.call("browser_pdf", {
       port: cdpPort,
       page_id: pageId,
       print_background: true,
@@ -455,8 +455,8 @@ async function main() {
     evidence.pdf_bytes = pdf.data.byte_length;
     assert(evidence.pdf_bytes > 1000, `pdf too small: ${JSON.stringify(pdf.data).slice(0, 500)}`);
 
-    step("sootie_cdp_send Browser.getVersion");
-    const version = await client.call("sootie_cdp_send", {
+    step("cdp_send Browser.getVersion");
+    const version = await client.call("cdp_send", {
       port: cdpPort,
       page_id: pageId,
       method: "Browser.getVersion",
@@ -464,8 +464,8 @@ async function main() {
     });
     evidence.browser_product = version.data.result.product;
 
-    step("sootie_cdp_subscribe Log");
-    const events = await client.call("sootie_cdp_subscribe", {
+    step("cdp_subscribe Log");
+    const events = await client.call("cdp_subscribe", {
       port: cdpPort,
       page_id: pageId,
       domain: "Log",
@@ -475,21 +475,21 @@ async function main() {
     });
     evidence.subscribed_events = events.data.events.length;
 
-    step("sootie_browser_downloads deny");
-    await client.call("sootie_browser_downloads", {
+    step("browser_downloads deny");
+    await client.call("browser_downloads", {
       port: cdpPort,
       page_id: pageId,
       action: "deny",
       unsafe: true,
     });
-    step("sootie_browser_reload");
-    await client.call("sootie_browser_reload", {
+    step("browser_reload");
+    await client.call("browser_reload", {
       port: cdpPort,
       page_id: pageId,
       timeout_ms: 5000,
     });
-    step("sootie_browser_close_page");
-    await client.call("sootie_browser_close_page", { port: cdpPort, page_id: pageId });
+    step("browser_close_page");
+    await client.call("browser_close_page", { port: cdpPort, page_id: pageId });
 
     console.log(JSON.stringify({ ok: true, page_url: fixture.url, evidence }, null, 2));
   } finally {

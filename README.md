@@ -22,9 +22,10 @@ Sootie is a Rust MCP runtime that gives any MCP-capable agent one computer-use
 contract across macOS, Linux, and Windows. Use it from OpenCode, Claude Code,
 Codex, Cursor, VS Code, or your own agent runtime.
 
-The agent keeps calling the same `sootie_*` tools while Sootie chooses the best
-execution path underneath: browser DOM through CDP, native OS backends for real
-desktop state, and vision grounding when structure runs out.
+The agent keeps calling the same short tools, such as `find`, `click`, and
+`browser_open`, while Sootie chooses the best execution path underneath:
+browser DOM through CDP, native OS backends for real desktop state, and vision
+grounding when structure runs out.
 
 Teach it a workflow once. Save it as a JSON recipe. Run it again from any
 agent.
@@ -78,9 +79,11 @@ boundary stable.
 
 ## How It Works
 
-Sootie runs as an MCP server over stdio and exposes `sootie_*` tools with
-portable argument and response shapes. Each target is resolved through the
-strongest available signal:
+Sootie runs as an MCP server over stdio and exposes short tool names such as
+`context`, `click`, and `browser_open` with portable argument and response
+shapes. Older `sootie_*` tool names remain accepted as compatibility aliases
+for direct JSON-RPC callers and saved recipes. Each target is resolved through
+the strongest available signal:
 
 1. Browser CDP for DOM-backed pages.
 2. Native platform backends for apps, windows, and desktop state.
@@ -139,6 +142,42 @@ From an existing checkout on any platform, the development install path is:
 
 ```bash
 cargo install --locked --path crates/sootie-cli
+```
+
+## Install With An Agent
+
+If you want another coding agent to install Sootie on your computer, copy this
+prompt into that agent. It tells the agent to choose the best install path for
+your OS, fall back to source when needed, and verify the result before stopping.
+
+```text
+Install Sootie on this computer and verify that it works.
+
+Rules:
+- Detect the operating system and CPU architecture first.
+- Prefer the official install path for this platform:
+  - macOS arm64/x64: Homebrew, using `brew install joe223/sootie/sootie`
+  - Linux amd64: the apt repository documented in the Sootie README
+  - Linux arm64 or Windows: install from source with Rust/Cargo
+- If the package-manager path is unavailable or fails, clone or update
+  https://github.com/joe223/sootie and run
+  `cargo install --locked --path crates/sootie-cli`.
+- Do not overwrite unrelated user files. Ask before destructive changes,
+  uninstalling existing software, or changing global MCP client settings.
+- Run `sootie setup`. If vision dependencies or the model download are too
+  large, blocked, or unnecessary for browser/desktop-only use, run
+  `sootie setup --skip-sidecar` and report that limitation.
+- Verify the installation with:
+  - `sootie --version`
+  - `sootie doctor --check`
+  - `sootie tools --raw`
+- Confirm that `sootie tools --raw` returns 57 tools and includes
+  `browser_open`.
+- Configure my MCP client to run `sootie serve` only if I explicitly ask you to
+  configure that client.
+- Report the install method, binary path, version, verification results, and any
+  remaining manual permission steps, such as macOS Accessibility or Screen
+  Recording.
 ```
 
 ## Quick Start
@@ -222,11 +261,11 @@ Sootie exposes 57 MCP tools.
 
 | Area | Tools |
 | --- | --- |
-| Orientation and perception | `sootie_context`, `sootie_state`, `sootie_find`, `sootie_read`, `sootie_inspect`, `sootie_element_at`, `sootie_screenshot`, `sootie_parse_screen`, `sootie_ground`, `sootie_annotate` |
-| Actions | `sootie_click`, `sootie_type`, `sootie_press`, `sootie_hotkey`, `sootie_scroll`, `sootie_hover`, `sootie_long_press`, `sootie_drag`, `sootie_focus`, `sootie_window`, `sootie_wait` |
-| Browser-native CDP | `sootie_browser_launch`, `sootie_browser_connect`, `sootie_browser_pages`, `sootie_browser_select_page`, `sootie_browser_open`, `sootie_browser_observe`, `sootie_browser_find`, `sootie_browser_click`, `sootie_browser_type`, `sootie_browser_press`, `sootie_browser_scroll`, `sootie_browser_wait`, `sootie_browser_extract`, `sootie_browser_screenshot`, `sootie_browser_back`, `sootie_browser_forward`, `sootie_browser_reload`, `sootie_browser_close_page`, `sootie_browser_shutdown`, `sootie_browser_network`, `sootie_browser_console`, `sootie_browser_storage`, `sootie_browser_cookies`, `sootie_browser_downloads`, `sootie_browser_upload`, `sootie_browser_pdf` |
-| Guarded raw CDP | `sootie_cdp_send`, `sootie_cdp_subscribe` |
-| Recipes and learning | `sootie_recipes`, `sootie_run`, `sootie_recipe_show`, `sootie_recipe_save`, `sootie_recipe_delete`, `sootie_learn_start`, `sootie_learn_stop`, `sootie_learn_status` |
+| Orientation and perception | `context`, `state`, `find`, `read`, `inspect`, `element_at`, `screenshot`, `parse_screen`, `ground`, `annotate` |
+| Actions | `click`, `type`, `press`, `hotkey`, `scroll`, `hover`, `long_press`, `drag`, `focus`, `window`, `wait` |
+| Browser-native CDP | `browser_launch`, `browser_connect`, `browser_pages`, `browser_select_page`, `browser_open`, `browser_observe`, `browser_find`, `browser_click`, `browser_type`, `browser_press`, `browser_scroll`, `browser_wait`, `browser_extract`, `browser_screenshot`, `browser_back`, `browser_forward`, `browser_reload`, `browser_close_page`, `browser_shutdown`, `browser_network`, `browser_console`, `browser_storage`, `browser_cookies`, `browser_downloads`, `browser_upload`, `browser_pdf` |
+| Guarded raw CDP | `cdp_send`, `cdp_subscribe` |
+| Recipes and learning | `recipes`, `run`, `recipe_show`, `recipe_save`, `recipe_delete`, `learn_start`, `learn_stop`, `learn_status` |
 
 Every tool returns MCP content plus structured content with `success`, `data`,
 `context`, `error`, `suggestion`, and a `report` that includes duration and
@@ -245,7 +284,7 @@ endpoint:
 SOOTIE_CDP_PORT=9222 sootie serve
 ```
 
-For browser-only work, `sootie_browser_launch` starts a managed headless browser
+For browser-only work, `browser_launch` starts a managed headless browser
 by default so pages, screenshots, and extraction do not interrupt the user's
 visible desktop. Pass `mode: "normal"` or `headless: false` when the user needs
 to see or manually help with the browser.
@@ -267,7 +306,7 @@ google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/sootie-chrome-pr
 On Windows, launch Chrome or Edge with `--remote-debugging-port=9222`, then run
 Sootie with `SOOTIE_CDP_PORT=9222`.
 
-CDP is used through the existing `sootie_*` tools. If CDP is unavailable or the
+CDP is used through the existing portable tools. If CDP is unavailable or the
 target is outside browser content, Sootie falls back to the native desktop
 backend and screenshots. See [Browser Automation with CDP](docs/guides/browser-cdp.md).
 
@@ -315,8 +354,8 @@ the first grounding request.
 If you do not run a vision sidecar, CDP and native desktop automation still work.
 Disable vision with `SOOTIE_VISION_DISABLED=1` or set `enabled = false` in the
 config. Set `resolution.strategy = "vision-only"` in
-`~/.config/sootie.config.toml` when you want `sootie_ground`, `sootie_find`,
-`sootie_inspect`, and target-based pointer actions to go directly through the
+`~/.config/sootie.config.toml` when you want `ground`, `find`,
+`inspect`, and target-based pointer actions to go directly through the
 vision grounding path.
 
 Successful grounding calls write annotated JPG screenshots and JSON metadata to:

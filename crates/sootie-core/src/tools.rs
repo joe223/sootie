@@ -23,64 +23,76 @@ pub struct ToolAnnotations {
 }
 
 pub const TOOL_NAMES: &[&str] = &[
-    "sootie_context",
-    "sootie_state",
-    "sootie_find",
-    "sootie_read",
-    "sootie_inspect",
-    "sootie_element_at",
-    "sootie_screenshot",
-    "sootie_click",
-    "sootie_type",
-    "sootie_press",
-    "sootie_hotkey",
-    "sootie_scroll",
-    "sootie_hover",
-    "sootie_long_press",
-    "sootie_drag",
-    "sootie_focus",
-    "sootie_window",
-    "sootie_wait",
-    "sootie_recipes",
-    "sootie_run",
-    "sootie_recipe_show",
-    "sootie_recipe_save",
-    "sootie_recipe_delete",
-    "sootie_parse_screen",
-    "sootie_ground",
-    "sootie_annotate",
-    "sootie_browser_launch",
-    "sootie_browser_connect",
-    "sootie_browser_pages",
-    "sootie_browser_select_page",
-    "sootie_browser_open",
-    "sootie_browser_observe",
-    "sootie_browser_find",
-    "sootie_browser_click",
-    "sootie_browser_type",
-    "sootie_browser_press",
-    "sootie_browser_scroll",
-    "sootie_browser_wait",
-    "sootie_browser_extract",
-    "sootie_browser_screenshot",
-    "sootie_browser_back",
-    "sootie_browser_forward",
-    "sootie_browser_reload",
-    "sootie_browser_close_page",
-    "sootie_browser_shutdown",
-    "sootie_browser_network",
-    "sootie_browser_console",
-    "sootie_browser_storage",
-    "sootie_browser_cookies",
-    "sootie_browser_downloads",
-    "sootie_browser_upload",
-    "sootie_browser_pdf",
-    "sootie_cdp_send",
-    "sootie_cdp_subscribe",
-    "sootie_learn_start",
-    "sootie_learn_stop",
-    "sootie_learn_status",
+    "context",
+    "state",
+    "find",
+    "read",
+    "inspect",
+    "element_at",
+    "screenshot",
+    "click",
+    "type",
+    "press",
+    "hotkey",
+    "scroll",
+    "hover",
+    "long_press",
+    "drag",
+    "focus",
+    "window",
+    "wait",
+    "recipes",
+    "run",
+    "recipe_show",
+    "recipe_save",
+    "recipe_delete",
+    "parse_screen",
+    "ground",
+    "annotate",
+    "browser_launch",
+    "browser_connect",
+    "browser_pages",
+    "browser_select_page",
+    "browser_open",
+    "browser_observe",
+    "browser_find",
+    "browser_click",
+    "browser_type",
+    "browser_press",
+    "browser_scroll",
+    "browser_wait",
+    "browser_extract",
+    "browser_screenshot",
+    "browser_back",
+    "browser_forward",
+    "browser_reload",
+    "browser_close_page",
+    "browser_shutdown",
+    "browser_network",
+    "browser_console",
+    "browser_storage",
+    "browser_cookies",
+    "browser_downloads",
+    "browser_upload",
+    "browser_pdf",
+    "cdp_send",
+    "cdp_subscribe",
+    "learn_start",
+    "learn_stop",
+    "learn_status",
 ];
+
+pub fn canonical_tool_name(name: &str) -> &str {
+    name.strip_prefix("sootie_").unwrap_or(name)
+}
+
+pub fn legacy_tool_name(name: &str) -> String {
+    if name.starts_with("sootie_") {
+        name.to_string()
+    } else {
+        format!("sootie_{name}")
+    }
+}
 
 pub fn tool_definitions() -> Vec<ToolDefinition> {
     TOOL_NAMES
@@ -90,6 +102,15 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
 }
 
 fn tool_definition(name: &str) -> ToolDefinition {
+    let public_name = canonical_tool_name(name);
+    let legacy_name = legacy_tool_name(public_name);
+    let mut definition = legacy_tool_definition(&legacy_name);
+    definition.name = public_name.to_string();
+    definition.annotations = annotations_for(public_name);
+    definition
+}
+
+fn legacy_tool_definition(name: &str) -> ToolDefinition {
     match name {
         "sootie_context" => tool(
             name,
@@ -492,80 +513,71 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 }
 
 fn annotations_for(name: &str) -> ToolAnnotations {
-    match name {
-        "sootie_context"
-        | "sootie_state"
-        | "sootie_find"
-        | "sootie_read"
-        | "sootie_inspect"
-        | "sootie_element_at"
-        | "sootie_screenshot"
-        | "sootie_annotate"
-        | "sootie_ground"
-        | "sootie_parse_screen"
-        | "sootie_browser_connect"
-        | "sootie_browser_pages"
-        | "sootie_browser_select_page"
-        | "sootie_browser_observe"
-        | "sootie_browser_find"
-        | "sootie_browser_extract"
-        | "sootie_browser_screenshot"
-        | "sootie_browser_network"
-        | "sootie_browser_console"
-        | "sootie_browser_pdf"
-        | "sootie_wait"
-        | "sootie_recipes"
-        | "sootie_recipe_show"
-        | "sootie_learn_status" => ToolAnnotations {
+    match canonical_tool_name(name) {
+        "context"
+        | "state"
+        | "find"
+        | "read"
+        | "inspect"
+        | "element_at"
+        | "screenshot"
+        | "annotate"
+        | "ground"
+        | "parse_screen"
+        | "browser_connect"
+        | "browser_pages"
+        | "browser_select_page"
+        | "browser_observe"
+        | "browser_find"
+        | "browser_extract"
+        | "browser_screenshot"
+        | "browser_network"
+        | "browser_console"
+        | "browser_pdf"
+        | "wait"
+        | "recipes"
+        | "recipe_show"
+        | "learn_status" => ToolAnnotations {
             read_only_hint: true,
             destructive_hint: false,
             idempotent_hint: true,
             open_world_hint: false,
         },
-        "sootie_hover" | "sootie_focus" | "sootie_learn_start" => ToolAnnotations {
+        "hover" | "focus" | "learn_start" => ToolAnnotations {
             read_only_hint: false,
             destructive_hint: false,
             idempotent_hint: false,
             open_world_hint: true,
         },
-        "sootie_recipe_save" | "sootie_learn_stop" => ToolAnnotations {
+        "recipe_save" | "learn_stop" => ToolAnnotations {
             read_only_hint: false,
             destructive_hint: false,
             idempotent_hint: false,
             open_world_hint: false,
         },
-        "sootie_recipe_delete" => ToolAnnotations {
+        "recipe_delete" => ToolAnnotations {
             read_only_hint: false,
             destructive_hint: true,
             idempotent_hint: true,
             open_world_hint: false,
         },
-        "sootie_browser_open"
-        | "sootie_browser_click"
-        | "sootie_browser_type"
-        | "sootie_browser_press"
-        | "sootie_browser_scroll"
-        | "sootie_browser_wait"
-        | "sootie_browser_back"
-        | "sootie_browser_forward"
-        | "sootie_browser_reload" => ToolAnnotations {
-            read_only_hint: false,
-            destructive_hint: false,
-            idempotent_hint: false,
-            open_world_hint: true,
-        },
-        "sootie_browser_close_page" => ToolAnnotations {
+        "browser_open" | "browser_click" | "browser_type" | "browser_press" | "browser_scroll"
+        | "browser_wait" | "browser_back" | "browser_forward" | "browser_reload" => {
+            ToolAnnotations {
+                read_only_hint: false,
+                destructive_hint: false,
+                idempotent_hint: false,
+                open_world_hint: true,
+            }
+        }
+        "browser_close_page" => ToolAnnotations {
             read_only_hint: false,
             destructive_hint: true,
             idempotent_hint: true,
             open_world_hint: true,
         },
-        "sootie_browser_storage"
-        | "sootie_browser_cookies"
-        | "sootie_browser_downloads"
-        | "sootie_browser_upload"
-        | "sootie_cdp_send"
-        | "sootie_cdp_subscribe" => ToolAnnotations {
+        "browser_storage" | "browser_cookies" | "browser_downloads" | "browser_upload"
+        | "cdp_send" | "cdp_subscribe" => ToolAnnotations {
             read_only_hint: false,
             destructive_hint: true,
             idempotent_hint: false,
@@ -1197,6 +1209,7 @@ mod tests {
     }
 
     fn tool_by_name<'a>(tools: &'a [ToolDefinition], name: &str) -> &'a ToolDefinition {
+        let name = canonical_tool_name(name);
         tools
             .iter()
             .find(|tool| tool.name == name)
@@ -1204,30 +1217,39 @@ mod tests {
     }
 
     #[test]
+    fn maps_legacy_tool_names_to_public_names() {
+        assert_eq!(canonical_tool_name("sootie_browser_open"), "browser_open");
+        assert_eq!(canonical_tool_name("browser_open"), "browser_open");
+        assert_eq!(legacy_tool_name("browser_open"), "sootie_browser_open");
+        assert_eq!(
+            legacy_tool_name("sootie_browser_open"),
+            "sootie_browser_open"
+        );
+    }
+
+    #[test]
     fn exposes_sootie_tool_surface() {
         let tools = tool_definitions();
         assert_eq!(tools.len(), 57);
-        assert!(tools.iter().any(|tool| tool.name == "sootie_context"));
-        assert!(tools
-            .iter()
-            .any(|tool| tool.name == "sootie_browser_observe"));
+        assert!(tools.iter().any(|tool| tool.name == "context"));
+        assert!(tools.iter().any(|tool| tool.name == "browser_observe"));
         for name in [
-            "sootie_browser_launch",
-            "sootie_browser_network",
-            "sootie_browser_console",
-            "sootie_browser_storage",
-            "sootie_browser_cookies",
-            "sootie_browser_downloads",
-            "sootie_browser_upload",
-            "sootie_browser_pdf",
-            "sootie_browser_shutdown",
-            "sootie_cdp_send",
-            "sootie_cdp_subscribe",
+            "browser_launch",
+            "browser_network",
+            "browser_console",
+            "browser_storage",
+            "browser_cookies",
+            "browser_downloads",
+            "browser_upload",
+            "browser_pdf",
+            "browser_shutdown",
+            "cdp_send",
+            "cdp_subscribe",
         ] {
             assert!(tools.iter().any(|tool| tool.name == name), "{name}");
         }
-        assert!(tools.iter().any(|tool| tool.name == "sootie_learn_status"));
-        assert!(!tools.iter().any(|tool| tool.name == "sootie_launch"));
+        assert!(tools.iter().any(|tool| tool.name == "learn_status"));
+        assert!(!tools.iter().any(|tool| tool.name.starts_with("sootie_")));
     }
 
     #[test]
@@ -1584,14 +1606,14 @@ mod tests {
         assert_eq!(
             expected
                 .iter()
-                .map(|(name, _, _)| *name)
+                .map(|(name, _, _)| canonical_tool_name(name))
                 .collect::<Vec<_>>(),
             TOOL_NAMES
         );
         for (name, properties, required) in expected {
             let tool = tools
                 .iter()
-                .find(|tool| tool.name == name)
+                .find(|tool| tool.name == canonical_tool_name(name))
                 .expect("tool exists");
             assert_contract(tool, properties, required);
         }
@@ -1661,7 +1683,10 @@ mod tests {
         ];
 
         assert_eq!(
-            expected.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|(name, _)| canonical_tool_name(name))
+                .collect::<Vec<_>>(),
             TOOL_NAMES
         );
         for (name, required) in expected {
@@ -1884,7 +1909,7 @@ mod tests {
         let tools = tool_definitions();
         let ground = tools
             .iter()
-            .find(|tool| tool.name == "sootie_ground")
+            .find(|tool| tool.name == "ground")
             .expect("ground tool exists");
         assert_eq!(
             ground.input_schema["properties"]["crop_box"]["items"]["type"],
@@ -1927,7 +1952,7 @@ mod tests {
             "domId",
         ];
         for tool in &tools {
-            if tool.name.starts_with("sootie_browser_") || tool.name.starts_with("sootie_cdp_") {
+            if tool.name.starts_with("browser_") || tool.name.starts_with("cdp_") {
                 continue;
             }
             for name in forbidden {
@@ -1937,7 +1962,7 @@ mod tests {
                     tool.name
                 );
             }
-            if tool.name != "sootie_ground" {
+            if tool.name != "ground" {
                 assert!(
                     tool.input_schema["properties"]["description"].is_null(),
                     "{} unexpectedly advertises description",

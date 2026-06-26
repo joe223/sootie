@@ -1,57 +1,57 @@
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"sootie_context","arguments":{}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sootie_state","arguments":{}}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sootie_find","arguments":{"query":"<visible target text>"}}}
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"sootie_read","arguments":{"query":"<visible target text>"}}}
-{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"sootie_inspect","arguments":{"query":"<visible target text>"}}}
-{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"sootie_element_at","arguments":{"x":100,"y":100}}}
-{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"sootie_screenshot","arguments":{"full_resolution":false}}}
-{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"sootie_recipe_save","arguments":{"recipe_json":"{\"schema_version\":3,\"name\":\"smoke-delay\",\"params\":[],\"steps\":[{\"action\":\"wait\",\"timeout\":0,\"params\":null}]}"}}}
-{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"sootie_recipe_show","arguments":{"name":"smoke-delay"}}}
-{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"sootie_recipes","arguments":{}}}
-{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"sootie_run","arguments":{"recipe":"smoke-delay"}}}
-{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"sootie_recipe_delete","arguments":{"name":"smoke-delay"}}}
-{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"sootie_parse_screen","arguments":{"full_resolution":false}}}
-{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"sootie_ground","arguments":{"description":"<visible target text>"}}}
-{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"sootie_annotate","arguments":{"max_labels":5}}}
-{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"sootie_learn_start","arguments":{"task_description":"runtime smoke"}}}
-{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"sootie_focus","arguments":{"app":"<disposable app>"}}}
-{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"sootie_window","arguments":{"app":"<disposable app>","action":"list"}}}
-{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"sootie_learn_status","arguments":{}}}
-{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"sootie_learn_stop","arguments":{}}}
-{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"sootie_hover","arguments":{"x":100,"y":100}}}
-{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"sootie_click","arguments":{"x":100,"y":100,"button":"left","count":1}}}
-{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"sootie_type","arguments":{"app":"<disposable app>","text":"sootie smoke"}}}
-{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"sootie_press","arguments":{"app":"<disposable app>","key":"Escape"}}}
-{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"sootie_hotkey","arguments":{"app":"<disposable app>","keys":["ctrl","a"]}}}
-{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"sootie_scroll","arguments":{"direction":"down","amount":1,"x":100,"y":100}}}
-{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"sootie_long_press","arguments":{"x":100,"y":100,"duration":0.05,"button":"left"}}}
-{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"sootie_drag","arguments":{"from_x":100,"from_y":100,"to_x":110,"to_y":110,"duration":0.05,"hold_duration":0}}}
-{"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"sootie_wait","arguments":{"app":"<disposable app>","condition":"titleContains","value":"<visible window title>","timeout":1}}}
-{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"sootie_browser_launch","arguments":{"browser":"chrome","mode":"headless-incognito","url":"<browser smoke url>","timeout_ms":10000}}}
-{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"sootie_browser_connect","arguments":{"port":"<cdp port>"}}}
-{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"sootie_browser_pages","arguments":{"port":"<cdp port>"}}}
-{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"sootie_browser_open","arguments":{"port":"<cdp port>","url":"<browser smoke url>","new_page":true,"wait_until":"load"}}}
-{"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"sootie_browser_observe","arguments":{"port":"<cdp port>","mode":"hybrid","include":{"elements":true,"text":true,"screenshot":true},"viewport_only":true}}}
-{"jsonrpc":"2.0","id":35,"method":"tools/call","params":{"name":"sootie_browser_find","arguments":{"port":"<cdp port>","query":"<browser target text>"}}}
-{"jsonrpc":"2.0","id":36,"method":"tools/call","params":{"name":"sootie_browser_type","arguments":{"port":"<cdp port>","selector":"<browser input selector>","text":"sootie smoke","clear":true}}}
-{"jsonrpc":"2.0","id":37,"method":"tools/call","params":{"name":"sootie_browser_click","arguments":{"port":"<cdp port>","selector":"<browser button selector>","wait_after":"stable"}}}
-{"jsonrpc":"2.0","id":38,"method":"tools/call","params":{"name":"sootie_browser_press","arguments":{"port":"<cdp port>","key":"Enter"}}}
-{"jsonrpc":"2.0","id":39,"method":"tools/call","params":{"name":"sootie_browser_scroll","arguments":{"port":"<cdp port>","direction":"down","amount":"small"}}}
-{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"sootie_browser_wait","arguments":{"port":"<cdp port>","condition":"textExists","value":"<browser expected text>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"sootie_browser_extract","arguments":{"port":"<cdp port>","target":{"selector":"<browser output selector>"},"format":"text"}}}
-{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"sootie_browser_screenshot","arguments":{"port":"<cdp port>","full_page":false}}}
-{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"sootie_browser_network","arguments":{"port":"<cdp port>","max_entries":20}}}
-{"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"sootie_browser_console","arguments":{"port":"<cdp port>","max_entries":20}}}
-{"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"sootie_browser_storage","arguments":{"port":"<cdp port>","area":"localStorage","action":"list","unsafe":true}}}
-{"jsonrpc":"2.0","id":46,"method":"tools/call","params":{"name":"sootie_browser_cookies","arguments":{"port":"<cdp port>","action":"list","unsafe":true}}}
-{"jsonrpc":"2.0","id":47,"method":"tools/call","params":{"name":"sootie_browser_pdf","arguments":{"port":"<cdp port>","print_background":true}}}
-{"jsonrpc":"2.0","id":48,"method":"tools/call","params":{"name":"sootie_cdp_send","arguments":{"port":"<cdp port>","method":"Browser.getVersion","unsafe":true}}}
-{"jsonrpc":"2.0","id":49,"method":"tools/call","params":{"name":"sootie_cdp_subscribe","arguments":{"port":"<cdp port>","domain":"Log","timeout_ms":500,"max_events":5,"unsafe":true}}}
-{"jsonrpc":"2.0","id":50,"method":"tools/call","params":{"name":"sootie_browser_downloads","arguments":{"port":"<cdp port>","action":"deny","unsafe":true}}}
-{"jsonrpc":"2.0","id":51,"method":"tools/call","params":{"name":"sootie_browser_upload","arguments":{"port":"<cdp port>","selector":"<browser file input selector>","file_paths":["<upload file path>"],"unsafe":true}}}
-{"jsonrpc":"2.0","id":52,"method":"tools/call","params":{"name":"sootie_browser_back","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":53,"method":"tools/call","params":{"name":"sootie_browser_forward","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":54,"method":"tools/call","params":{"name":"sootie_browser_reload","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":55,"method":"tools/call","params":{"name":"sootie_browser_select_page","arguments":{"port":"<cdp port>","page_id":"<browser page id>"}}}
-{"jsonrpc":"2.0","id":56,"method":"tools/call","params":{"name":"sootie_browser_close_page","arguments":{"port":"<cdp port>","page_id":"<browser disposable page id>"}}}
-{"jsonrpc":"2.0","id":57,"method":"tools/call","params":{"name":"sootie_browser_shutdown","arguments":{"launch_id":"<browser launch id>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"context","arguments":{}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"state","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"find","arguments":{"query":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read","arguments":{"query":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"inspect","arguments":{"query":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"element_at","arguments":{"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"screenshot","arguments":{"full_resolution":false}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"recipe_save","arguments":{"recipe_json":"{\"schema_version\":3,\"name\":\"smoke-delay\",\"params\":[],\"steps\":[{\"action\":\"wait\",\"timeout\":0,\"params\":null}]}"}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"recipe_show","arguments":{"name":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"recipes","arguments":{}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"run","arguments":{"recipe":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"recipe_delete","arguments":{"name":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"parse_screen","arguments":{"full_resolution":false}}}
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"ground","arguments":{"description":"<visible target text>"}}}
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"annotate","arguments":{"max_labels":5}}}
+{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"learn_start","arguments":{"task_description":"runtime smoke"}}}
+{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"focus","arguments":{"app":"<disposable app>"}}}
+{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"window","arguments":{"app":"<disposable app>","action":"list"}}}
+{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"learn_status","arguments":{}}}
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"learn_stop","arguments":{}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"hover","arguments":{"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"click","arguments":{"x":100,"y":100,"button":"left","count":1}}}
+{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"type","arguments":{"app":"<disposable app>","text":"sootie smoke"}}}
+{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"press","arguments":{"app":"<disposable app>","key":"Escape"}}}
+{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"hotkey","arguments":{"app":"<disposable app>","keys":["ctrl","a"]}}}
+{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"scroll","arguments":{"direction":"down","amount":1,"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"long_press","arguments":{"x":100,"y":100,"duration":0.05,"button":"left"}}}
+{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"drag","arguments":{"from_x":100,"from_y":100,"to_x":110,"to_y":110,"duration":0.05,"hold_duration":0}}}
+{"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"wait","arguments":{"app":"<disposable app>","condition":"titleContains","value":"<visible window title>","timeout":1}}}
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"browser_launch","arguments":{"browser":"chrome","mode":"headless-incognito","url":"<browser smoke url>","timeout_ms":10000}}}
+{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"browser_connect","arguments":{"port":"<cdp port>"}}}
+{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"browser_pages","arguments":{"port":"<cdp port>"}}}
+{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"browser_open","arguments":{"port":"<cdp port>","url":"<browser smoke url>","new_page":true,"wait_until":"load"}}}
+{"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"browser_observe","arguments":{"port":"<cdp port>","mode":"hybrid","include":{"elements":true,"text":true,"screenshot":true},"viewport_only":true}}}
+{"jsonrpc":"2.0","id":35,"method":"tools/call","params":{"name":"browser_find","arguments":{"port":"<cdp port>","query":"<browser target text>"}}}
+{"jsonrpc":"2.0","id":36,"method":"tools/call","params":{"name":"browser_type","arguments":{"port":"<cdp port>","selector":"<browser input selector>","text":"sootie smoke","clear":true}}}
+{"jsonrpc":"2.0","id":37,"method":"tools/call","params":{"name":"browser_click","arguments":{"port":"<cdp port>","selector":"<browser button selector>","wait_after":"stable"}}}
+{"jsonrpc":"2.0","id":38,"method":"tools/call","params":{"name":"browser_press","arguments":{"port":"<cdp port>","key":"Enter"}}}
+{"jsonrpc":"2.0","id":39,"method":"tools/call","params":{"name":"browser_scroll","arguments":{"port":"<cdp port>","direction":"down","amount":"small"}}}
+{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"browser_wait","arguments":{"port":"<cdp port>","condition":"textExists","value":"<browser expected text>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"browser_extract","arguments":{"port":"<cdp port>","target":{"selector":"<browser output selector>"},"format":"text"}}}
+{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"browser_screenshot","arguments":{"port":"<cdp port>","full_page":false}}}
+{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"browser_network","arguments":{"port":"<cdp port>","max_entries":20}}}
+{"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"browser_console","arguments":{"port":"<cdp port>","max_entries":20}}}
+{"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"browser_storage","arguments":{"port":"<cdp port>","area":"localStorage","action":"list","unsafe":true}}}
+{"jsonrpc":"2.0","id":46,"method":"tools/call","params":{"name":"browser_cookies","arguments":{"port":"<cdp port>","action":"list","unsafe":true}}}
+{"jsonrpc":"2.0","id":47,"method":"tools/call","params":{"name":"browser_pdf","arguments":{"port":"<cdp port>","print_background":true}}}
+{"jsonrpc":"2.0","id":48,"method":"tools/call","params":{"name":"cdp_send","arguments":{"port":"<cdp port>","method":"Browser.getVersion","unsafe":true}}}
+{"jsonrpc":"2.0","id":49,"method":"tools/call","params":{"name":"cdp_subscribe","arguments":{"port":"<cdp port>","domain":"Log","timeout_ms":500,"max_events":5,"unsafe":true}}}
+{"jsonrpc":"2.0","id":50,"method":"tools/call","params":{"name":"browser_downloads","arguments":{"port":"<cdp port>","action":"deny","unsafe":true}}}
+{"jsonrpc":"2.0","id":51,"method":"tools/call","params":{"name":"browser_upload","arguments":{"port":"<cdp port>","selector":"<browser file input selector>","file_paths":["<upload file path>"],"unsafe":true}}}
+{"jsonrpc":"2.0","id":52,"method":"tools/call","params":{"name":"browser_back","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":53,"method":"tools/call","params":{"name":"browser_forward","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":54,"method":"tools/call","params":{"name":"browser_reload","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":55,"method":"tools/call","params":{"name":"browser_select_page","arguments":{"port":"<cdp port>","page_id":"<browser page id>"}}}
+{"jsonrpc":"2.0","id":56,"method":"tools/call","params":{"name":"browser_close_page","arguments":{"port":"<cdp port>","page_id":"<browser disposable page id>"}}}
+{"jsonrpc":"2.0","id":57,"method":"tools/call","params":{"name":"browser_shutdown","arguments":{"launch_id":"<browser launch id>","timeout_ms":3000}}}

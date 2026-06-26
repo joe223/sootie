@@ -17,7 +17,7 @@ reason CDP is unavailable.
 
 The minimum smoke above is only a triage gate. A platform is not fully verified
 until the full 57-tool coverage suite below has a captured response for every
-public `sootie_*` tool, or a documented platform/environment reason for any
+public `*` tool, or a documented platform/environment reason for any
 unavailable CDP-backed browser step.
 
 Keep the raw JSON-RPC responses. The evidence should show both the MCP transport
@@ -79,17 +79,17 @@ Send these JSON-RPC requests over the same stdio connection:
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sootie_context","arguments":{}}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sootie_find","arguments":{"query":""}}}
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"sootie_screenshot","arguments":{"full_resolution":false}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"context","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"find","arguments":{"query":""}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"screenshot","arguments":{"full_resolution":false}}}
 ```
 
 Expected evidence:
 
 - `initialize` returns server info with platform.
-- `sootie_context` returns `success: true` and the current app or window.
-- `sootie_find` returns `success: true` and a numeric `count`.
-- `sootie_screenshot` returns `success: true`, `mime_type: "image/png"`,
+- `context` returns `success: true` and the current app or window.
+- `find` returns `success: true` and a numeric `count`.
+- `screenshot` returns `success: true`, `mime_type: "image/png"`,
   and non-zero image dimensions.
 
 ## Framed MCP Smoke
@@ -102,15 +102,15 @@ Required framed calls:
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"runtime-smoke","version":"0.0.0"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sootie_learn_status","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"learn_status","arguments":{}}}
 ```
 
 Expected evidence:
 
 - `initialize` returns `serverInfo.name: "sootie"`.
 - `tools/list` returns exactly 57 tools.
-- `tools/list` marks `sootie_learn_status` with `readOnlyHint: true`.
-- `sootie_learn_status` returns `success: true`.
+- `tools/list` marks `learn_status` with `readOnlyHint: true`.
+- `learn_status` returns `success: true`.
 
 ## MCP Client Attachment Smoke
 
@@ -129,7 +129,7 @@ Expected evidence:
 - The client reports `enabled: true`, `transport: stdio`, command
   `target/release/sootie`, and argument `serve`.
 - A newly started agent session exposes the Sootie MCP tool namespace.
-- A newly started agent session can call `sootie_learn_status` and receives
+- A newly started agent session can call `learn_status` and receives
   `success: true`.
 - `target/release/sootie serve` stays alive while the client session is active.
 
@@ -157,10 +157,10 @@ server and dispatch at least one read-only Sootie tool call in a fresh session.
 
 | Client | Local check | Required evidence | Current status |
 | --- | --- | --- | --- |
-| Codex CLI | `codex mcp get sootie` | `enabled: true`, `transport: stdio`, command points to `target/release/sootie`, args include `serve`, and a fresh session can call `sootie_learn_status`. | Verified on 2026-05-16 for configured command/args and fresh-session read-only call. |
-| Claude Code | `claude mcp get sootie` | Server named `sootie` is configured, health check starts the stdio server, and a fresh Claude Code session can call `sootie_learn_status`. | Project config health check verified on 2026-05-16 with `.mcp.json`; fresh-session tool call still needs capture. A no-MCP `--bare` control prompt failed with `FailedToOpenSocket`, so fix Claude Code auth/network/proxy before treating the missing tool call as Sootie evidence. |
-| Cursor | Cursor MCP settings plus a fresh agent session | Settings point to `target/release/sootie serve`, tools are visible in the session, and `sootie_learn_status` returns `success: true`. | External client gate. |
-| VS Code | VS Code MCP settings plus a fresh agent session | Settings point to `target/release/sootie serve`, tools are visible in the session, and `sootie_learn_status` returns `success: true`. | External client gate. |
+| Codex CLI | `codex mcp get sootie` | `enabled: true`, `transport: stdio`, command points to `target/release/sootie`, args include `serve`, and a fresh session can call `learn_status`. | Verified on 2026-05-16 for configured command/args and fresh-session read-only call. |
+| Claude Code | `claude mcp get sootie` | Server named `sootie` is configured, health check starts the stdio server, and a fresh Claude Code session can call `learn_status`. | Project config health check verified on 2026-05-16 with `.mcp.json`; fresh-session tool call still needs capture. A no-MCP `--bare` control prompt failed with `FailedToOpenSocket`, so fix Claude Code auth/network/proxy before treating the missing tool call as Sootie evidence. |
+| Cursor | Cursor MCP settings plus a fresh agent session | Settings point to `target/release/sootie serve`, tools are visible in the session, and `learn_status` returns `success: true`. | External client gate. |
+| VS Code | VS Code MCP settings plus a fresh agent session | Settings point to `target/release/sootie serve`, tools are visible in the session, and `learn_status` returns `success: true`. | External client gate. |
 
 Adding or changing user-level MCP client configuration is a separate
 side-effect. Record the exact config change and raw client output if that gate
@@ -169,10 +169,10 @@ is executed.
 For Claude Code, a bounded non-interactive fresh-session check can be run with:
 
 ```bash
-claude -p "Call the MCP tool mcp__sootie__sootie_learn_status exactly once and report whether the returned structured content has success true. Do not call any other tool." \
+claude -p "Call the MCP tool mcp__sootie__learn_status exactly once and report whether the returned structured content has success true. Do not call any other tool." \
   --mcp-config .mcp.json \
   --strict-mcp-config \
-  --allowedTools mcp__sootie__sootie_learn_status \
+  --allowedTools mcp__sootie__learn_status \
   --permission-mode dontAsk \
   --output-format json \
   --max-budget-usd 0.02 \
@@ -213,23 +213,23 @@ user's normal recipe store.
 Required calls:
 
 ```json
-{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"sootie_recipe_save","arguments":{"recipe_json":"{\"schema_version\":3,\"name\":\"smoke-delay\",\"params\":[],\"steps\":[{\"action\":\"wait\",\"timeout\":0,\"params\":null}]}"}}}
-{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"sootie_recipe_show","arguments":{"name":"smoke-delay"}}}
-{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"sootie_recipes","arguments":{}}}
-{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"sootie_run","arguments":{"recipe":"smoke-delay"}}}
-{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"sootie_learn_start","arguments":{"task_description":"runtime smoke"}}}
-{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"sootie_window","arguments":{"app":"<visible disposable app>","action":"list"}}}
-{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"sootie_learn_status","arguments":{}}}
-{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"sootie_learn_stop","arguments":{}}}
-{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"sootie_recipe_delete","arguments":{"name":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"recipe_save","arguments":{"recipe_json":"{\"schema_version\":3,\"name\":\"smoke-delay\",\"params\":[],\"steps\":[{\"action\":\"wait\",\"timeout\":0,\"params\":null}]}"}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"recipe_show","arguments":{"name":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"recipes","arguments":{}}}
+{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"run","arguments":{"recipe":"smoke-delay"}}}
+{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"learn_start","arguments":{"task_description":"runtime smoke"}}}
+{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"window","arguments":{"app":"<visible disposable app>","action":"list"}}}
+{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"learn_status","arguments":{}}}
+{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"learn_stop","arguments":{}}}
+{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"recipe_delete","arguments":{"name":"smoke-delay"}}}
 ```
 
 Expected evidence:
 
-- `sootie_run` returns `success: true` and `steps_completed: 1`.
-- `sootie_learn_status` reports `recording: true` and `action_count: 1`.
-- `sootie_learn_stop` returns one recorded action.
-- `sootie_recipe_delete` returns `deleted: true`.
+- `run` returns `success: true` and `steps_completed: 1`.
+- `learn_status` reports `recording: true` and `action_count: 1`.
+- `learn_stop` returns one recorded action.
+- `recipe_delete` returns `deleted: true`.
 
 ## Full 55-Tool Coverage Smoke
 
@@ -245,8 +245,8 @@ copy-paste request template. Replace placeholder values such as
 `<disposable app>`, `<visible target text>`, and `<visible window title>` before
 running it, and execute it only against disposable windows because the action
 tools intentionally mutate the target app.
-The template starts learning mode before the `sootie_window(action=list)` call
-so `sootie_learn_status` and `sootie_learn_stop` can prove action recording.
+The template starts learning mode before the `window(action=list)` call
+so `learn_status` and `learn_stop` can prove action recording.
 
 The Node.js helper scripts in this section are optional evidence helpers, not
 Sootie runtime dependencies. If Node is unavailable on a target machine, send
@@ -258,9 +258,9 @@ Suggested placeholder replacements:
 
 | Platform | `<disposable app>` | `<visible target text>` | `<visible window title>` |
 | --- | --- | --- | --- |
-| macOS | `Calculator` or a throwaway `TextEdit` document | A visible button, menu item, or text field label in that app | The exact window title shown by `sootie_context` or `sootie_window(action=list)` |
-| Linux | A visible X11 app name from `wmctrl -l` or `sootie_state` | A visible control or text string inside that app | The title returned by `xdotool getactivewindow getwindowname` or `sootie_window(action=list)` |
-| Windows | `notepad` or another throwaway app with a visible window | A visible menu/control string or document text inside that app | The title returned by `sootie_context` or `sootie_window(action=list)` |
+| macOS | `Calculator` or a throwaway `TextEdit` document | A visible button, menu item, or text field label in that app | The exact window title shown by `context` or `window(action=list)` |
+| Linux | A visible X11 app name from `wmctrl -l` or `state` | A visible control or text string inside that app | The title returned by `xdotool getactivewindow getwindowname` or `window(action=list)` |
+| Windows | `notepad` or another throwaway app with a visible window | A visible menu/control string or document text inside that app | The title returned by `context` or `window(action=list)` |
 
 Use the same target app for action, wait, and learning checks. If a chosen app
 does not expose accessible text for `find/read/inspect`, switch to a browser or
@@ -378,12 +378,12 @@ satisfy the full completion gate.
 
 | Group | Tools | Required evidence |
 | --- | --- | --- |
-| Desktop perception | `sootie_context`, `sootie_state`, `sootie_find`, `sootie_read`, `sootie_inspect`, `sootie_element_at`, `sootie_screenshot` | Each tool returns `success: true`; state/context include app identity; read/find/inspect/element-at resolve a visible or DOM-backed target; screenshot returns PNG dimensions. |
-| Desktop actions | `sootie_focus`, `sootie_window`, `sootie_hover`, `sootie_click`, `sootie_type`, `sootie_press`, `sootie_hotkey`, `sootie_scroll`, `sootie_long_press`, `sootie_drag`, `sootie_wait` | Each action returns `success: true` or, for waits, `matched: true`; reports include the platform method used; actions are aimed at a disposable app/window. |
-| Recipes | `sootie_recipe_save`, `sootie_recipe_show`, `sootie_recipes`, `sootie_run`, `sootie_recipe_delete` | A temporary recipe is saved, shown, listed, run with one completed step, then deleted. |
-| Visual grounding | `sootie_parse_screen`, `sootie_ground`, `sootie_annotate` | Parse returns screenshot plus element count; ground returns candidates and a best point for a visible target; annotate returns an annotated image and index. |
-| Learning | `sootie_learn_start`, `sootie_learn_status`, `sootie_learn_stop` | Start enables recording; one successful action is recorded; status reports `recording: true`; stop returns the recorded action list. |
-| Browser CDP path | DOM-targeted `sootie_find`, `sootie_read`, `sootie_click`, `sootie_type`, `sootie_screenshot`, and one of `sootie_hover`, `sootie_scroll`, `sootie_long_press`, or `sootie_drag` | Browser DOM targets route through CDP methods when remote debugging is enabled. If CDP is unavailable on the target platform, capture the explicit environment reason and do not count CDP as verified. |
+| Desktop perception | `context`, `state`, `find`, `read`, `inspect`, `element_at`, `screenshot` | Each tool returns `success: true`; state/context include app identity; read/find/inspect/element-at resolve a visible or DOM-backed target; screenshot returns PNG dimensions. |
+| Desktop actions | `focus`, `window`, `hover`, `click`, `type`, `press`, `hotkey`, `scroll`, `long_press`, `drag`, `wait` | Each action returns `success: true` or, for waits, `matched: true`; reports include the platform method used; actions are aimed at a disposable app/window. |
+| Recipes | `recipe_save`, `recipe_show`, `recipes`, `run`, `recipe_delete` | A temporary recipe is saved, shown, listed, run with one completed step, then deleted. |
+| Visual grounding | `parse_screen`, `ground`, `annotate` | Parse returns screenshot plus element count; ground returns candidates and a best point for a visible target; annotate returns an annotated image and index. |
+| Learning | `learn_start`, `learn_status`, `learn_stop` | Start enables recording; one successful action is recorded; status reports `recording: true`; stop returns the recorded action list. |
+| Browser CDP path | DOM-targeted `find`, `read`, `click`, `type`, `screenshot`, and one of `hover`, `scroll`, `long_press`, or `drag` | Browser DOM targets route through CDP methods when remote debugging is enabled. If CDP is unavailable on the target platform, capture the explicit environment reason and do not count CDP as verified. |
 
 Completion criteria for this suite:
 
@@ -422,7 +422,7 @@ the process can run but is not attached to an active Aqua desktop session. Move
 the smoke to a GUI terminal or permissioned MCP host with an awake display
 before treating the result as a Sootie runtime failure.
 
-If `sootie_focus` cannot make an already-running app frontmost, first confirm
+If `focus` cannot make an already-running app frontmost, first confirm
 the launcher has Accessibility permission and the target app has a normal
 visible window. Browser-specific URL reads may still require a browser Apple
 Event prompt.
@@ -456,21 +456,21 @@ Run the MCP stdio smoke against a visible disposable app or browser window.
 Minimum Linux desktop evidence should include these Sootie calls:
 
 ```json
-{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"sootie_context","arguments":{}}}
-{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"sootie_screenshot","arguments":{"full_resolution":false}}}
-{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"sootie_window","arguments":{"action":"list"}}}
-{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"sootie_hover","arguments":{"x":100,"y":100}}}
-{"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"sootie_click","arguments":{"x":100,"y":100}}}
-{"jsonrpc":"2.0","id":35,"method":"tools/call","params":{"name":"sootie_wait","arguments":{"condition":"titleContains","value":"<visible window title>","timeout":1}}}
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"context","arguments":{}}}
+{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"screenshot","arguments":{"full_resolution":false}}}
+{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"window","arguments":{"action":"list"}}}
+{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"hover","arguments":{"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"click","arguments":{"x":100,"y":100}}}
+{"jsonrpc":"2.0","id":35,"method":"tools/call","params":{"name":"wait","arguments":{"condition":"titleContains","value":"<visible window title>","timeout":1}}}
 ```
 
 Expected evidence:
 
-- `sootie_context` returns a real app or window, not `unknown`.
-- `sootie_screenshot` returns a PNG payload with non-zero dimensions.
-- `sootie_window(action=list)` returns at least one window.
+- `context` returns a real app or window, not `unknown`.
+- `screenshot` returns a PNG payload with non-zero dimensions.
+- `window(action=list)` returns at least one window.
 - Coordinate `hover` and `click` return `success: true`.
-- `sootie_wait` returns `matched: true` for the visible window title.
+- `wait` returns `matched: true` for the visible window title.
 
 ## Windows
 
@@ -497,23 +497,23 @@ Run the MCP stdio smoke against a visible disposable app or browser window.
 Minimum Windows desktop evidence should include these Sootie calls:
 
 ```json
-{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"sootie_focus","arguments":{"app":"notepad"}}}
-{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"sootie_context","arguments":{"app":"notepad"}}}
-{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"sootie_screenshot","arguments":{"full_resolution":false}}}
-{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"sootie_window","arguments":{"app":"notepad","action":"list"}}}
-{"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"sootie_type","arguments":{"app":"notepad","text":"sootie smoke"}}}
-{"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"sootie_wait","arguments":{"app":"notepad","condition":"titleContains","value":"Notepad","timeout":1}}}
+{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"focus","arguments":{"app":"notepad"}}}
+{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"context","arguments":{"app":"notepad"}}}
+{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"screenshot","arguments":{"full_resolution":false}}}
+{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"window","arguments":{"app":"notepad","action":"list"}}}
+{"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"type","arguments":{"app":"notepad","text":"sootie smoke"}}}
+{"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"wait","arguments":{"app":"notepad","condition":"titleContains","value":"Notepad","timeout":1}}}
 ```
 
 Expected evidence:
 
-- `sootie_focus` selects an already-running Notepad instance.
-- `sootie_context(app=notepad)` returns the Notepad app/window identity.
-- `sootie_screenshot` returns a PNG payload with non-zero dimensions.
-- `sootie_window(app=notepad, action=list)` returns at least one Notepad
+- `focus` selects an already-running Notepad instance.
+- `context(app=notepad)` returns the Notepad app/window identity.
+- `screenshot` returns a PNG payload with non-zero dimensions.
+- `window(app=notepad, action=list)` returns at least one Notepad
   window.
-- `sootie_type` returns `success: true` and the typed byte count.
-- `sootie_wait` returns `matched: true` for the Notepad title.
+- `type` returns `success: true` and the typed byte count.
+- `wait` returns `matched: true` for the Notepad title.
 
 ## Browser CDP
 
@@ -526,12 +526,12 @@ SOOTIE_CDP_PORT=9222 target/release/sootie serve
 Then run MCP calls against a simple page:
 
 ```json
-{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"sootie_context","arguments":{}}}
-{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"sootie_read","arguments":{}}}
-{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"sootie_find","arguments":{"dom_id":"go"}}}
-{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"sootie_click","arguments":{"dom_id":"go"}}}
-{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"sootie_type","arguments":{"text":"hello","dom_id":"name"}}}
-{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"sootie_screenshot","arguments":{}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"context","arguments":{}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"read","arguments":{}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"find","arguments":{"dom_id":"go"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"click","arguments":{"dom_id":"go"}}}
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"type","arguments":{"text":"hello","dom_id":"name"}}}
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"screenshot","arguments":{}}}
 ```
 
 Expected evidence:
@@ -681,8 +681,8 @@ paths are resolved from the evidence JSON file's directory. The runtime
 evidence gate checks that referenced files exist, that passing build logs contain
 `exit_status=0`, that runtime-mode `doctor` agrees with the runtime summary, that the framed
 log includes the initialize response, `tools/list` with 57 tools and
-`sootie_learn_status.readOnlyHint: true`, plus a successful
-`sootie_learn_status` report, and that the raw JSON-RPC log includes
+`learn_status.readOnlyHint: true`, plus a successful
+`learn_status` report, and that the raw JSON-RPC log includes
 successful tool reports for the full public surface with request/response ids
 paired against
 `full-tool-smoke-requests.jsonl`. It also reads the screenshot PNG dimensions

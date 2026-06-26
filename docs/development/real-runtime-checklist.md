@@ -16,7 +16,7 @@ target/release/sootie tools --raw
 ```
 
 CDP is the only intentional capability beyond the selected public tool
-contract. It should be verified as a backend path for the existing `sootie_*`
+contract. It should be verified as a backend path for the existing `*`
 tools, not as a separate tool family.
 
 ## macOS
@@ -34,16 +34,16 @@ Checks:
 1. `target/release/sootie doctor --check --raw` exits successfully and `doctor`
    reports `platform: "macos"`, `runtime_ready: true`, and `launch_context`
    with the Sootie executable plus launching parent process.
-2. MCP `sootie_context` returns the frontmost app.
-3. MCP `sootie_screenshot` returns `image/png`.
-4. MCP `sootie_parse_screen`, `sootie_annotate`, `sootie_ground`, and
-   `sootie_element_at` agree on at least one visible target.
+2. MCP `context` returns the frontmost app.
+3. MCP `screenshot` returns `image/png`.
+4. MCP `parse_screen`, `annotate`, `ground`, and
+   `element_at` agree on at least one visible target.
 5. Browser CDP smoke passes against a temporary remote-debugging browser
    profile.
 
 Troubleshooting:
 
-- If `sootie_context` returns `app: "unknown"` and `sootie_find` returns
+- If `context` returns `app: "unknown"` and `find` returns
   `count: 0`, verify the host app that launched `sootie serve` has
   Accessibility and Screen Recording permissions, then fully restart that host
   app.
@@ -53,10 +53,10 @@ Troubleshooting:
 - If `macos_accessibility` fails, treat it as an Accessibility boundary for the
   host app that launched Sootie. Browser URL fallbacks may still require a
   browser Apple Event prompt.
-- If `sootie_focus` cannot make an already-running app frontmost, confirm the
+- If `focus` cannot make an already-running app frontmost, confirm the
   launcher has Accessibility permission and the target app has a normal visible
   window.
-- If `sootie_screenshot` returns `could not create image from display`, first
+- If `screenshot` returns `could not create image from display`, first
   run `screencapture -x /tmp/sootie-check.png` from the same host session. If
   that command fails too, the issue is the macOS session or Screen Recording
   permission boundary, not the MCP protocol.
@@ -75,7 +75,7 @@ Troubleshooting:
 - If a fresh client session can list Sootie tools but cancels a read-only tool
   before Sootie logs `tools/call`, rebuild the configured release binary and
   verify `tools/list` includes MCP annotations such as `readOnlyHint: true` for
-  `sootie_learn_status`.
+  `learn_status`.
 - If the screen is visible and a Claude Code fresh-session check still cannot
   call a Sootie tool, first run the no-MCP control prompt from
   [Runtime Smoke Runbook](runtime-smoke-runbook.md). If that control prompt
@@ -107,9 +107,9 @@ Checks:
 2. `target/release/sootie doctor --check --raw` exits successfully and `doctor`
    reports `platform: "linux"`, `runtime_ready: true`, and `launch_context`
    showing the shell/session used for X11 or desktop access.
-3. MCP `sootie_state` lists visible desktop apps.
-4. MCP `sootie_context` returns app and window data for the frontmost app.
-5. MCP `sootie_screenshot` returns `image/png`.
+3. MCP `state` lists visible desktop apps.
+4. MCP `context` returns app and window data for the frontmost app.
+5. MCP `screenshot` returns `image/png`.
 6. MCP pointer and keyboard actions are tested against a disposable app or
    browser profile.
 7. CDP smoke passes with:
@@ -144,9 +144,9 @@ Checks:
    reports `platform: "windows"`, `runtime_ready: true`, `launch_context`, and
    no failed diagnostics for PowerShell, UI Automation, Forms/Drawing, or
    visible window access.
-3. MCP `sootie_state` lists visible desktop apps.
-4. MCP `sootie_context` returns app and window data for the frontmost app.
-5. MCP `sootie_screenshot` returns `image/png`.
+3. MCP `state` lists visible desktop apps.
+4. MCP `context` returns app and window data for the frontmost app.
+5. MCP `screenshot` returns `image/png`.
 6. MCP pointer and keyboard actions are tested against a disposable app or
    browser profile.
 7. CDP smoke passes after launching Chrome or Edge with
