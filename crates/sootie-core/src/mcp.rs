@@ -627,6 +627,7 @@ impl McpServer {
                 }
                 Ok(ToolResult::ok(payload))
             }
+            "sootie_browser_viewport" => Ok(ToolResult::ok(self.browser.viewport(args)?)),
             "sootie_browser_find" => Ok(ToolResult::ok(self.browser.find(args)?)),
             "sootie_browser_click" => Ok(ToolResult::ok(self.browser.click(args)?)),
             "sootie_browser_type" => Ok(ToolResult::ok(self.browser.type_text(args)?)),
@@ -5885,6 +5886,7 @@ mod tests {
             "sootie_browser_connect"
             | "sootie_browser_pages"
             | "sootie_browser_observe"
+            | "sootie_browser_viewport"
             | "sootie_browser_find"
             | "sootie_browser_extract"
             | "sootie_browser_screenshot"

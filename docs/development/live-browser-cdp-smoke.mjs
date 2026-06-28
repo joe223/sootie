@@ -271,7 +271,7 @@ async function main() {
     step("tools/list");
     const toolsList = await client.request("tools/list", {});
     evidence.tool_count = toolsList.result.tools.length;
-    assert(evidence.tool_count === 57, `expected 57 tools, got ${evidence.tool_count}`);
+    assert(evidence.tool_count === 58, `expected 58 tools, got ${evidence.tool_count}`);
 
     step("browser_connect");
     const connect = await client.call("browser_connect", { port: cdpPort });
@@ -299,6 +299,19 @@ async function main() {
     const stableRefs = observe.data.elements.map((element) => element.ref).filter(Boolean);
     evidence.stable_ref_sample = stableRefs.find((ref) => /^br_\d+$/.test(ref));
     assert(evidence.stable_ref_sample, `observe returned no stable br_* refs: ${stableRefs}`);
+
+    step("browser_viewport");
+    const viewport = await client.call("browser_viewport", {
+      port: cdpPort,
+      page_id: pageId,
+      width: 1200,
+      height: 900,
+    });
+    evidence.viewport = viewport.data.viewport;
+    assert(
+      viewport.data.viewport?.width === 1200,
+      `viewport width did not update: ${JSON.stringify(viewport.data.viewport)}`,
+    );
 
     step("browser_find input");
     const input = await client.call("browser_find", {

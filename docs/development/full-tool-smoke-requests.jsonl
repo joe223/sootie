@@ -32,26 +32,27 @@
 {"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"browser_pages","arguments":{"port":"<cdp port>"}}}
 {"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"browser_open","arguments":{"port":"<cdp port>","url":"<browser smoke url>","new_page":true,"wait_until":"load"}}}
 {"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"browser_observe","arguments":{"port":"<cdp port>","mode":"hybrid","include":{"elements":true,"text":true,"screenshot":true},"viewport_only":true}}}
-{"jsonrpc":"2.0","id":35,"method":"tools/call","params":{"name":"browser_find","arguments":{"port":"<cdp port>","query":"<browser target text>"}}}
-{"jsonrpc":"2.0","id":36,"method":"tools/call","params":{"name":"browser_type","arguments":{"port":"<cdp port>","selector":"<browser input selector>","text":"sootie smoke","clear":true}}}
-{"jsonrpc":"2.0","id":37,"method":"tools/call","params":{"name":"browser_click","arguments":{"port":"<cdp port>","selector":"<browser button selector>","wait_after":"stable"}}}
-{"jsonrpc":"2.0","id":38,"method":"tools/call","params":{"name":"browser_press","arguments":{"port":"<cdp port>","key":"Enter"}}}
-{"jsonrpc":"2.0","id":39,"method":"tools/call","params":{"name":"browser_scroll","arguments":{"port":"<cdp port>","direction":"down","amount":"small"}}}
-{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"browser_wait","arguments":{"port":"<cdp port>","condition":"textExists","value":"<browser expected text>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"browser_extract","arguments":{"port":"<cdp port>","target":{"selector":"<browser output selector>"},"format":"text"}}}
-{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"browser_screenshot","arguments":{"port":"<cdp port>","full_page":false}}}
-{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"browser_network","arguments":{"port":"<cdp port>","max_entries":20}}}
-{"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"browser_console","arguments":{"port":"<cdp port>","max_entries":20}}}
-{"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"browser_storage","arguments":{"port":"<cdp port>","area":"localStorage","action":"list","unsafe":true}}}
-{"jsonrpc":"2.0","id":46,"method":"tools/call","params":{"name":"browser_cookies","arguments":{"port":"<cdp port>","action":"list","unsafe":true}}}
-{"jsonrpc":"2.0","id":47,"method":"tools/call","params":{"name":"browser_pdf","arguments":{"port":"<cdp port>","print_background":true}}}
-{"jsonrpc":"2.0","id":48,"method":"tools/call","params":{"name":"cdp_send","arguments":{"port":"<cdp port>","method":"Browser.getVersion","unsafe":true}}}
-{"jsonrpc":"2.0","id":49,"method":"tools/call","params":{"name":"cdp_subscribe","arguments":{"port":"<cdp port>","domain":"Log","timeout_ms":500,"max_events":5,"unsafe":true}}}
-{"jsonrpc":"2.0","id":50,"method":"tools/call","params":{"name":"browser_downloads","arguments":{"port":"<cdp port>","action":"deny","unsafe":true}}}
-{"jsonrpc":"2.0","id":51,"method":"tools/call","params":{"name":"browser_upload","arguments":{"port":"<cdp port>","selector":"<browser file input selector>","file_paths":["<upload file path>"],"unsafe":true}}}
-{"jsonrpc":"2.0","id":52,"method":"tools/call","params":{"name":"browser_back","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":53,"method":"tools/call","params":{"name":"browser_forward","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":54,"method":"tools/call","params":{"name":"browser_reload","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
-{"jsonrpc":"2.0","id":55,"method":"tools/call","params":{"name":"browser_select_page","arguments":{"port":"<cdp port>","page_id":"<browser page id>"}}}
-{"jsonrpc":"2.0","id":56,"method":"tools/call","params":{"name":"browser_close_page","arguments":{"port":"<cdp port>","page_id":"<browser disposable page id>"}}}
-{"jsonrpc":"2.0","id":57,"method":"tools/call","params":{"name":"browser_shutdown","arguments":{"launch_id":"<browser launch id>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":35,"method":"tools/call","params":{"name":"browser_viewport","arguments":{"port":"<cdp port>","width":1200,"height":900}}}
+{"jsonrpc":"2.0","id":36,"method":"tools/call","params":{"name":"browser_find","arguments":{"port":"<cdp port>","query":"<browser target text>"}}}
+{"jsonrpc":"2.0","id":37,"method":"tools/call","params":{"name":"browser_type","arguments":{"port":"<cdp port>","selector":"<browser input selector>","text":"sootie smoke","clear":true}}}
+{"jsonrpc":"2.0","id":38,"method":"tools/call","params":{"name":"browser_click","arguments":{"port":"<cdp port>","selector":"<browser button selector>","wait_after":"stable"}}}
+{"jsonrpc":"2.0","id":39,"method":"tools/call","params":{"name":"browser_press","arguments":{"port":"<cdp port>","key":"Enter"}}}
+{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"browser_scroll","arguments":{"port":"<cdp port>","direction":"down","amount":"small"}}}
+{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"browser_wait","arguments":{"port":"<cdp port>","condition":"textExists","value":"<browser expected text>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"browser_extract","arguments":{"port":"<cdp port>","target":{"selector":"<browser output selector>"},"format":"text"}}}
+{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"browser_screenshot","arguments":{"port":"<cdp port>","full_page":false}}}
+{"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"browser_network","arguments":{"port":"<cdp port>","max_entries":20}}}
+{"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"browser_console","arguments":{"port":"<cdp port>","max_entries":20}}}
+{"jsonrpc":"2.0","id":46,"method":"tools/call","params":{"name":"browser_storage","arguments":{"port":"<cdp port>","area":"localStorage","action":"list","unsafe":true}}}
+{"jsonrpc":"2.0","id":47,"method":"tools/call","params":{"name":"browser_cookies","arguments":{"port":"<cdp port>","action":"list","unsafe":true}}}
+{"jsonrpc":"2.0","id":48,"method":"tools/call","params":{"name":"browser_pdf","arguments":{"port":"<cdp port>","print_background":true}}}
+{"jsonrpc":"2.0","id":49,"method":"tools/call","params":{"name":"cdp_send","arguments":{"port":"<cdp port>","method":"Browser.getVersion","unsafe":true}}}
+{"jsonrpc":"2.0","id":50,"method":"tools/call","params":{"name":"cdp_subscribe","arguments":{"port":"<cdp port>","domain":"Log","timeout_ms":500,"max_events":5,"unsafe":true}}}
+{"jsonrpc":"2.0","id":51,"method":"tools/call","params":{"name":"browser_downloads","arguments":{"port":"<cdp port>","action":"deny","unsafe":true}}}
+{"jsonrpc":"2.0","id":52,"method":"tools/call","params":{"name":"browser_upload","arguments":{"port":"<cdp port>","selector":"<browser file input selector>","file_paths":["<upload file path>"],"unsafe":true}}}
+{"jsonrpc":"2.0","id":53,"method":"tools/call","params":{"name":"browser_back","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":54,"method":"tools/call","params":{"name":"browser_forward","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":55,"method":"tools/call","params":{"name":"browser_reload","arguments":{"port":"<cdp port>","timeout_ms":3000}}}
+{"jsonrpc":"2.0","id":56,"method":"tools/call","params":{"name":"browser_select_page","arguments":{"port":"<cdp port>","page_id":"<browser page id>"}}}
+{"jsonrpc":"2.0","id":57,"method":"tools/call","params":{"name":"browser_close_page","arguments":{"port":"<cdp port>","page_id":"<browser disposable page id>"}}}
+{"jsonrpc":"2.0","id":58,"method":"tools/call","params":{"name":"browser_shutdown","arguments":{"launch_id":"<browser launch id>","timeout_ms":3000}}}

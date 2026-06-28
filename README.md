@@ -11,7 +11,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a>
   ·
-  <a href="#tool-surface">57 MCP tools</a>
+  <a href="#tool-surface">58 MCP tools</a>
   ·
   <a href="#recipes-and-learning">Recipes</a>
   ·
@@ -171,7 +171,7 @@ Rules:
   - `sootie --version`
   - `sootie doctor --check`
   - `sootie tools --raw`
-- Confirm that `sootie tools --raw` returns 57 tools and includes
+- Confirm that `sootie tools --raw` returns 58 tools and includes
   `browser_open`.
 - Configure my MCP client to run `sootie serve` only if I explicitly ask you to
   configure that client.
@@ -257,13 +257,13 @@ is:
 
 ## Tool Surface
 
-Sootie exposes 57 MCP tools.
+Sootie exposes 58 MCP tools.
 
 | Area | Tools |
 | --- | --- |
 | Orientation and perception | `context`, `state`, `find`, `read`, `inspect`, `element_at`, `screenshot`, `parse_screen`, `ground`, `annotate` |
 | Actions | `click`, `type`, `press`, `hotkey`, `scroll`, `hover`, `long_press`, `drag`, `focus`, `window`, `wait` |
-| Browser-native CDP | `browser_launch`, `browser_connect`, `browser_pages`, `browser_select_page`, `browser_open`, `browser_observe`, `browser_find`, `browser_click`, `browser_type`, `browser_press`, `browser_scroll`, `browser_wait`, `browser_extract`, `browser_screenshot`, `browser_back`, `browser_forward`, `browser_reload`, `browser_close_page`, `browser_shutdown`, `browser_network`, `browser_console`, `browser_storage`, `browser_cookies`, `browser_downloads`, `browser_upload`, `browser_pdf` |
+| Browser-native CDP | `browser_launch`, `browser_connect`, `browser_pages`, `browser_select_page`, `browser_open`, `browser_observe`, `browser_viewport`, `browser_find`, `browser_click`, `browser_type`, `browser_press`, `browser_scroll`, `browser_wait`, `browser_extract`, `browser_screenshot`, `browser_back`, `browser_forward`, `browser_reload`, `browser_close_page`, `browser_shutdown`, `browser_network`, `browser_console`, `browser_storage`, `browser_cookies`, `browser_downloads`, `browser_upload`, `browser_pdf` |
 | Guarded raw CDP | `cdp_send`, `cdp_subscribe` |
 | Recipes and learning | `recipes`, `run`, `recipe_show`, `recipe_save`, `recipe_delete`, `learn_start`, `learn_stop`, `learn_status` |
 

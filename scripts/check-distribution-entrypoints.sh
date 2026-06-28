@@ -9,7 +9,7 @@ HOMEBREW_FORMULA_URL="${SOOTIE_HOMEBREW_FORMULA_URL:-https://raw.githubuserconte
 APT_BASE_URL="${SOOTIE_APT_BASE_URL:-https://raw.githubusercontent.com/$REPO/apt}"
 CURL_MAX_TIME="${SOOTIE_CHECK_MAX_TIME:-90}"
 CURL_RETRIES="${SOOTIE_CHECK_RETRIES:-2}"
-EXPECTED_TOOL_COUNT="${SOOTIE_EXPECTED_TOOL_COUNT:-57}"
+EXPECTED_TOOL_COUNT="${SOOTIE_EXPECTED_TOOL_COUNT:-58}"
 REQUIRE_SIGNED_APT="${SOOTIE_REQUIRE_SIGNED_APT:-1}"
 APT_PUBLIC_KEY_NAME="${SOOTIE_APT_PUBLIC_KEY_NAME:-sootie-archive-keyring.gpg}"
 APT_KEYRING_PATH="${SOOTIE_APT_KEYRING_PATH:-/usr/share/keyrings/$APT_PUBLIC_KEY_NAME}"
@@ -17,6 +17,7 @@ REQUIRED_TOOLS=(
   sootie_context
   sootie_browser_connect
   sootie_browser_launch
+  sootie_browser_viewport
   sootie_cdp_send
   sootie_learn_status
 )

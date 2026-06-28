@@ -187,6 +187,7 @@ read-only inspection from mutating desktop actions before dispatch:
 | `browser_select_page` | `page_id` | `browser_id`, `port`, `ws_url` | selected `page` |
 | `browser_open` | `url` | `browser_id`, `port`, `ws_url`, `page_id`, `new_page`, `wait_until`, `timeout_ms` | `page_id`, `url`, `title`, `navigation_status` |
 | `browser_observe` | none | `browser_id`, `port`, `ws_url`, `page_id`, `mode`, `include`, `max_elements`, `max_text_chars`, `viewport_only` | `page`, `elements`, `text`, `diagnostics`, optional `screenshot` |
+| `browser_viewport` | none | `browser_id`, `port`, `ws_url`, `page_id`, `width`, `height`, `device_scale_factor`, `mobile`, `screen_width`, `screen_height`, `timeout_ms` | `previous_viewport`, `viewport`, `changed`, `page` |
 | `browser_find` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `visible_only`, `max_results` | `elements`, `count`, `total_matches` |
 | `browser_click` | none | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `text`, `query`, `x`, `y`, `button`, `count`, `wait_after` | browser action result |
 | `browser_type` | `text` | `browser_id`, `port`, `ws_url`, `page_id`, `ref`, `selector`, `dom_id`, `dom_class`, `role`, `name`, `query`, `x`, `y`, `into`, `focused`, `clear`, `submit`, `delay_ms` | browser action result |

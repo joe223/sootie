@@ -55,6 +55,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "browser_select_page",
     "browser_open",
     "browser_observe",
+    "browser_viewport",
     "browser_find",
     "browser_click",
     "browser_type",
@@ -331,6 +332,12 @@ fn legacy_tool_definition(name: &str) -> ToolDefinition {
             browser_observe_props(),
             &[],
         ),
+        "sootie_browser_viewport" => tool(
+            name,
+            "Read or set the browser page viewport size through CDP. Prefer this over raw cdp_send for responsive layout checks.",
+            browser_viewport_props(),
+            &[],
+        ),
         "sootie_browser_find" => tool(
             name,
             "Find browser elements by ref, selector, role/name/text, DOM id/class, or query.",
@@ -560,6 +567,12 @@ fn annotations_for(name: &str) -> ToolAnnotations {
             destructive_hint: true,
             idempotent_hint: true,
             open_world_hint: false,
+        },
+        "browser_viewport" => ToolAnnotations {
+            read_only_hint: false,
+            destructive_hint: false,
+            idempotent_hint: true,
+            open_world_hint: true,
         },
         "browser_open" | "browser_click" | "browser_type" | "browser_press" | "browser_scroll"
         | "browser_wait" | "browser_back" | "browser_forward" | "browser_reload" => {
@@ -842,6 +855,30 @@ fn browser_observe_props() -> Value {
         }),
     );
     Value::Object(map)
+}
+
+fn browser_viewport_props() -> Value {
+    browser_page_props(&[
+        ("width", "integer", "Viewport width in CSS pixels."),
+        ("height", "integer", "Viewport height in CSS pixels."),
+        (
+            "device_scale_factor",
+            "number",
+            "Device scale factor for the emulated viewport.",
+        ),
+        ("mobile", "boolean", "Whether to emulate a mobile viewport."),
+        (
+            "screen_width",
+            "integer",
+            "Optional screen width in CSS pixels.",
+        ),
+        (
+            "screen_height",
+            "integer",
+            "Optional screen height in CSS pixels.",
+        ),
+        ("timeout_ms", "integer", "Timeout in milliseconds."),
+    ])
 }
 
 fn browser_target_props() -> Value {
@@ -1230,11 +1267,12 @@ mod tests {
     #[test]
     fn exposes_sootie_tool_surface() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 57);
+        assert_eq!(tools.len(), 58);
         assert!(tools.iter().any(|tool| tool.name == "context"));
         assert!(tools.iter().any(|tool| tool.name == "browser_observe"));
         for name in [
             "browser_launch",
+            "browser_viewport",
             "browser_network",
             "browser_console",
             "browser_storage",
@@ -1255,7 +1293,7 @@ mod tests {
     #[test]
     fn tool_contract_is_exact() {
         let tools = tool_definitions();
-        assert_eq!(TOOL_NAMES.len(), 57);
+        assert_eq!(TOOL_NAMES.len(), 58);
         assert_eq!(
             tools
                 .iter()
@@ -1429,6 +1467,19 @@ mod tests {
                     "max_text_chars",
                     "viewport_only",
                     "include"
+                ],
+                &[],
+            ),
+            (
+                "sootie_browser_viewport",
+                browser_page![
+                    "width",
+                    "height",
+                    "device_scale_factor",
+                    "mobile",
+                    "screen_width",
+                    "screen_height",
+                    "timeout_ms"
                 ],
                 &[],
             ),
@@ -1655,6 +1706,7 @@ mod tests {
             ("sootie_browser_select_page", &["page_id"]),
             ("sootie_browser_open", &["url"]),
             ("sootie_browser_observe", &[]),
+            ("sootie_browser_viewport", &[]),
             ("sootie_browser_find", &[]),
             ("sootie_browser_click", &[]),
             ("sootie_browser_type", &["text"]),

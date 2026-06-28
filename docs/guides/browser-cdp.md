@@ -74,6 +74,7 @@ Browser-native tools are meant for browser-first agents and web automation:
 | `browser_select_page` | Set the default page for later browser calls. |
 | `browser_open` | Open or navigate a page. |
 | `browser_observe` | Return page state, visible text, browser elements, and optional screenshots. |
+| `browser_viewport` | Read or set the page viewport size for responsive layout checks. |
 | `browser_find` | Find browser elements by ref, selector, role/name/text, DOM id/class, or query. |
 | `browser_click` | Click a browser element through CDP. |
 | `browser_type` | Type into a browser element through CDP. |
@@ -110,6 +111,11 @@ Durable recipes should still prefer `role`, `name`, `text`, `dom_id`, or
 `selector` because refs expire after navigation, page close, or significant DOM
 updates. `observe` accepts `include` flags and `viewport_only` so agents can
 request only the browser state they need.
+
+Use `browser_viewport` to widen or resize the CSS layout viewport before
+observing or screenshotting responsive pages. `browser_screenshot` with
+`full_page: true` captures page height beyond the visible viewport; it does not
+change responsive layout width.
 
 `browser_extract` can extract the whole page, a top-level `selector` or
 `ref`, or a nested `target` object such as `{ "target": { "ref": "br_3" } }`.

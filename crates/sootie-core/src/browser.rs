@@ -288,6 +288,94 @@ impl BrowserService {
         Ok(payload)
     }
 
+    pub fn viewport(&mut self, args: &Value) -> SootieResult<Value> {
+        let port = self.port_from_args(args);
+        let page = self.selected_page(port, args)?;
+        let timeout = timeout_arg(args, 10_000)?;
+        let previous_viewport = cdp::evaluate_on_page(
+            port,
+            Some(&page.target_id),
+            BROWSER_VIEWPORT_EXPRESSION,
+            false,
+            timeout,
+        )
+        .unwrap_or_else(|| json!({}));
+        let has_update = [
+            "width",
+            "height",
+            "device_scale_factor",
+            "mobile",
+            "screen_width",
+            "screen_height",
+        ]
+        .iter()
+        .any(|key| args.get(*key).is_some());
+
+        if !has_update {
+            self.port = Some(port);
+            return Ok(json!({
+                "browser_id": browser_id(port),
+                "page": page_payload(&page, true),
+                "viewport": previous_viewport,
+                "changed": false,
+            }));
+        }
+
+        let width = viewport_dimension(args, "width", &previous_viewport, 1280)?;
+        let height = viewport_dimension(args, "height", &previous_viewport, 720)?;
+        let device_scale_factor =
+            viewport_scale_factor(args, "device_scale_factor", &previous_viewport)?;
+        let mobile = bool_arg(args, "mobile")
+            .or_else(|| previous_viewport.get("mobile").and_then(Value::as_bool))
+            .unwrap_or(false);
+
+        let mut params = serde_json::Map::new();
+        params.insert("width".into(), json!(width));
+        params.insert("height".into(), json!(height));
+        params.insert("deviceScaleFactor".into(), json!(device_scale_factor));
+        params.insert("mobile".into(), json!(mobile));
+        if let Some(value) = viewport_optional_dimension(args, "screen_width")? {
+            params.insert("screenWidth".into(), json!(value));
+        }
+        if let Some(value) = viewport_optional_dimension(args, "screen_height")? {
+            params.insert("screenHeight".into(), json!(value));
+        }
+
+        let result = cdp::send_cdp_command(
+            port,
+            Some(&page.target_id),
+            "Emulation.setDeviceMetricsOverride",
+            Value::Object(params.clone()),
+            timeout,
+        )
+        .ok_or_else(|| cdp_failed("set viewport", port, Some(&page)))?;
+        let viewport = cdp::evaluate_on_page(
+            port,
+            Some(&page.target_id),
+            BROWSER_VIEWPORT_EXPRESSION,
+            false,
+            timeout,
+        )
+        .unwrap_or_else(|| json!({}));
+        self.port = Some(port);
+        Ok(json!({
+            "browser_id": browser_id(port),
+            "page": page_payload(&page, true),
+            "requested": {
+                "width": width,
+                "height": height,
+                "device_scale_factor": device_scale_factor,
+                "mobile": mobile,
+                "screen_width": params.get("screenWidth").cloned(),
+                "screen_height": params.get("screenHeight").cloned(),
+            },
+            "previous_viewport": previous_viewport,
+            "viewport": viewport,
+            "changed": true,
+            "cdp_result": result,
+        }))
+    }
+
     pub fn find(&mut self, args: &Value) -> SootieResult<Value> {
         let port = self.port_from_args(args);
         let page = self.selected_page(port, args)?;
@@ -1539,6 +1627,51 @@ fn browser_scroll_amount(args: &Value) -> i32 {
     }
 }
 
+fn viewport_dimension(args: &Value, key: &str, current: &Value, default: u32) -> SootieResult<u32> {
+    let value = u32_arg(args, key)
+        .or_else(|| viewport_current_u32(current, key))
+        .unwrap_or(default);
+    validate_viewport_dimension(key, value)?;
+    Ok(value)
+}
+
+fn viewport_optional_dimension(args: &Value, key: &str) -> SootieResult<Option<u32>> {
+    let Some(value) = u32_arg(args, key) else {
+        return Ok(None);
+    };
+    validate_viewport_dimension(key, value)?;
+    Ok(Some(value))
+}
+
+fn validate_viewport_dimension(key: &str, value: u32) -> SootieResult<()> {
+    if !(1..=32_768).contains(&value) {
+        return Err(SootieError::InvalidArguments(format!(
+            "{key} must be between 1 and 32768 CSS pixels"
+        )));
+    }
+    Ok(())
+}
+
+fn viewport_scale_factor(args: &Value, key: &str, current: &Value) -> SootieResult<f64> {
+    let value = f64_arg(args, key)
+        .or_else(|| current.get(key).and_then(Value::as_f64))
+        .unwrap_or(1.0);
+    if !(value.is_finite() && (0.01..=10.0).contains(&value)) {
+        return Err(SootieError::InvalidArguments(format!(
+            "{key} must be between 0.01 and 10"
+        )));
+    }
+    Ok(value)
+}
+
+fn viewport_current_u32(current: &Value, key: &str) -> Option<u32> {
+    current
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
 fn timeout_arg(args: &Value, default_ms: u64) -> SootieResult<Duration> {
     let ms = u32_arg(args, "timeout_ms").unwrap_or(default_ms as u32) as u64;
     if ms == 0 {
@@ -1644,6 +1777,22 @@ fn browser_visible_text_expression(max_text_chars: u32) -> String {
         BROWSER_OBSERVE_BODY
     )
 }
+
+const BROWSER_VIEWPORT_EXPRESSION: &str = r#"
+(() => ({
+  width: window.innerWidth,
+  height: window.innerHeight,
+  device_scale_factor: window.devicePixelRatio || 1,
+  screen_width: window.screen ? window.screen.width : window.innerWidth,
+  screen_height: window.screen ? window.screen.height : window.innerHeight,
+  mobile: Boolean(
+    (navigator.userAgentData && navigator.userAgentData.mobile) ||
+    /Mobi|Android/i.test(navigator.userAgent || '')
+  ),
+  scroll_x: window.scrollX,
+  scroll_y: window.scrollY
+}))()
+"#;
 
 const BROWSER_DOM_HELPERS: &str = r#"
 function cssEscape(value) {
@@ -2098,6 +2247,44 @@ mod tests {
         });
         filter_elements_to_viewport(&mut payload);
         assert_eq!(payload["elements"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn browser_viewport_args_fill_missing_dimensions_from_current_viewport() {
+        let current = json!({
+            "width": 756,
+            "height": 640,
+            "device_scale_factor": 2.0
+        });
+        let args = json!({ "width": 1200 });
+
+        assert_eq!(
+            viewport_dimension(&args, "width", &current, 1280).unwrap(),
+            1200
+        );
+        assert_eq!(
+            viewport_dimension(&args, "height", &current, 720).unwrap(),
+            640
+        );
+        assert_eq!(
+            viewport_scale_factor(&json!({}), "device_scale_factor", &current).unwrap(),
+            2.0
+        );
+    }
+
+    #[test]
+    fn browser_viewport_args_reject_invalid_dimensions_and_scale() {
+        assert!(viewport_dimension(&json!({ "width": 0 }), "width", &json!({}), 1280).is_err());
+        assert!(
+            viewport_optional_dimension(&json!({ "screen_height": 40_000 }), "screen_height")
+                .is_err()
+        );
+        assert!(viewport_scale_factor(
+            &json!({ "device_scale_factor": 0.0 }),
+            "device_scale_factor",
+            &json!({}),
+        )
+        .is_err());
     }
 
     #[test]

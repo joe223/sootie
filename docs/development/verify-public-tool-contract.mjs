@@ -196,6 +196,11 @@ const expectedLegacyTools = [
     [],
   ],
   [
+    "sootie_browser_viewport",
+    { browser_id: "string", device_scale_factor: "number", height: "integer", mobile: "boolean", page_id: "string", port: "integer", screen_height: "integer", screen_width: "integer", timeout_ms: "integer", width: "integer", ws_url: "string" },
+    [],
+  ],
+  [
     "sootie_browser_find",
     { browser_id: "string", dom_class: "string", dom_id: "string", max_results: "integer", name: "string", page_id: "string", port: "integer", query: "string", ref: "string", role: "string", selector: "string", text: "string", visible_only: "boolean", ws_url: "string", x: "number", y: "number" },
     [],
